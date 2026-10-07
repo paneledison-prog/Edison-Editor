@@ -26,6 +26,8 @@ const loaders: Record<CmdMeta['module'], () => Promise<Record<string, unknown>>>
   render: () => import('./cmds/render.js'),
   inspect: () => import('./cmds/inspect.js'),
   ui: () => import('./cmds/ui.js'),
+  video: () => import('./cmds/video.js'),
+  audio: () => import('./cmds/audio.js'),
 };
 
 function findCommand(argv: string[]): { meta: CmdMeta; rest: string[] } | undefined {
@@ -33,9 +35,9 @@ function findCommand(argv: string[]): { meta: CmdMeta; rest: string[] } | undefi
   for (const a of argv) {
     if (a.startsWith('--')) break;
     words.push(a);
-    if (words.length === 2) break;
+    if (words.length === 3) break;
   }
-  for (const len of [2, 1]) {
+  for (const len of [3, 2, 1]) {
     const meta = COMMANDS.find(
       (c) => c.argv.length === len && c.argv.every((w, i) => w === words[i]),
     );
@@ -63,7 +65,7 @@ export async function main(argv: string[]): Promise<void> {
   let name =
     argv
       .filter((a) => !a.startsWith('--'))
-      .slice(0, 2)
+      .slice(0, 3)
       .join('.') || '(none)';
   let pretty = argv.includes('--pretty');
   try {
@@ -74,7 +76,7 @@ export async function main(argv: string[]): Promise<void> {
         `unknown command "${
           argv
             .filter((a) => !a.startsWith('--'))
-            .slice(0, 2)
+            .slice(0, 3)
             .join(' ') || ''
         }"`,
         2,

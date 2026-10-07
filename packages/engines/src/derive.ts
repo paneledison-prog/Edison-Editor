@@ -359,3 +359,33 @@ export async function withLock<T>(dir: string, fn: () => Promise<T>): Promise<T>
 import { displaySize } from '@studio/core';
 /** Height after rotation, used to decide whether a 720p proxy is a downscale. */
 export const displayHeight = (p: { w?: number; h?: number; rotation?: number }) => displaySize(p).h;
+
+/**
+ * Cache of a JSON analysis result under the asset's content hash. The key covers the tool version and
+ * the exact arguments, so a different threshold or ffmpeg build recomputes.
+ */
+export async function cachedJson<T>(
+  dir: string,
+  name: string,
+  args: unknown,
+  compute: () => Promise<T>,
+): Promise<{ value: T; cached: boolean }> {
+  mkdirSync(dir, { recursive: true });
+  const key = await keyFor(args);
+  const file = join(
+    dir,
+    `analysis-${name}-${createHash('sha256').update(JSON.stringify(args)).digest('hex').slice(0, 8)}.json`,
+  );
+  if (existsSync(file)) {
+    try {
+      const j = JSON.parse(readFileSync(file, 'utf8'));
+      if (j.key === key) return { value: j.value as T, cached: true };
+    } catch {
+      /* unreadable cache: recompute */
+    }
+  }
+  const value = await compute();
+  writeFileSync(file + '.partial', JSON.stringify({ key, value }));
+  renameSync(file + '.partial', file);
+  return { value, cached: false };
+}

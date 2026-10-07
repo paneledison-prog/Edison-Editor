@@ -7,3 +7,6 @@ export * from './ingest.js';
 export * from './presets.js';
 export * from './compile.js';
 export * from './render.js';
+export * from './audiofx.js';
+export * from './library.js';
+export * from './cuts.js';

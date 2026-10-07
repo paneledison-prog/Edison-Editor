@@ -10,6 +10,8 @@ export interface Loudness {
   samplePeakDbfs?: number | null;
   /** RMS of the quietest 10% of 50 ms windows */
   noiseFloorDbfs?: number | null;
+  /** Mean RMS of the 50 ms windows that are clearly above the noise floor: the level a sidechain detector sees during speech */
+  activeRmsDbfs?: number | null;
   /** Runs of 3+ consecutive full-scale samples */
   clippingRuns?: number;
   clippedSamples?: number;
@@ -57,7 +59,21 @@ function pcm(file: string, args: string[], onChunk: (b: Buffer) => void): Promis
 const db = (x: number) => (x > 0 ? 20 * Math.log10(x) : -Infinity);
 
 /** Measure before you change anything (rules/03): LUFS, LRA, true peak, noise floor, clipping. */
-export async function loudness(file: string): Promise<Loudness> {
+export interface Range {
+  fromMs?: number;
+  toMs?: number;
+}
+const rangeArgs = (r?: Range): string[] => {
+  if (!r || (r.fromMs === undefined && r.toMs === undefined)) return [];
+  const from = r.fromMs ?? 0;
+  return [
+    '-ss',
+    (from / 1000).toFixed(3),
+    ...(r.toMs !== undefined ? ['-t', ((r.toMs - from) / 1000).toFixed(3)] : []),
+  ];
+};
+
+export async function loudness(file: string, range?: Range): Promise<Loudness> {
   const probe = await run(
     'ffprobe',
     [
@@ -81,6 +97,7 @@ export async function loudness(file: string): Promise<Loudness> {
       '-hide_banner',
       '-nostdin',
       '-nostats',
+      ...rangeArgs(range),
       '-i',
       file,
       '-vn',
@@ -129,7 +146,7 @@ export async function loudness(file: string): Promise<Loudness> {
   const run0: number[] = new Array(CH).fill(0);
   const winDb: number[] = [];
   let carry: Buffer = Buffer.alloc(0);
-  await pcm(file, ['-vn', '%IN%'], (chunk) => {
+  await pcm(file, ['-vn', ...rangeArgs(range), '%IN%'], (chunk) => {
     const buf = carry.length ? Buffer.concat([carry, chunk]) : chunk;
     const stride = CH * 2;
     const frames = Math.floor(buf.length / stride);
@@ -161,6 +178,12 @@ export async function loudness(file: string): Promise<Loudness> {
   const noise = q.length
     ? 10 * Math.log10(q.reduce((s, d) => s + 10 ** (d / 10), 0) / q.length)
     : null;
+  // Windows more than 20 dB above the noise floor (and above -50 dBFS) count as active.
+  const activeMin = Math.max(-50, (noise ?? -120) + 20);
+  const act = winDb.filter((d) => d > activeMin);
+  const active = act.length
+    ? 10 * Math.log10(act.reduce((n, d) => n + 10 ** (d / 10), 0) / act.length)
+    : null;
 
   return {
     hasAudio: true,
@@ -170,6 +193,7 @@ export async function loudness(file: string): Promise<Loudness> {
     truePeakDbtp: num(TP),
     samplePeakDbfs: peak ? Math.round(db(peak / 32768) * 100) / 100 : null,
     noiseFloorDbfs: noise === null ? null : Math.round(noise * 100) / 100,
+    activeRmsDbfs: active === null ? null : Math.round(active * 100) / 100,
     clippingRuns: runs,
     clippedSamples: clipped,
   };
@@ -186,6 +210,7 @@ export async function silence(
   file: string,
   noiseDb: number,
   minS: number,
+  range?: Range,
 ): Promise<{ spans: Span[]; totalMs: number }> {
   const r = await run(
     'ffmpeg',
@@ -193,6 +218,7 @@ export async function silence(
       '-hide_banner',
       '-nostdin',
       '-nostats',
+      ...rangeArgs(range),
       '-i',
       file,
       '-vn',
@@ -204,6 +230,7 @@ export async function silence(
     ],
     { timeoutMs: 600_000 },
   );
+  // With a range, times are relative to the start of the range.
   const spans: Span[] = [];
   let start: number | null = null;
   for (const m of r.stderr.matchAll(
@@ -219,7 +246,89 @@ export async function silence(
       start = null;
     }
   }
+  // A silence that runs to the end of the input has a start but no end line.
+  if (start !== null && range?.toMs !== undefined) {
+    const endMs = range.toMs - (range.fromMs ?? 0);
+    const startMs = Math.round(start * 1000);
+    if (endMs - startMs > 0) spans.push({ startMs, endMs, durMs: endMs - startMs });
+  }
   return { spans, totalMs: spans.reduce((s, x) => s + x.durMs, 0) };
+}
+
+/**
+ * Silence from short-term RMS (20 ms windows), the same measure the noise floor uses. Unlike FFmpeg's silencedetect,
+ * which restarts on any single sample above the threshold, an isolated noise peak does not split a pause here.
+ * Times are relative to the start of `range`. Resolution is one window (20 ms).
+ */
+export async function silenceRms(
+  file: string,
+  noiseDb: number,
+  minS: number,
+  range?: Range,
+  winMs = 20,
+): Promise<{ spans: Span[]; totalMs: number }> {
+  const fmt = await run(
+    'ffprobe',
+    [
+      '-v',
+      'error',
+      '-select_streams',
+      'a:0',
+      '-show_entries',
+      'stream=channels,sample_rate',
+      '-of',
+      'json',
+      file,
+    ],
+    { timeoutMs: 30_000 },
+  );
+  const st = JSON.parse(fmt.stdout).streams?.[0];
+  if (!st) throw new EngineError('INVALID_INPUT', `${file} has no audio stream`);
+  const CH = Math.max(1, Number(st.channels) || 1);
+  const SR = Number(st.sample_rate) || 48000;
+  const WIN = Math.max(1, Math.round((SR * winMs) / 1000));
+  const thr = 10 ** (noiseDb / 10);
+  const spans: Span[] = [];
+  let acc = 0,
+    n = 0,
+    w = 0,
+    runStart = -1;
+  const close = (endWin: number) => {
+    if (runStart < 0) return;
+    const startMs = Math.round(runStart * winMs);
+    const endMs = Math.round(endWin * winMs);
+    if (endMs - startMs >= minS * 1000) spans.push({ startMs, endMs, durMs: endMs - startMs });
+    runStart = -1;
+  };
+  let carry: Buffer = Buffer.alloc(0);
+  const stride = CH * 2;
+  await pcm(file, ['-vn', ...rangeArgs(range), '%IN%'], (chunk) => {
+    const buf = carry.length ? Buffer.concat([carry, chunk]) : chunk;
+    const frames = Math.floor(buf.length / stride);
+    for (let i = 0; i < frames; i++) {
+      for (let ch = 0; ch < CH; ch++) acc += (buf.readInt16LE(i * stride + ch * 2) / 32768) ** 2;
+      if (++n === WIN) {
+        if (acc / (n * CH) < thr) {
+          if (runStart < 0) runStart = w;
+        } else close(w);
+        acc = 0;
+        n = 0;
+        w++;
+      }
+    }
+    carry = buf.subarray(frames * stride);
+  });
+  close(w);
+  // A run that reaches the end of the range is silence up to the range end.
+  if (range?.toMs !== undefined && spans.length) {
+    const last = spans[spans.length - 1]!;
+    const rangeEnd = range.toMs - (range.fromMs ?? 0);
+    if (rangeEnd - last.endMs < winMs * 2) {
+      last.endMs = rangeEnd;
+      last.durMs = last.endMs - last.startMs;
+    }
+  }
+  return { spans, totalMs: spans.reduce((x, y) => x + y.durMs, 0) };
 }
 
 export interface Click {

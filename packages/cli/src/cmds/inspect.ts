@@ -67,7 +67,17 @@ export const waveform: Handler = async (inv) => {
 
 export const loudness: Handler = async (inv) => {
   const I = await import('@studio/inspect');
-  return { data: await I.loudness(target(inv)) };
+  const from = num(inv, 'from');
+  const to = num(inv, 'to');
+  const L = await I.loudness(target(inv), { fromMs: from, toMs: to });
+  return {
+    data: {
+      ...L,
+      ...(from !== undefined || to !== undefined
+        ? { range: { fromMs: from ?? 0, toMs: to ?? null } }
+        : {}),
+    },
+  };
 };
 
 export const silence: Handler = async (inv) => {
@@ -84,7 +94,7 @@ export const silence: Handler = async (inv) => {
     );
   }
   const minS = num(inv, 'min-s') ?? 0.4;
-  const r = await I.silence(f, noise, minS);
+  const r = await I.silenceRms(f, noise, minS);
   return {
     data: { noiseDb: noise, minS, spans: r.spans, removableMs: r.totalMs, count: r.spans.length },
     warnings,

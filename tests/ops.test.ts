@@ -234,3 +234,164 @@ describe('op semantics', () => {
     expect(validateProject(cur)).toEqual([]);
   });
 });
+
+describe('fx and speed', () => {
+  const base = () =>
+    applyBatch(
+      baseProject(),
+      [
+        {
+          type: 'clip.add',
+          args: {
+            clip: { id: 'c_one', track: 't_v1', asset: 'a_vid1', start: 0, dur: 4000, srcIn: 0 },
+          },
+        },
+        {
+          type: 'clip.add',
+          args: {
+            clip: {
+              id: 'c_two',
+              track: 't_v1',
+              asset: 'a_vid1',
+              start: 4000,
+              dur: 2000,
+              srcIn: 10_000,
+            },
+          },
+        },
+      ],
+      testCtx(),
+    ).project;
+
+  it('clip.speed halves duration at 2x, ripples later clips, and inverts exactly', () => {
+    const p = base();
+    const r = applyBatch(
+      p,
+      [{ type: 'clip.speed', args: { id: 'c_one', factor: 2, ripple: true } }],
+      testCtx(),
+    );
+    const [a, b] = r.project.clips.sort((x, y) => x.start - y.start);
+    expect([a!.dur, a!.fx, b!.start]).toEqual([2000, [{ type: 'speed', factor: 2 }], 2000]);
+    expect(canonicalize(applyBatch(r.project, inverseSpecs(r.ops), testCtx()).project)).toBe(
+      canonicalize(p),
+    );
+    // without ripple the next clip stays put
+    const nr = applyBatch(
+      p,
+      [{ type: 'clip.speed', args: { id: 'c_one', factor: 2 } }],
+      testCtx(),
+    ).project;
+    expect(nr.clips.find((c) => c.id === 'c_two')!.start).toBe(4000);
+  });
+
+  it('factor 1 removes the effect; changing speed twice uses the source span, not the current duration', () => {
+    const p = base();
+    const x4 = applyBatch(
+      p,
+      [{ type: 'clip.speed', args: { id: 'c_one', factor: 4 } }],
+      testCtx(),
+    ).project;
+    expect(x4.clips.find((c) => c.id === 'c_one')!.dur).toBe(1000);
+    const x2 = applyBatch(
+      x4,
+      [{ type: 'clip.speed', args: { id: 'c_one', factor: 2 } }],
+      testCtx(),
+    ).project;
+    expect(x2.clips.find((c) => c.id === 'c_one')!.dur).toBe(2000);
+    const x1 = applyBatch(
+      x2,
+      [{ type: 'clip.speed', args: { id: 'c_one', factor: 1 } }],
+      testCtx(),
+    ).project;
+    const c = x1.clips.find((c) => c.id === 'c_one')!;
+    expect([c.dur, c.fx]).toEqual([4000, undefined]);
+  });
+
+  it('clip.speed keeps the source span; extending duration under speed is bounded by dur x speed', () => {
+    const p = applyBatch(
+      baseProject(),
+      [
+        {
+          type: 'clip.add',
+          args: {
+            clip: {
+              id: 'c_end',
+              track: 't_v1',
+              asset: 'a_vid1',
+              start: 0,
+              dur: 2000,
+              srcIn: 50_000,
+            },
+          },
+        },
+      ],
+      testCtx(),
+    ).project;
+    // slowing to 0.5x doubles dur but consumes the same 2000 ms of source: still valid
+    const slow = applyBatch(
+      p,
+      [{ type: 'clip.speed', args: { id: 'c_end', factor: 0.5 } }],
+      testCtx(),
+    ).project;
+    expect(slow.clips[0]!.dur).toBe(4000);
+    // at 4x, 2000 ms of timeline is 8000 ms of source (58000 end); extending to 3000 ms would reach 62000 > 60000
+    const fast = applyBatch(
+      p,
+      [{ type: 'clip.speed', args: { id: 'c_end', factor: 4 } }],
+      testCtx(),
+    ).project; // dur 500
+    expect(() =>
+      applyBatch(fast, [{ type: 'clip.trim', args: { id: 'c_end', dur: 3000 } }], testCtx()),
+    ).toThrow(/source range end 62000/);
+    expect(() =>
+      applyBatch(fast, [{ type: 'clip.trim', args: { id: 'c_end', dur: 2000 } }], testCtx()),
+    ).not.toThrow();
+  });
+
+  it('split on a sped-up clip advances srcIn by leftDur x speed', () => {
+    const p = applyBatch(
+      base(),
+      [{ type: 'clip.speed', args: { id: 'c_one', factor: 2 } }],
+      testCtx(),
+    ).project; // dur 2000
+    const s = applyBatch(
+      p,
+      [{ type: 'clip.split', args: { id: 'c_one', at: 500 } }],
+      testCtx(3),
+    ).project;
+    const right = s.clips.find((c) => c.start === 500)!;
+    expect(right.srcIn).toBe(1000); // 500 ms of timeline at 2x = 1000 ms of source
+    expect(right.fx).toEqual([{ type: 'speed', factor: 2 }]);
+  });
+
+  it('rejects unknown fx types, out-of-range parameters, bad duck targets, and duplicates', () => {
+    const p = base();
+    const set = (fx: unknown[]) =>
+      applyBatch(p, [{ type: 'clip.set', args: { id: 'c_one', patch: { fx } } }], testCtx());
+    expect(() => set([{ type: 'sparkle' }])).toThrow(OpError);
+    expect(() => set([{ type: 'gain', db: 400 }])).toThrow(OpError);
+    expect(() =>
+      set([
+        { type: 'speed', factor: 2 },
+        { type: 'speed', factor: 3 },
+      ]),
+    ).toThrow(/more than one speed/);
+    expect(() =>
+      set([
+        { type: 'duck', by: 't_zzz', thresholdDb: -30, ratio: 6, attackMs: 20, releaseMs: 400 },
+      ]),
+    ).toThrow(/missing track/);
+    expect(() =>
+      set([{ type: 'duck', by: 't_g1', thresholdDb: -30, ratio: 6, attackMs: 20, releaseMs: 400 }]),
+    ).toThrow(/graphics track/);
+    expect(() =>
+      set([{ type: 'duck', by: 't_v1', thresholdDb: -30, ratio: 6, attackMs: 20, releaseMs: 400 }]),
+    ).toThrow(/own track/);
+    expect(() =>
+      set([
+        { type: 'duck', by: 't_a1', thresholdDb: -30, ratio: 6, attackMs: 20, releaseMs: 400 },
+        { type: 'highpass', hz: 80 },
+      ]),
+    ).not.toThrow();
+  });
+});

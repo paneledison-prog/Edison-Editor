@@ -64,6 +64,27 @@ function randomSpec(r: Rng, p: Project): OpSpec {
             },
           }
         : { type: 'track.add', args: { type: 'video', name: 'V' } };
+    case 'clip.speed':
+      return {
+        type: 'clip.speed',
+        args: { id: clip?.id ?? 'c_x', factor: pick(r, [0.5, 1, 2, 4])!, ripple: r() < 0.5 },
+      };
+    case 'fx.set':
+      return {
+        type: 'clip.set',
+        args: {
+          id: clip?.id ?? 'c_x',
+          patch: {
+            fx:
+              r() < 0.3
+                ? null
+                : [
+                    { type: 'gain', db: int(r, -6, 6) },
+                    { type: 'highpass', hz: 80 },
+                  ],
+          },
+        },
+      };
     case 'clip.move':
       return { type: 'clip.move', args: { id: clip?.id ?? 'c_x', start: int(r, 0, 30) * 500 } };
     case 'clip.trim':

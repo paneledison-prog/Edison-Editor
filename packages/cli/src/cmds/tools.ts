@@ -5,7 +5,7 @@ import type { Handler } from '../main.js';
 export const tools: Handler = async () => ({
   data: {
     commands: COMMANDS.map(({ name, summary, usage, example, flags, writes }) => ({
-      name: name.replace('.', ' '),
+      name: name.replace(/\./g, ' '),
       summary,
       usage,
       example,

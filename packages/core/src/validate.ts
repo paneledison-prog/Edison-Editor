@@ -1,4 +1,4 @@
-import { ProjectSchema, type Project, type Track, type Clip } from './schema.js';
+import { ProjectSchema, speedOf, type Project, type Track, type Clip } from './schema.js';
 
 export interface Issue {
   code: string;
@@ -67,10 +67,11 @@ export function validateProject(p: unknown): Issue[] {
           );
         }
         if ((a.kind === 'video' || a.kind === 'audio') && a.probe.durMs !== undefined) {
-          if ((c.srcIn ?? 0) + c.dur > a.probe.durMs) {
+          const srcEnd = (c.srcIn ?? 0) + Math.round(c.dur * speedOf(c));
+          if (srcEnd > a.probe.durMs) {
             add(
               'SRC_BOUNDS',
-              `clip ${c.id}: srcIn+dur ${(c.srcIn ?? 0) + c.dur} ms exceeds asset duration ${a.probe.durMs} ms`,
+              `clip ${c.id}: source range end ${srcEnd} ms (srcIn + dur x speed) exceeds asset duration ${a.probe.durMs} ms`,
               `clips.${c.id}`,
             );
           }
@@ -80,6 +81,56 @@ export function validateProject(p: unknown): Issue[] {
       add('TRACK_KIND', `clip ${c.id}: ${track.type} track needs an asset`, `clips.${c.id}`);
     }
 
+    const fxSeen = new Set<string>();
+    for (const f of c.fx ?? []) {
+      if (['speed', 'loudnorm', 'duck'].includes(f.type)) {
+        if (fxSeen.has(f.type))
+          add('FX_INVALID', `clip ${c.id}: more than one ${f.type} effect`, `clips.${c.id}.fx`);
+        fxSeen.add(f.type);
+      }
+      if (f.type === 'duck') {
+        const by = trackById.get(f.by);
+        if (!by)
+          add(
+            'MISSING_REF',
+            `clip ${c.id}: duck references missing track ${f.by}`,
+            `clips.${c.id}.fx`,
+          );
+        else if (by.type !== 'audio' && by.type !== 'video')
+          add(
+            'FX_INVALID',
+            `clip ${c.id}: duck sidechain track ${f.by} is a ${by.type} track, not audio or video`,
+            `clips.${c.id}.fx`,
+          );
+        else if (f.by === c.track)
+          add(
+            'FX_INVALID',
+            `clip ${c.id}: a clip cannot duck by its own track`,
+            `clips.${c.id}.fx`,
+          );
+      }
+      if (
+        [
+          'speed',
+          'gain',
+          'highpass',
+          'denoise',
+          'eq',
+          'compress',
+          'limit',
+          'loudnorm',
+          'duck',
+        ].includes(f.type) &&
+        track.type !== 'video' &&
+        track.type !== 'audio'
+      ) {
+        add(
+          'FX_INVALID',
+          `clip ${c.id}: ${f.type} needs a video or audio track`,
+          `clips.${c.id}.fx`,
+        );
+      }
+    }
     for (const [prop, kfs] of Object.entries(c.keyframes ?? {})) {
       let prev = -1;
       for (const k of kfs) {

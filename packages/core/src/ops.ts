@@ -6,6 +6,8 @@ import {
   ClipId,
   Ease,
   Export,
+  Fx,
+  speedOf,
   KeyframeId,
   MarkerId,
   AssetId,
@@ -277,7 +279,8 @@ export const OPS = {
       right.id = a.newId!;
       right.start = a.at;
       right.dur = c.dur - leftDur;
-      if (c.srcIn !== undefined || c.asset) right.srcIn = (c.srcIn ?? 0) + leftDur;
+      if (c.srcIn !== undefined || c.asset)
+        right.srcIn = (c.srcIn ?? 0) + Math.round(leftDur * speedOf(c));
       if (c.keyframes) {
         const ids = [...(a.kfIds ?? [])];
         const lk: NonNullable<Clip['keyframes']> = {};
@@ -322,6 +325,39 @@ export const OPS = {
             'INVALID_ARGS',
             `clip ${o.id} straddles the ripple gap (${c.start}–${end} ms); trim or split it first`,
           );
+        }
+      }
+      return inverse.reverse();
+    },
+  }),
+  /**
+   * Change playback speed (factor > 1 is faster). The clip's timeline duration becomes source-span / factor.
+   * With ripple, later clips on the same track shift by the change in duration. Factor 1 removes the effect.
+   */
+  'clip.speed': def({
+    args: z.object({
+      id: ClipId,
+      factor: z.number().min(0.1).max(16),
+      ripple: z.boolean().optional(),
+    }),
+    apply(p, a) {
+      const c = getClip(p, a.id);
+      const inverse: OpSpec[] = [putSpec(c)];
+      const oldEnd = c.start + c.dur;
+      const srcSpan = c.dur * speedOf(c);
+      const newDur = Math.max(1, Math.round(srcSpan / a.factor));
+      const fx: Fx[] = (c.fx ?? []).filter((f) => f.type !== 'speed');
+      if (a.factor !== 1) fx.unshift({ type: 'speed', factor: a.factor });
+      if (fx.length) c.fx = fx;
+      else delete c.fx;
+      const delta = newDur - c.dur;
+      c.dur = newDur;
+      if (a.ripple && delta !== 0) {
+        for (const o of p.clips) {
+          if (o !== c && o.track === c.track && o.start >= oldEnd) {
+            inverse.push(putSpec(o));
+            o.start += delta;
+          }
         }
       }
       return inverse.reverse();

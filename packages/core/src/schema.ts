@@ -92,6 +92,78 @@ export const Keyframe = z
 
 export const PropName = z.string().regex(/^[a-zA-Z][\w.]*$/);
 
+const num = (lo: number, hi: number) => z.number().min(lo).max(hi);
+/**
+ * Typed per-clip effects. Audio effects run in array order, then the join fades. An unknown type fails
+ * validation instead of being ignored: a render must never silently skip an effect.
+ */
+export const Fx = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('speed'), factor: num(0.1, 16) }).strict(),
+  z.object({ type: z.literal('gain'), db: num(-60, 40) }).strict(),
+  z.object({ type: z.literal('highpass'), hz: num(20, 500) }).strict(),
+  z
+    .object({
+      type: z.literal('denoise'),
+      method: z.enum(['afftdn', 'arnndn']),
+      nr: num(0, 40).optional(),
+      nf: num(-80, -20).optional(),
+      model: z.string().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('eq'),
+      bands: z
+        .array(
+          z.object({ hz: num(20, 20000), gain: num(-24, 24), q: num(0.1, 10).optional() }).strict(),
+        )
+        .min(1)
+        .max(8),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('compress'),
+      thresholdDb: num(-60, 0),
+      ratio: num(1, 20),
+      attackMs: num(0.01, 2000),
+      releaseMs: num(0.01, 9000),
+      makeupDb: num(0, 36).optional(),
+    })
+    .strict(),
+  z.object({ type: z.literal('limit'), ceilingDb: num(-20, 0) }).strict(),
+  z
+    .object({
+      type: z.literal('loudnorm'),
+      I: num(-40, -5),
+      TP: num(-9, 0),
+      LRA: num(1, 20).optional(),
+      measured: z
+        .object({
+          I: z.number(),
+          TP: z.number(),
+          LRA: z.number(),
+          thresh: z.number(),
+          offset: z.number(),
+        })
+        .strict()
+        .optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('duck'),
+      by: TrackId,
+      thresholdDb: num(-60, 0),
+      ratio: num(1, 20),
+      attackMs: num(0.01, 2000),
+      releaseMs: num(0.01, 9000),
+      makeupDb: num(0, 36).optional(),
+    })
+    .strict(),
+]);
+export type Fx = z.infer<typeof Fx>;
+
 export const Clip = z
   .object({
     id: ClipId,
@@ -104,7 +176,7 @@ export const Clip = z
     srcIn: ms.optional(),
     transform: Transform.optional(),
     keyframes: z.record(PropName, z.array(Keyframe)).optional(),
-    fx: z.array(z.record(z.unknown()).and(z.object({ type: z.string() }))).optional(),
+    fx: z.array(Fx).optional(),
     link: z.string().optional(),
     label: z.string().optional(),
   })
@@ -190,4 +262,9 @@ export function displaySize(p: { w?: number; h?: number; rotation?: number }): {
   h?: number;
 } {
   return p.rotation === 90 || p.rotation === 270 ? { w: p.h, h: p.w } : { w: p.w, h: p.h };
+}
+
+/** Playback speed of a clip (1 when it has no speed effect). `dur` is timeline time; source time used is dur * speed. */
+export function speedOf(c: { fx?: { type: string; factor?: number }[] }): number {
+  return c.fx?.find((f) => f.type === 'speed')?.factor ?? 1;
 }

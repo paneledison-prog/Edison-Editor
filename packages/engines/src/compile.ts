@@ -1,5 +1,6 @@
 import { join } from 'node:path';
-import { displaySize, type Clip, type Project } from '@studio/core';
+import { displaySize, speedOf, type Clip, type Fx, type Project } from '@studio/core';
+import { MAX_AUDIO_SPEED, clipAudioChain, dbToLin } from './audiofx.js';
 import { EngineError } from './run.js';
 import type { Preset } from './presets.js';
 
@@ -40,7 +41,6 @@ export function routeBackend(p: Project): { backend: 'ffmpeg'; reason: string } 
   for (const c of p.clips) {
     if (c.comp) unsupported.push(`${c.id}: composition "${c.comp}"`);
     if (c.keyframes && Object.keys(c.keyframes).length) unsupported.push(`${c.id}: keyframes`);
-    if (c.fx?.length) unsupported.push(`${c.id}: fx`);
     if (c.transform && Object.keys(c.transform).length) unsupported.push(`${c.id}: transform`);
   }
   if (unsupported.length) {
@@ -52,7 +52,8 @@ export function routeBackend(p: Project): { backend: 'ffmpeg'; reason: string } 
   }
   return {
     backend: 'ffmpeg',
-    reason: 'only cuts, concat, fit-scale, overlay, and audio mixing are used',
+    reason:
+      'only cuts, concat, speed, fit/crop/blur reframing, overlay, and the audio chain are used',
   };
 }
 
@@ -67,7 +68,7 @@ export function windowClips(clips: Clip[], a: number, b: number): Clip[] {
       ...c,
       start: s - a,
       dur: e - s,
-      srcIn: c.asset ? (c.srcIn ?? 0) + (s - c.start) : c.srcIn,
+      srcIn: c.asset ? (c.srcIn ?? 0) + Math.round((s - c.start) * speedOf(c)) : c.srcIn,
     });
   }
   return out;
@@ -77,7 +78,13 @@ export function canvasFor(
   p: Project,
   preset: Preset,
   preview: boolean,
+  widthOverride?: number,
 ): { width: number; height: number } {
+  if (widthOverride) {
+    const base =
+      preset.w && preset.h ? { w: preset.w, h: preset.h } : { w: p.meta.width, h: p.meta.height };
+    return { width: even(widthOverride), height: even((widthOverride * base.h) / base.w) };
+  }
   if (preset.w && preset.h) return { width: preset.w, height: preset.h };
   const { width, height } = p.meta;
   if (preview || preset.kind === 'gif') {
@@ -94,6 +101,10 @@ export interface CompileInput {
   preset: Preset;
   preview?: boolean;
   window?: [number, number];
+  /** Render at this width (height follows the preset's or project's aspect). */
+  width?: number;
+  /** How a clip whose aspect differs from the canvas is fitted. Default: fit (letterbox on the project background). */
+  reframe?: 'fit' | 'blur' | 'center-crop';
 }
 
 export function compile(inp: CompileInput): Plan {
@@ -114,7 +125,7 @@ export function compile(inp: CompileInput): Plan {
     );
   const durationMs = Math.min(wb, total) - wa;
 
-  const { width, height } = canvasFor(p, preset, !!inp.preview);
+  const { width, height } = canvasFor(p, preset, !!inp.preview, inp.width);
   const fps = preset.fps ?? p.meta.fps;
   const notes: string[] = [];
   if (preset.w && (preset.w !== p.meta.width || preset.h !== p.meta.height)) {
@@ -132,56 +143,107 @@ export function compile(inp: CompileInput): Plan {
 
   const inputs: string[] = [];
   const vLines: string[] = [];
-  const aLabels: string[] = [];
+  /** Per-clip audio after its own chain and fades, before ducking and mixing. */
+  interface AItem {
+    label: string;
+    track: string;
+    duck?: Extract<Fx, { type: 'duck' }>;
+    clipId: string;
+  }
+  const aLines: string[] = [];
+  const aItems: AItem[] = [];
   let nIn = 0;
   let nV = 0;
   const bg = hex(p.meta.background);
   const joinEdges: { track: string; start: number; end: number }[] = [];
+  const reframe = inp.reframe ?? 'fit';
 
   for (const c of ordered) {
     const t = trackOf(c);
     const a = c.asset ? p.assets[c.asset]! : undefined;
     if (!a) continue;
     const src = join(projectDir, a.workingCopy?.path ?? a.path);
+    const speed = speedOf(c);
     const wantsVideo =
       (t.type === 'video' || t.type === 'graphics') && a.kind !== 'audio' && !t.hidden;
-    const wantsAudio =
+    let wantsAudio =
       !!a.probe.audio &&
       (a.kind === 'video' || a.kind === 'audio') &&
       !t.muted &&
       t.type !== 'graphics';
+    if (wantsAudio && speed > MAX_AUDIO_SPEED) {
+      wantsAudio = false;
+      notes.push(`${c.id}: speed ${speed}x is above ${MAX_AUDIO_SPEED}x, so its audio is dropped`);
+    }
     if (!wantsVideo && !wantsAudio) continue;
+    if (speed < 0.5 && a.kind === 'video')
+      notes.push(
+        `${c.id}: speed ${speed}x is below 0.5x; there is no frame interpolation, so motion will judder`,
+      );
 
     const k = nIn++;
     if (a.kind === 'image') {
       inputs.push('-loop', '1', '-framerate', String(fps), '-t', sec(c.dur), '-i', src);
     } else {
-      inputs.push('-ss', sec(c.srcIn ?? 0), '-t', sec(c.dur), '-i', src);
+      // dur is timeline time; at speed S the clip consumes dur x S of source.
+      inputs.push('-ss', sec(c.srcIn ?? 0), '-t', sec(c.dur * speed), '-i', src);
     }
     if (wantsVideo) {
       const d = displaySize(a.probe);
-      if (d.w && d.h && t.type === 'video') {
-        const k2 = Math.min(width / d.w, height / d.h);
-        const note = `${c.asset} (${d.w}x${d.h}) is upscaled ${k2.toFixed(2)}x to fit ${width}x${height}; effective resolution stays ${d.w}x${d.h}`;
-        if (k2 > 1.01 && !notes.includes(note)) notes.push(note);
-      }
       const at = sec(c.start);
-      const fit =
-        t.type === 'graphics' && a.kind === 'image'
-          ? `scale='min(iw,${width})':'min(ih,${height})':force_original_aspect_ratio=decrease,format=yuva420p`
-          : `scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=lanczos:out_color_matrix=bt709:out_range=tv,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=${bg},setsar=1,format=yuv420p`;
-      vLines.push(`[${k}:v]fps=${fps},${fit},setpts=PTS-STARTPTS+${at}/TB[v${nV}]`);
+      const head = a.kind === 'image' ? `fps=${fps}` : `setpts=(PTS-STARTPTS)/${speed},fps=${fps}`;
+      const cm = 'flags=lanczos:out_color_matrix=bt709:out_range=tv';
+      if (t.type === 'graphics' && a.kind === 'image') {
+        vLines.push(
+          `[${k}:v]${head},scale='min(iw,${width})':'min(ih,${height})':force_original_aspect_ratio=decrease,format=yuva420p,setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
+        );
+      } else if (reframe === 'blur') {
+        vLines.push(
+          `[${k}:v]${head},split=2[bs${nV}][fs${nV}]`,
+          `[bs${nV}]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},boxblur=24:2[bb${nV}]`,
+          `[fs${nV}]scale=${width}:${height}:force_original_aspect_ratio=decrease:${cm}[ff${nV}]`,
+          `[bb${nV}][ff${nV}]overlay=(W-w)/2:(H-h)/2,setsar=1,format=yuv420p,setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
+        );
+      } else if (reframe === 'center-crop') {
+        vLines.push(
+          `[${k}:v]${head},scale=${width}:${height}:force_original_aspect_ratio=increase:${cm},crop=${width}:${height},setsar=1,format=yuv420p,setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
+        );
+      } else {
+        vLines.push(
+          `[${k}:v]${head},scale=${width}:${height}:force_original_aspect_ratio=decrease:${cm},pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=${bg},setsar=1,format=yuv420p,setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
+        );
+      }
+      if (d.w && d.h && t.type === 'video') {
+        const kFit = Math.min(width / d.w, height / d.h);
+        const kCover = Math.max(width / d.w, height / d.h);
+        const kUse = reframe === 'center-crop' ? kCover : kFit;
+        const up = `${c.asset} (${d.w}x${d.h}) is upscaled ${kUse.toFixed(2)}x into ${width}x${height}; effective resolution stays ${d.w}x${d.h}`;
+        if (kUse > 1.01 && !notes.includes(up)) notes.push(up);
+        if (reframe === 'center-crop') {
+          const keep = Math.min(1, width / height / (d.w / d.h));
+          const keepH = Math.min(1, d.w / d.h / (width / height));
+          const msg = `${c.asset}: center crop keeps ${Math.round(keep * 100)}% of the source width and ${Math.round(keepH * 100)}% of its height; anything outside is cut, so inspect frames for lost text`;
+          if (!notes.includes(msg)) notes.push(msg);
+        }
+        if (reframe === 'blur' && Math.abs(width / height - d.w / d.h) > 0.01) {
+          const msg = `${c.asset}: the sides or top/bottom are filled with a blurred, enlarged copy of the video (fit + blur background)`;
+          if (!notes.includes(msg)) notes.push(msg);
+        }
+      }
       nV++;
     }
     if (wantsAudio) {
-      const ch = a.probe.audio!.ch;
-      const mono = ch === 1 ? 'pan=stereo|c0=c0|c1=c0,' : 'aformat=channel_layouts=stereo,';
+      const chain = clipAudioChain(a.probe.audio!.ch, c.fx);
+      const duck = c.fx?.find((f) => f.type === 'duck') as
+        Extract<Fx, { type: 'duck' }> | undefined;
       // 10 ms edge fades at every clip edge so spliced joins cannot click.
       const fade = Math.min(0.01, c.dur / 2000);
       const ms = Math.round(c.start);
-      aLabels.push(
-        `[${k}:a]aresample=48000,${mono}asetpts=PTS-STARTPTS,afade=t=in:d=${fade},afade=t=out:st=${sec(c.dur - fade * 1000)}:d=${fade},adelay=${ms}:all=1[a${aLabels.length}]`,
+      const idx = aItems.length;
+      aLines.push(
+        `[${k}:a]${chain.join(',')},asetpts=PTS-STARTPTS,afade=t=in:d=${fade},afade=t=out:st=${sec(c.dur - fade * 1000)}:d=${fade},adelay=${ms}:all=1[a${idx}]`,
       );
+      aItems.push({ label: `a${idx}`, track: c.track, duck, clipId: c.id });
       joinEdges.push({ track: c.track, start: c.start, end: c.start + c.dur });
     }
   }
@@ -194,6 +256,7 @@ export function compile(inp: CompileInput): Plan {
   const placed = ordered.filter((c) => {
     const t = trackOf(c);
     const a = c.asset ? p.assets[c.asset] : undefined;
+    // exactly the clips that produced a video line above
     return !!a && (t.type === 'video' || t.type === 'graphics') && a.kind !== 'audio' && !t.hidden;
   });
   placed.forEach((c, i) => {
@@ -209,12 +272,44 @@ export function compile(inp: CompileInput): Plan {
   const videoFilter = lines.join(';\n');
   let audioMix: string | undefined;
   let audioFilter: string | undefined;
-  if (aLabels.length) {
-    const ins = aLabels.map((_, i) => `[a${i}]`).join('');
-    const alines = [
-      ...aLabels,
-      `${ins}amix=inputs=${aLabels.length}:normalize=0:dropout_transition=0,aresample=48000,apad=whole_dur=${sec(durationMs)},atrim=duration=${sec(durationMs)}[amix]`,
-    ];
+  if (aItems.length) {
+    const alines = [...aLines];
+    // Ducking: each ducked clip is compressed by a sidechain taken from the mix of the `by` track's clips.
+    const finalLabels: string[] = [];
+    const duckers = new Set(aItems.filter((i) => i.duck).map((i) => i.duck!.by));
+    const sidechain = new Map<string, string[]>(); // by-track -> unused sidechain copies
+    for (const by of duckers) {
+      const members = aItems.filter((i) => i.track === by && !i.duck);
+      const users = aItems.filter((i) => i.duck?.by === by).length;
+      if (!members.length) {
+        notes.push(
+          `duck: track ${by} has no audio in this render, so clips ducked by it are not ducked here`,
+        );
+        continue;
+      }
+      const ins = members.map((m) => `[${m.label}]`).join('');
+      const outs = [`busm_${by}`, ...Array.from({ length: users }, (_, i) => `busc_${by}_${i}`)];
+      alines.push(
+        `${ins}${members.length > 1 ? `amix=inputs=${members.length}:normalize=0:dropout_transition=0,` : ''}asplit=${outs.length}${outs.map((o) => `[${o}]`).join('')}`,
+      );
+      finalLabels.push(`busm_${by}`);
+      sidechain.set(by, outs.slice(1));
+    }
+    for (const i of aItems) {
+      if (duckers.has(i.track) && !i.duck && sidechain.has(i.track)) continue; // already inside its bus
+      if (i.duck && sidechain.get(i.duck.by)?.length) {
+        const sc = sidechain.get(i.duck.by)!.shift()!;
+        const d = i.duck;
+        alines.push(
+          `[${i.label}][${sc}]sidechaincompress=threshold=${dbToLin(d.thresholdDb).toFixed(4)}:ratio=${d.ratio}:attack=${d.attackMs}:release=${d.releaseMs}:makeup=${dbToLin(d.makeupDb ?? 0).toFixed(4)}[${i.label}d]`,
+        );
+        finalLabels.push(`${i.label}d`);
+      } else finalLabels.push(i.label);
+    }
+    const ins = finalLabels.map((l) => `[${l}]`).join('');
+    alines.push(
+      `${ins}amix=inputs=${finalLabels.length}:normalize=0:dropout_transition=0,aresample=48000,apad=whole_dur=${sec(durationMs)},atrim=duration=${sec(durationMs)}[amix]`,
+    );
     audioFilter = alines.join(';\n');
     lines.push(...alines);
     audioMix = 'amix';

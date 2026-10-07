@@ -19,7 +19,9 @@ export interface CmdMeta {
     | 'cache'
     | 'render'
     | 'inspect'
-    | 'ui';
+    | 'ui'
+    | 'video'
+    | 'audio';
   fn: string;
 }
 
@@ -123,6 +125,15 @@ export const COMMANDS: CmdMeta[] = [
       s('out', 'output base name (default: <project>-<preset>-vN)'),
       s('encoder', 'video encoder (libx264 only for now)'),
       b('no-normalize', 'skip loudness normalization'),
+      n('width', 'render at this width (height follows the aspect)'),
+      {
+        name: 'reframe',
+        type: 'string',
+        desc: 'fit (default), blur, center-crop',
+        values: ['fit', 'blur', 'center-crop'],
+      },
+      s('x264-preset', 'x264 preset override, e.g. veryfast'),
+      s('export', 'use preset and reframe from a recorded export id'),
       b('explain', 'print the plan and ffmpeg arguments, run nothing'),
     ],
   }),
@@ -162,9 +173,9 @@ export const COMMANDS: CmdMeta[] = [
     module: 'inspect',
     writes: false,
     summary: 'Integrated LUFS, LRA, true peak, sample peak, noise floor, clipping.',
-    usage: 'studio inspect loudness <file>',
+    usage: 'studio inspect loudness <file> [--from MS] [--to MS]',
     example: 'studio inspect loudness renders/demo-youtube-1080p-v1.mp4',
-    flags: [],
+    flags: [n('from', 'start of the window, ms'), n('to', 'end of the window, ms')],
   }),
   cmd({
     name: 'inspect.silence',
@@ -218,6 +229,198 @@ export const COMMANDS: CmdMeta[] = [
     usage: 'studio ui [--port N]',
     example: 'studio ui --port 4173',
     flags: [n('port', 'port (default 4173, 0 = any free port)')],
+  }),
+  cmd({
+    name: 'video.cut-silence',
+    module: 'video',
+    fn: 'cutSilence',
+    writes: true,
+    summary:
+      'Cut silences out of a clip (pauses are trimmed to the padding, never removed outright). Refuses above 40% removal without --yes.',
+    usage:
+      'studio video cut-silence --clip C [--noise-db N] [--min-s 0.4] [--pad-ms 100] [--yes] [--no-ripple]',
+    example: 'studio video cut-silence --clip c_01 --dry-run',
+    flags: [
+      s('clip', 'clip id', true),
+      n('noise-db', 'threshold in dB (default: measured noise floor + 8, clamped -50..-20)'),
+      n('min-s', 'shortest silence to cut, seconds (default 0.4, not lower)'),
+      n('pad-ms', 'pause kept next to speech (default 100)'),
+      b('yes', 'allow removing more than 40% of the clip'),
+      b('no-ripple', 'do not shift later clips on the track'),
+    ],
+  }),
+  cmd({
+    name: 'video.scenes',
+    module: 'video',
+    fn: 'scenes',
+    writes: true,
+    summary:
+      'Scene-change candidates by FFmpeg scene score. Lists times; --apply adds markers (needs --clip). Never cuts.',
+    usage: 'studio video scenes (--clip C | --asset A) [--threshold 0.3] [--apply]',
+    example: 'studio video scenes --asset a_k3f9 --threshold 0.3',
+    flags: [
+      s('clip', 'clip id'),
+      s('asset', 'asset id'),
+      n('threshold', 'scene score 0..1 (default 0.3)'),
+      b('apply', 'add timeline markers for each change'),
+    ],
+  }),
+  cmd({
+    name: 'video.speed',
+    module: 'video',
+    fn: 'speed',
+    writes: true,
+    summary:
+      "Change a clip's playback speed. Audio is time-stretched (pitch kept) up to 8x, dropped above.",
+    usage: 'studio video speed --clip C --factor F [--ripple]',
+    example: 'studio video speed --clip c_03 --factor 4 --ripple',
+    flags: [
+      s('clip', 'clip id', true),
+      n('factor', 'speed factor, 0.1 to 16 (above 1 is faster)', true),
+      b('ripple', 'shift later clips on the track by the change in duration'),
+    ],
+  }),
+  cmd({
+    name: 'video.reframe',
+    module: 'video',
+    fn: 'reframe',
+    writes: true,
+    summary:
+      'Record an export for another aspect ratio (fit, blur background, or center crop) and report what it costs.',
+    usage:
+      'studio video reframe --to vertical|square|portrait-4x5|youtube [--method fit|blur|center-crop] [--id ID] [--still MS]',
+    example: 'studio video reframe --to vertical --method blur --still 3000',
+    flags: [
+      {
+        name: 'to',
+        type: 'string',
+        desc: 'target aspect',
+        required: true,
+        values: ['vertical', 'square', 'portrait-4x5', 'youtube'],
+      },
+      {
+        name: 'method',
+        type: 'string',
+        desc: 'how to fit (default fit)',
+        values: ['fit', 'blur', 'center-crop'],
+      },
+      s('id', 'export id (default per target)'),
+      n('still', 'also render a still at this timeline ms to check the framing'),
+    ],
+  }),
+  cmd({
+    name: 'audio.denoise',
+    module: 'audio',
+    fn: 'denoise',
+    writes: true,
+    summary: 'Add a high-pass and denoise to a clip; reports noise floor before and after.',
+    usage:
+      'studio audio denoise --clip C [--method afftdn|arnndn] [--nr 12] [--nf -50] [--hp 80] [--model FILE]',
+    example: 'studio audio denoise --clip c_01 --nr 15',
+    flags: [
+      s('clip', 'clip id', true),
+      {
+        name: 'method',
+        type: 'string',
+        desc: 'afftdn (built in) or arnndn (needs --model)',
+        values: ['afftdn', 'arnndn'],
+      },
+      n('nr', 'noise reduction dB (default 12)'),
+      n('nf', 'noise floor dB (default -50)'),
+      n('hp', 'high-pass Hz, 0 = none (default 80)'),
+      s('model', 'RNNoise model file for arnndn'),
+    ],
+  }),
+  cmd({
+    name: 'audio.clean-podcast',
+    module: 'audio',
+    fn: 'cleanPodcast',
+    writes: true,
+    summary:
+      'Podcast chain: high-pass, denoise, EQ, compressor, limiter, two-pass loudnorm. Prints the exact filtergraph and before/after numbers.',
+    usage:
+      'studio audio clean-podcast --clip C [--target -16] [--presence] [--no-denoise] [--no-eq] [--no-compress] [--no-normalize]',
+    example: 'studio audio clean-podcast --clip c_01',
+    flags: [
+      s('clip', 'clip id', true),
+      n('target', 'integrated LUFS (default -16)'),
+      b('presence', 'add +2 dB at 3 kHz'),
+      b('no-denoise', 'skip denoise'),
+      b('no-eq', 'skip EQ'),
+      b('no-compress', 'skip compressor'),
+      b('no-normalize', 'skip loudnorm'),
+    ],
+  }),
+  cmd({
+    name: 'audio.normalize',
+    module: 'audio',
+    fn: 'normalize',
+    writes: true,
+    summary: 'Two-pass loudness normalization of one clip.',
+    usage: 'studio audio normalize --clip C [--target -14] [--tp -1.5]',
+    example: 'studio audio normalize --clip c_01 --target -16',
+    flags: [
+      s('clip', 'clip id', true),
+      n('target', 'integrated LUFS (default -14)'),
+      n('tp', 'true-peak ceiling dBTP (default -1.5)'),
+    ],
+  }),
+  cmd({
+    name: 'audio.duck',
+    module: 'audio',
+    fn: 'duck',
+    writes: true,
+    summary:
+      'Duck a music clip under a voice track with a sidechain compressor; also sets the music bed about 20 dB under the voice.',
+    usage:
+      'studio audio duck --clip MUSIC --by VOICE_TRACK [--reduction 15] [--ratio 8] [--attack 20] [--release 400] [--music-offset-db -20] [--no-level]',
+    example: 'studio audio duck --clip c_music --by t_a1',
+    flags: [
+      s('clip', 'music clip id', true),
+      s('by', 'voice track id', true),
+      n('reduction', 'target reduction under speech, dB (default 15)'),
+      n('ratio', 'compression ratio (default 8)'),
+      n('attack', 'attack ms (default 20)'),
+      n('release', 'release ms (default 400)'),
+      n('music-offset-db', 'music level relative to the voice (default -20)'),
+      b('no-level', 'do not set the music level'),
+    ],
+  }),
+  cmd({
+    name: 'audio.sfx.add',
+    module: 'audio',
+    fn: 'sfxAdd',
+    writes: true,
+    summary: 'Add a music/SFX file to the local library index. A license note is required.',
+    usage: 'studio audio sfx add <file> --tags a,b --license "NOTE" [--bpm N]',
+    example: 'studio audio sfx add whoosh.wav --tags whoosh,transition --license "CC0"',
+    flags: [
+      s('tags', 'comma-separated tags'),
+      s('license', 'license note, or "unknown" (required; checked by the command)'),
+      n('bpm', 'tempo'),
+      n('loop-start', 'loop start ms'),
+      n('loop-end', 'loop end ms'),
+    ],
+  }),
+  cmd({
+    name: 'audio.sfx.search',
+    module: 'audio',
+    fn: 'sfxSearch',
+    writes: false,
+    summary: 'Search the library by file name and tags only.',
+    usage: 'studio audio sfx search "<query>" [--limit N]',
+    example: 'studio audio sfx search "calm piano"',
+    flags: [n('limit', 'max results (default 10)')],
+  }),
+  cmd({
+    name: 'audio.sfx.list',
+    module: 'audio',
+    fn: 'sfxList',
+    writes: false,
+    summary: 'List the library.',
+    usage: 'studio audio sfx list',
+    example: 'studio audio sfx list',
+    flags: [],
   }),
   cmd({
     name: 'project.show',

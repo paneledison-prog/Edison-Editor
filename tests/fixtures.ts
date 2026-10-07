@@ -1,5 +1,5 @@
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const FIX = join(import.meta.dirname, '.fixtures');
@@ -131,7 +131,160 @@ export function ensureFixtures(): void {
       o,
     ]),
   );
+  // P2 fixtures. voice: 1500 Hz at 0.15 (about -19 dBFS RMS) present only from 2 s to 5 s of 9 s.
+  once('voice.wav', (o) =>
+    ff([
+      '-f',
+      'lavfi',
+      '-i',
+      'aevalsrc=0.15*sin(2*PI*1500*t)*between(t\\,2\\,5):s=48000:d=9',
+      '-c:a',
+      'pcm_s16le',
+      o,
+    ]),
+  );
+  once('music.wav', (o) => ff([...SINE(9, 48000, 220), '-ac', '2', '-c:a', 'pcm_s16le', o]));
   once('still.png', (o) => ff([...SRC(1, 1), '-frames:v', '1', o]));
   once('corrupt.mp4', (o) => writeFileSync(o, 'this is not a media file\n'));
   once('empty.mp4', (o) => writeFileSync(o, ''));
+}
+
+// ---------------------------------------------------------------------------------------------
+// P2 fixtures
+// ---------------------------------------------------------------------------------------------
+export interface Truth {
+  durationMs: number;
+  /** pauses planted between sentences: these are what cut-silence must find */
+  pauses: { startMs: number; endMs: number }[];
+  /** 0.25 s dips inside a sentence: shorter than 0.4 s, so they must NOT be cut */
+  microGaps: { startMs: number; endMs: number }[];
+  speech: { startMs: number; endMs: number }[];
+}
+
+function mulberry(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** The schedule is deterministic (seeded), so the planted pauses are known exactly. */
+export function talkSchedule(totalS = 600, seed = 5): Truth {
+  const r = mulberry(seed);
+  const truth: Truth = { durationMs: totalS * 1000, pauses: [], microGaps: [], speech: [] };
+  let t = 1.2;
+  const ms = (s: number) => Math.round(s * 1000);
+  while (t < totalS - 12) {
+    const sentence = 6 + r() * 6; // 6 to 12 s
+    const end = t + sentence;
+    let a = t;
+    while (a < end - 0.1) {
+      const b = Math.min(end, a + 2 + r() * 1.2);
+      truth.speech.push({ startMs: ms(a), endMs: ms(b) });
+      if (b < end - 0.5) truth.microGaps.push({ startMs: ms(b), endMs: ms(b + 0.25) });
+      a = b + (b < end - 0.5 ? 0.25 : 0);
+      if (b >= end) break;
+    }
+    const pause = 1.5 + r() * 1.5; // 1.5 to 3 s
+    truth.pauses.push({ startMs: ms(end), endMs: ms(end + pause) });
+    t = end + pause;
+  }
+  return truth;
+}
+
+/**
+ * 10 minutes: synthetic speech-like audio over a pink-noise floor, with a test-pattern video.
+ * The speech gate is applied with `volume=enable=...`, which is evaluated per audio frame, not per sample.
+ */
+export async function ensureTalk(): Promise<Truth> {
+  mkdirSync(FIX, { recursive: true });
+  const truthPath = fx('talk.truth.json');
+  const out = fx('talk.mp4');
+  if (existsSync(out) && existsSync(truthPath)) return JSON.parse(readFileSync(truthPath, 'utf8'));
+  const truth = talkSchedule();
+  const gate = truth.speech
+    .map((s) => `between(t,${(s.startMs / 1000).toFixed(3)},${(s.endMs / 1000).toFixed(3)})`)
+    .join('+');
+  const voice =
+    '0.18*(sin(2*PI*140*t)+0.6*sin(2*PI*280*t)+0.4*sin(2*PI*420*t)+0.25*sin(2*PI*1300*t))*(0.55+0.45*sin(2*PI*3.7*t))';
+  const script = fx('_talk.filter');
+  writeFileSync(
+    script,
+    `aevalsrc=exprs=${voice.replace(/,/g, '\\,')}:s=48000:d=600[v0];[v0]volume=volume=0:enable='lt(${gate},0.5)'[v];` +
+      `anoisesrc=d=600:c=pink:a=0.004:r=48000:seed=3[n];[v][n]amix=inputs=2:normalize=0[a]`,
+  );
+  await new Promise<void>((resolve, reject) => {
+    const c = spawn(
+      'ffmpeg',
+      [
+        '-hide_banner',
+        '-nostdin',
+        '-v',
+        'error',
+        '-y',
+        '-f',
+        'lavfi',
+        '-i',
+        'testsrc2=s=640x360:r=30:d=600',
+        '-filter_complex_script',
+        script,
+        '-map',
+        '0:v',
+        '-map',
+        '[a]',
+        '-c:v',
+        'libx264',
+        '-preset',
+        'ultrafast',
+        '-crf',
+        '34',
+        '-pix_fmt',
+        'yuv420p',
+        '-g',
+        '60',
+        '-c:a',
+        'aac',
+        '-b:a',
+        '128k',
+        out,
+      ],
+      { stdio: ['ignore', 'ignore', 'pipe'] },
+    );
+    let err = '';
+    c.stderr.on('data', (d) => (err += d));
+    c.on('close', (code) =>
+      code === 0 ? resolve() : reject(new Error('talk fixture failed: ' + err.slice(-500))),
+    );
+  });
+  writeFileSync(truthPath, JSON.stringify(truth));
+  return truth;
+}
+
+/** Three 2 s scenes with hard cuts at 2000 ms and 4000 ms. */
+export function ensureScenes(): void {
+  mkdirSync(FIX, { recursive: true });
+  once('scenes.mp4', (o) =>
+    ff([
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc2=s=640x360:r=30:d=2',
+      '-f',
+      'lavfi',
+      '-i',
+      'smptebars=s=640x360:r=30:d=2',
+      '-f',
+      'lavfi',
+      '-i',
+      'color=c=0x2060c0:s=640x360:r=30:d=2',
+      '-filter_complex',
+      '[0][1][2]concat=n=3:v=1:a=0',
+      ...H264,
+      o,
+    ]),
+  );
 }

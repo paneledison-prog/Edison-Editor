@@ -11,6 +11,7 @@ import {
 import { join } from 'node:path';
 import { canonicalize, timelineDuration, type Project } from '@studio/core';
 import { compile, type Plan } from './compile.js';
+import { licenseWarnings } from './library.js';
 import { PREVIEW, getPreset, type Preset } from './presets.js';
 import { probeFile } from './probe.js';
 import { EngineError, lastLine, run } from './run.js';
@@ -30,6 +31,12 @@ export interface RenderOptions {
   encoder?: string;
   /** skip two-pass loudness normalization */
   noNormalize?: boolean;
+  /** render at this width; height follows the aspect */
+  width?: number;
+  /** how clips of a different aspect are fitted: fit (default), blur, center-crop */
+  reframe?: 'fit' | 'blur' | 'center-crop';
+  /** x264 preset override (ultrafast..veryslow); the preset's own default otherwise */
+  x264Preset?: string;
   /** build and describe the plan, run nothing */
   explain?: boolean;
   log?: (m: string) => void;
@@ -51,6 +58,8 @@ export interface RenderReport {
   bytes?: number;
   bitrateKbps?: number;
   renderMs?: number;
+  reframe: 'fit' | 'blur' | 'center-crop';
+  x264Preset?: string;
   streamCopy: false;
   loudness: null | {
     mode: 'two-pass' | 'none';
@@ -118,7 +127,7 @@ function runFfmpeg(args: string[], partial?: string): Promise<{ code: number; st
   });
 }
 
-function videoArgs(preset: Preset, plan: Plan, encoder: string): string[] {
+function videoArgs(preset: Preset, plan: Plan, encoder: string, x264Preset?: string): string[] {
   if (preset.kind === 'gif') return ['-loop', '0'];
   if (encoder !== 'libx264') {
     throw new EngineError(
@@ -131,7 +140,7 @@ function videoArgs(preset: Preset, plan: Plan, encoder: string): string[] {
     '-c:v',
     'libx264',
     '-preset',
-    preset.x264Preset,
+    x264Preset ?? preset.x264Preset,
     '-crf',
     String(preset.crf),
     '-profile:v',
@@ -212,6 +221,8 @@ export async function render(o: RenderOptions): Promise<RenderReport> {
     preset,
     preview: o.preview,
     window,
+    width: o.width,
+    reframe: o.reframe,
   });
   const ext = stillMode ? 'png' : preset.ext;
   const baseName =
@@ -234,11 +245,20 @@ export async function render(o: RenderOptions): Promise<RenderReport> {
     vcodec: stillMode ? 'png' : preset.kind === 'gif' ? 'gif' : 'h264',
     encoder: stillMode ? 'png' : preset.kind === 'gif' ? 'gif' : encoder,
     acodec: wantAudio ? 'aac' : null,
+    reframe: o.reframe ?? 'fit',
+    ...(o.x264Preset && preset.kind === 'video' ? { x264Preset: o.x264Preset } : {}),
     streamCopy: false,
     loudness: null,
     joinsMs: plan.joinsMs,
     notes: [...plan.notes],
   };
+  report.notes.push(
+    ...licenseWarnings(
+      o.projectDir,
+      o.project,
+      o.project.clips.flatMap((c) => (c.asset ? [c.asset] : [])),
+    ),
+  );
   if (!wantAudio && !stillMode && preset.kind === 'video' && !plan.hasAudio)
     report.notes.push('output has no audio stream');
   if (preset.kind === 'gif')
@@ -258,7 +278,7 @@ export async function render(o: RenderOptions): Promise<RenderReport> {
     if (wantAudio) {
       args.push('-map', norm ? '[aout]' : '[amix]');
     }
-    args.push(...videoArgs(preset, plan, encoder));
+    args.push(...videoArgs(preset, plan, encoder, o.x264Preset));
     if (wantAudio)
       args.push('-c:a', 'aac', '-b:a', `${preset.audioKbps}k`, '-ar', '48000', '-ac', '2');
     if (preset.kind === 'video') args.push('-movflags', '+faststart');
