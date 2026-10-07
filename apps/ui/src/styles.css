@@ -1,0 +1,221 @@
+/* Layout and components. Colors come only from tokens.css via var(--token). */
+:root {
+  --timeline-h: 240px;
+  --topbar-h: 40px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+body {
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+  color: var(--color-text-primary);
+  background: var(--color-bg-canvas);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+h2 {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+code,
+.timecode {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+code {
+  background: var(--color-bg-raised);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+}
+.muted {
+  color: var(--color-text-muted);
+}
+.spacer {
+  flex: 1;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.shell {
+  display: grid;
+  height: 100%;
+  grid-template-columns: var(--rail-w) var(--panel-w) minmax(0, 1fr) var(--inspector-w);
+  grid-template-rows: var(--topbar-h) minmax(0, 1fr) var(--timeline-h);
+  grid-template-areas:
+    'top top top top'
+    'rail assets canvas inspector'
+    'timeline timeline timeline timeline';
+}
+
+.topbar {
+  grid-area: top;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  background: var(--color-bg-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+.project-name {
+  font-weight: var(--weight-semibold);
+}
+
+.rail {
+  grid-area: rail;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) 0;
+  background: var(--color-bg-surface);
+  border-right: 1px solid var(--color-border);
+}
+.panel {
+  background: var(--color-bg-surface);
+  overflow: auto;
+  min-width: 0;
+}
+.assets {
+  grid-area: assets;
+  border-right: 1px solid var(--color-border);
+}
+.inspector {
+  grid-area: inspector;
+  border-left: 1px solid var(--color-border);
+}
+.panel-header {
+  display: flex;
+  align-items: center;
+  height: var(--control-lg);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+.empty {
+  margin: var(--space-4) var(--space-3);
+  color: var(--color-text-secondary);
+}
+
+.canvas {
+  grid-area: canvas;
+  position: relative;
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+  background: var(--color-bg-canvas);
+  min-width: 0;
+}
+/* Media is never themed: the artboard fill is the project background. */
+.artboard {
+  width: min(
+    100%,
+    calc((100vh - var(--topbar-h) - var(--timeline-h) - var(--space-8) * 2) * 16 / 9)
+  );
+  aspect-ratio: 16 / 9;
+  background: var(--artboard-fill);
+  border: 1px solid var(--color-border-strong);
+}
+.badge {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  padding: 2px var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.timeline {
+  grid-area: timeline;
+  z-index: var(--z-timeline);
+  background: var(--color-bg-surface);
+  border-top: 1px solid var(--color-border);
+  overflow: hidden;
+}
+.transport {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-lg);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+.timecode {
+  margin: 0 var(--space-3);
+  color: var(--color-text-secondary);
+}
+.ruler {
+  height: var(--ruler-h);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-raised);
+}
+
+/* Buttons: surface steps for hover/press, no scale animation. */
+.icon-btn,
+.btn {
+  font: inherit;
+  color: var(--color-text-primary);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: var(--control-md);
+  height: var(--control-md);
+  min-width: 24px;
+  padding: 0;
+  background: transparent;
+  border-radius: var(--radius-md);
+}
+.icon-btn:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+}
+.icon-btn[aria-pressed='true'] {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+.btn {
+  height: var(--control-md);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  font-weight: var(--weight-medium);
+}
+.btn-secondary {
+  background: var(--color-bg-raised);
+  border-color: var(--color-border);
+}
+.btn-secondary:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+}
+.btn-ghost {
+  background: transparent;
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+}
+.btn-action {
+  background: var(--color-action);
+  color: var(--color-on-action);
+}
+:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

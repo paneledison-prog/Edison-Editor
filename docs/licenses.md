@@ -22,4 +22,4 @@ Sizes are unpacked package size in `node_modules` on linux-x64 (measured, not gz
 
 ## Fonts and icons (UI)
 
-Geist Sans / Geist Mono (OFL) and Lucide (ISC) are planned for the UI shell. Not yet added.
+Lucide (ISC) is in use. Geist Sans / Geist Mono (OFL) are **not bundled yet**: `tokens.css` lists them first and falls back to the system stack, which is what renders today. Bundling latin subsets needs a size check against the 60 KB gzipped limit in rules/11.

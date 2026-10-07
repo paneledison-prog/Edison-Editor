@@ -17,5 +17,7 @@ const r = await build({
   metafile: true,
   logLevel: 'warning',
 });
-const out = Object.entries(r.metafile.outputs).map(([f, o]) => `${f.replace('packages/cli/dist/', '')} ${o.bytes}`);
+const out = Object.entries(r.metafile.outputs).map(
+  ([f, o]) => `${f.replace('packages/cli/dist/', '')} ${o.bytes}`,
+);
 console.error(out.join('\n'));
