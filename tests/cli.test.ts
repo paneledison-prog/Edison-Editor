@@ -68,7 +68,6 @@ describe('output contract', () => {
       'motion render',
       'demo build',
       'audio normalize',
-      'ui',
     ]) {
       expect(names).not.toContain(absent);
     }

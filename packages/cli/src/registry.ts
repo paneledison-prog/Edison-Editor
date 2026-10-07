@@ -9,7 +9,17 @@ export interface CmdMeta {
   flags: FlagDef[];
   writes: boolean;
   /** Module loaded on demand, so `studio tools` never imports zod or an engine. */
-  module: 'tools' | 'project' | 'ops' | 'tl' | 'doctor' | 'ingest' | 'cache' | 'render' | 'inspect';
+  module:
+    | 'tools'
+    | 'project'
+    | 'ops'
+    | 'tl'
+    | 'doctor'
+    | 'ingest'
+    | 'cache'
+    | 'render'
+    | 'inspect'
+    | 'ui';
   fn: string;
 }
 
@@ -198,6 +208,16 @@ export const COMMANDS: CmdMeta[] = [
       s('planned-black', 'intended black/frozen ranges, A:B,A:B'),
       n('max-size-mb', 'file size budget'),
     ],
+  }),
+  cmd({
+    name: 'ui',
+    module: 'ui',
+    writes: false,
+    summary:
+      'Serve the UI on localhost and push project changes to it. Read-only; stop with Ctrl+C.',
+    usage: 'studio ui [--port N]',
+    example: 'studio ui --port 4173',
+    flags: [n('port', 'port (default 4173, 0 = any free port)')],
   }),
   cmd({
     name: 'project.show',
