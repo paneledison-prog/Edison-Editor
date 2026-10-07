@@ -155,7 +155,7 @@ export async function probeFile(path: string): Promise<ProbeResult> {
       probe.rFps = rfr ? Math.round(rfr * 1000) / 1000 : undefined;
       const vf = await detectVfr(path, avg, rfr);
       probe.vfr = vf.vfr;
-      warnings.push(`vfr=${vf.vfr}: ${vf.method}`);
+      if (vf.vfr) warnings.push(`variable frame rate: ${vf.method}`);
     }
     if (probe.hdr)
       warnings.push(`HDR source (${trc}); no tone-mapping is applied, it is kept as is`);

@@ -183,3 +183,11 @@ export function migrateToCurrent(raw: any): any {
   }
   return raw;
 }
+
+/** Width and height as displayed after the rotation metadata is applied (coded w/h are stored as-is). */
+export function displaySize(p: { w?: number; h?: number; rotation?: number }): {
+  w?: number;
+  h?: number;
+} {
+  return p.rotation === 90 || p.rotation === 270 ? { w: p.h, h: p.w } : { w: p.w, h: p.h };
+}

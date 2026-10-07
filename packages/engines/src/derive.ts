@@ -355,3 +355,7 @@ export async function withLock<T>(dir: string, fn: () => Promise<T>): Promise<T>
   }
   return fn().finally(() => rmSync(lock, { force: true }));
 }
+
+import { displaySize } from '@studio/core';
+/** Height after rotation, used to decide whether a 720p proxy is a downscale. */
+export const displayHeight = (p: { w?: number; h?: number; rotation?: number }) => displaySize(p).h;
