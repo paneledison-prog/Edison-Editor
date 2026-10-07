@@ -51,6 +51,9 @@ importers:
       '@studio/engines':
         specifier: workspace:*
         version: link:../engines
+      '@studio/inspect':
+        specifier: workspace:*
+        version: link:../inspect
 
   packages/core:
     dependencies:
@@ -63,6 +66,15 @@ importers:
       '@studio/core':
         specifier: workspace:*
         version: link:../core
+
+  packages/inspect:
+    dependencies:
+      '@studio/core':
+        specifier: workspace:*
+        version: link:../core
+      '@studio/engines':
+        specifier: workspace:*
+        version: link:../engines
 
 packages:
 

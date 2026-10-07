@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@studio/core": "workspace:*",
-    "@studio/engines": "workspace:*"
+    "@studio/engines": "workspace:*",
+    "@studio/inspect": "workspace:*"
   }
 }

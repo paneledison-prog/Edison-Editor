@@ -7,6 +7,7 @@ export default defineConfig({
     alias: {
       '@studio/core': src('./packages/core/src/index.ts'),
       '@studio/engines': src('./packages/engines/src/index.ts'),
+      '@studio/inspect': src('./packages/inspect/src/index.ts'),
     },
   },
   test: { include: ['tests/**/*.test.ts', 'packages/**/*.test.ts'] },

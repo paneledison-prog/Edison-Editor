@@ -9,7 +9,7 @@ export interface CmdMeta {
   flags: FlagDef[];
   writes: boolean;
   /** Module loaded on demand, so `studio tools` never imports zod or an engine. */
-  module: 'tools' | 'project' | 'ops' | 'tl' | 'doctor' | 'ingest' | 'cache';
+  module: 'tools' | 'project' | 'ops' | 'tl' | 'doctor' | 'ingest' | 'cache' | 'render' | 'inspect';
   fn: string;
 }
 
@@ -92,6 +92,112 @@ export const COMMANDS: CmdMeta[] = [
     usage: 'studio cache build [--assets a_x,a_y]',
     example: 'studio cache build',
     flags: [s('assets', 'comma-separated asset ids (default: all)')],
+  }),
+  cmd({
+    name: 'render',
+    module: 'render',
+    writes: true,
+    summary:
+      'Render the timeline with the FFmpeg backend (two-pass loudness, safe write, versioned name).',
+    usage:
+      'studio render [--preset ID] [--range A:B] [--preview] [--still MS] [--out NAME] [--explain]',
+    example: 'studio render --preset youtube-1080p',
+    flags: [
+      s(
+        'preset',
+        'youtube-1080p (default), youtube-4k, vertical-1080x1920, square-1080, portrait-4x5, gif-small',
+      ),
+      s('range', 'timeline range in ms, A:B'),
+      b('preview', 'fast low-resolution render'),
+      n('still', 'one PNG frame at this timeline ms'),
+      s('out', 'output base name (default: <project>-<preset>-vN)'),
+      s('encoder', 'video encoder (libx264 only for now)'),
+      b('no-normalize', 'skip loudness normalization'),
+      b('explain', 'print the plan and ffmpeg arguments, run nothing'),
+    ],
+  }),
+  cmd({
+    name: 'inspect.frame',
+    module: 'inspect',
+    writes: true,
+    summary: "Extract PNG frames at times (ms). Also reports each frame's mean colour.",
+    usage: 'studio inspect frame <file> --at MS[,MS...] [--width N]',
+    example: 'studio inspect frame renders/demo-youtube-1080p-v1.mp4 --at 0,1500,4000',
+    flags: [s('at', 'comma-separated times in ms', true), n('width', 'scale to this width')],
+  }),
+  cmd({
+    name: 'inspect.sheet',
+    module: 'inspect',
+    writes: true,
+    summary: 'Contact sheets, at most 24 tiles each, with tile times.',
+    usage: 'studio inspect sheet <file> [--fps N] [--cols N] [--width N]',
+    example: 'studio inspect sheet renders/demo-youtube-1080p-v1.mp4 --fps 1 --cols 6 --width 320',
+    flags: [
+      n('fps', 'tiles per second (default 1)'),
+      n('cols', 'columns (default 6)'),
+      n('width', 'tile width px (default 320)'),
+    ],
+  }),
+  cmd({
+    name: 'inspect.waveform',
+    module: 'inspect',
+    writes: true,
+    summary: 'Waveform PNG of the audio.',
+    usage: 'studio inspect waveform <file>',
+    example: 'studio inspect waveform assets/vo.wav',
+    flags: [],
+  }),
+  cmd({
+    name: 'inspect.loudness',
+    module: 'inspect',
+    writes: false,
+    summary: 'Integrated LUFS, LRA, true peak, sample peak, noise floor, clipping.',
+    usage: 'studio inspect loudness <file>',
+    example: 'studio inspect loudness renders/demo-youtube-1080p-v1.mp4',
+    flags: [],
+  }),
+  cmd({
+    name: 'inspect.silence',
+    module: 'inspect',
+    writes: false,
+    summary: 'Silent spans. Default threshold is the measured noise floor + 8 dB.',
+    usage: 'studio inspect silence <file> [--noise-db N] [--min-s S]',
+    example: 'studio inspect silence assets/talk.mp4 --min-s 0.4',
+    flags: [
+      n('noise-db', 'threshold in dB (default: noise floor + 8, between -50 and -20)'),
+      n('min-s', 'minimum span in seconds (default 0.4)'),
+    ],
+  }),
+  cmd({
+    name: 'inspect.black',
+    module: 'inspect',
+    writes: false,
+    summary: 'Black-frame spans (at least one frame) and frozen spans (at least 1 s).',
+    usage: 'studio inspect black <file>',
+    example: 'studio inspect black renders/demo-youtube-1080p-v1.mp4',
+    flags: [],
+  }),
+  cmd({
+    name: 'inspect.qc',
+    module: 'inspect',
+    writes: false,
+    summary:
+      'Technical QC with per-check pass/fail/warn/skipped and measured values. Exits 4 on any failure.',
+    usage: 'studio inspect qc <file> [expectation flags]',
+    example: 'studio inspect qc renders/demo-youtube-1080p-v1.mp4',
+    flags: [
+      n('width', 'expected width'),
+      n('height', 'expected height'),
+      n('fps', 'expected fps'),
+      n('duration-ms', 'expected duration'),
+      s('expect-audio', 'true|false'),
+      n('target-lufs', 'loudness target'),
+      n('true-peak-max', 'dBTP ceiling'),
+      b('h264', 'check H.264 High/yuv420p/AAC-LC delivery'),
+      s('joins', 'join times in ms, comma-separated'),
+      s('planned-black', 'intended black/frozen ranges, A:B,A:B'),
+      n('max-size-mb', 'file size budget'),
+    ],
   }),
   cmd({
     name: 'project.show',

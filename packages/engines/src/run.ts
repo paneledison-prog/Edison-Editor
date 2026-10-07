@@ -2,7 +2,13 @@ import { spawn } from 'node:child_process';
 
 export class EngineError extends Error {
   constructor(
-    public code: 'ENGINE_MISSING' | 'ENGINE_FAILED' | 'UNSUPPORTED_INPUT',
+    public code:
+      | 'ENGINE_MISSING'
+      | 'ENGINE_FAILED'
+      | 'UNSUPPORTED_INPUT'
+      | 'INVALID_INPUT'
+      | 'WOULD_OVERWRITE'
+      | 'ENCODER_UNSUPPORTED',
     message: string,
     public fix?: string,
   ) {

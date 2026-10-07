@@ -6,5 +6,15 @@
     "tsBuildInfoFile": "dist-types/.tsbuildinfo"
   },
   "include": ["src"],
-  "references": [{ "path": "../core" }, { "path": "../engines" }]
+  "references": [
+    {
+      "path": "../core"
+    },
+    {
+      "path": "../engines"
+    },
+    {
+      "path": "../inspect"
+    }
+  ]
 }

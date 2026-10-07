@@ -4,3 +4,6 @@ export * from './hash.js';
 export * from './derive.js';
 export * from './doctor.js';
 export * from './ingest.js';
+export * from './presets.js';
+export * from './compile.js';
+export * from './render.js';

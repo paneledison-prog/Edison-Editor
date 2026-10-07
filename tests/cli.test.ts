@@ -62,8 +62,6 @@ describe('output contract', () => {
     expect(names).toContain('ingest');
     expect(names).toContain('tl add-clip');
     for (const absent of [
-      'render',
-      'inspect frame',
       'video cut-silence',
       'captions transcribe',
       'image resize',

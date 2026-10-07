@@ -23,6 +23,8 @@ const loaders: Record<CmdMeta['module'], () => Promise<Record<string, unknown>>>
   doctor: () => import('./cmds/doctor.js'),
   ingest: () => import('./cmds/ingest.js'),
   cache: () => import('./cmds/cache.js'),
+  render: () => import('./cmds/render.js'),
+  inspect: () => import('./cmds/inspect.js'),
 };
 
 function findCommand(argv: string[]): { meta: CmdMeta; rest: string[] } | undefined {
@@ -50,6 +52,9 @@ const EXIT: Record<string, 1 | 2 | 3 | 4 | 5> = {
   ENGINE_MISSING: 3,
   WOULD_OVERWRITE: 5,
   ENGINE_FAILED: 1,
+  INVALID_INPUT: 2,
+  QC_FAILED: 4,
+  ENCODER_UNSUPPORTED: 3,
 };
 
 export async function main(argv: string[]): Promise<void> {
