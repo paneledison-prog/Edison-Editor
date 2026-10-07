@@ -1,0 +1,30 @@
+{
+  "name": "studio",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "build": "node scripts/build-cli.mjs",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "format": "prettier --write .",
+    "skill:check": "node scripts/skill-sync-check.mjs",
+    "tokens:check": "node scripts/tokens-check.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.25.0",
+    "prettier": "^3.3.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

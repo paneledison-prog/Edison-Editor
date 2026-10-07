@@ -1,0 +1,11 @@
+node_modules/
+dist/
+dist-types/
+models/*
+!models/manifest.json
+.studio/cache/
+renders/
+*.partial
+.DS_Store
+coverage/
+tests/.fixtures/

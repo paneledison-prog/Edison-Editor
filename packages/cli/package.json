@@ -1,0 +1,1 @@
+{ "name": "@studio/cli", "version": "0.0.0", "private": true, "type": "module", "bin": { "studio": "dist/studio.js" }, "dependencies": { "@studio/core": "workspace:*", "@studio/engines": "workspace:*" } }

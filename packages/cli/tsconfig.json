@@ -1,0 +1,1 @@
+{ "extends": "../../tsconfig.base.json", "compilerOptions": { "outDir": "dist-types", "rootDir": "src", "tsBuildInfoFile": "dist-types/.tsbuildinfo" }, "include": ["src"], "references": [{ "path": "../core" }, { "path": "../engines" }] }
