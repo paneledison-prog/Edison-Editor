@@ -82,7 +82,13 @@ export function validateProject(p: unknown): Issue[] {
     }
 
     const fxSeen = new Set<string>();
+    const nodeIds = new Set<string>();
     for (const f of c.fx ?? []) {
+      const node = (f as { node?: string }).node;
+      if (node) {
+        if (nodeIds.has(node)) add('DUP_ID', `clip ${c.id}: two effects are named ${node}`, `clips.${c.id}.fx`);
+        nodeIds.add(node);
+      }
       if (['speed', 'loudnorm', 'duck'].includes(f.type)) {
         if (fxSeen.has(f.type))
           add('FX_INVALID', `clip ${c.id}: more than one ${f.type} effect`, `clips.${c.id}.fx`);
@@ -146,6 +152,12 @@ export function validateProject(p: unknown): Issue[] {
       }
     }
     for (const [prop, kfs] of Object.entries(c.keyframes ?? {})) {
+      // A keyframe on an effect (`fx.<node>.<name>`) must name an effect that is on this clip.
+      const m = /^fx\.(f_[^.]+)\.([A-Za-z][\w]*)$/.exec(prop);
+      if (prop.startsWith('fx.') && !m)
+        add('KF_TARGET', `clip ${c.id}: "${prop}" is not an effect keyframe name (fx.<node>.<parameter>)`, `clips.${c.id}.keyframes.${prop}`);
+      else if (m && !nodeIds.has(m[1]!))
+        add('KF_TARGET', `clip ${c.id}: keyframes on "${prop}" but the clip has no effect ${m[1]}`, `clips.${c.id}.keyframes.${prop}`);
       let prev = -1;
       for (const k of kfs) {
         if (kfIds.has(k.id))

@@ -5,7 +5,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import type { Clip, Fx } from '@studio/core';
+import { cryptoRng, makeId, type Clip, type Fx } from '@studio/core';
 import { CliError } from '../args.js';
 import type { Handler, Invocation } from '../main.js';
 import { num, parseJson, runSpecs, selfRun, store, str } from './shared.js';
@@ -195,7 +195,8 @@ async function addNode(inv: Invocation, clipId: string, id: string, params: Reco
   const clip = clipOf(inv, clipId);
   await validateNode(id, params);
   const fx = [...(clip.fx ?? [])];
-  const node: Fx = { type: 'plugin', id, ...(params ? { params: params as Record<string, number | string | boolean> } : {}) };
+  const taken = new Set(store(inv).load().project.clips.flatMap((c) => (c.fx ?? []).map((f) => (f as { node?: string }).node).filter(Boolean) as string[]));
+  const node: Fx = { type: 'plugin', id, ...(params ? { params: params as Record<string, number | string | boolean> } : {}), node: makeId('f', taken, cryptoRng()) };
   if (at === undefined) fx.push(node);
   else if (at >= 0 && at <= fx.length) fx.splice(at, 0, node);
   else throw new CliError('INVALID_ARGS', `--at must be 0..${fx.length}`, 2);

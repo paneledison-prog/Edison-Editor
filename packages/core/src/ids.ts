@@ -1,7 +1,7 @@
 // Short, stable base32 ids with a kind prefix (Context §3). No i, l, o, u: they read as 1, 1, 0, v.
 export const ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz';
 
-export type IdPrefix = 'a' | 't' | 'c' | 'k' | 'm' | 'op' | 'tx';
+export type IdPrefix = 'a' | 't' | 'c' | 'k' | 'm' | 'op' | 'tx' | 'f' | 'tk' | 'mt';
 
 export type Rng = () => number; // [0, 1)
 

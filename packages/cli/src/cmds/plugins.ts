@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { loadPlugin, PluginError, type Fx } from '@studio/core';
+import { cryptoRng, loadPlugin, makeId, PluginError, type Fx } from '@studio/core';
 import { CliError } from '../args.js';
 import type { Handler } from '../main.js';
 import { parseJson, runSpecs, store, str } from './shared.js';
@@ -245,6 +245,8 @@ export const apply: Handler = async (inv) => {
   const { project } = store(inv).load();
   const clip = project.clips.find((c) => c.id === clipId);
   if (!clip) throw new CliError('NOT_FOUND', `no clip ${clipId}`, 2, 'studio project show');
-  const fx: Fx[] = [...(clip.fx ?? []), { type: 'plugin', id: effect, ...(params ? { params } : {}) }];
+  const taken = new Set(project.clips.flatMap((c) => (c.fx ?? []).map((f) => (f as { node?: string }).node).filter(Boolean) as string[]));
+  const node = makeId('f', taken, cryptoRng()); // named, so `studio fx ...` can change or remove it later
+  const fx: Fx[] = [...(clip.fx ?? []), { type: 'plugin', id: effect, ...(params ? { params } : {}), node }];
   return runSpecs(inv, [{ type: 'clip.set', args: { id: clipId, patch: { fx } } }], `plugin ${effect}`);
 };

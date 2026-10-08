@@ -94,6 +94,11 @@ export const PropName = z.string().regex(/^[a-zA-Z][\w.]*$/);
 
 const num = (lo: number, hi: number) => z.number().min(lo).max(hi);
 /**
+ * Names one video effect on a clip (`f_xxxx`), so it can be changed, moved, keyframed or removed by name however the stack
+ * is reordered. Optional: effects added before ids existed keep working and are addressed by position until they get one.
+ */
+export const NodeId = z.string().regex(/^f_[0-9a-hjkmnp-tv-z]{4,10}$/, 'an effect node id such as f_k3f9');
+/**
  * Typed per-clip effects. Audio effects run in array order, then the join fades. An unknown type fails
  * validation instead of being ignored: a render must never silently skip an effect.
  */
@@ -108,6 +113,7 @@ export const Fx = z.discriminatedUnion('type', [
       w: num(0.005, 1),
       h: num(0.005, 1),
       strength: num(2, 80).optional(),
+      node: NodeId.optional(),
     })
     .strict(),
   // A 3D LUT (.cube or .3dl) from inside the project folder, applied to the picture after the clip's own scale and zoom.
@@ -119,6 +125,7 @@ export const Fx = z.discriminatedUnion('type', [
         .max(200)
         .regex(/^(?!.*\.\.)[A-Za-z0-9_][A-Za-z0-9_./ -]*\.(cube|3dl)$/i, 'a .cube or .3dl path inside the project'),
       bypass: z.boolean().optional(),
+      node: NodeId.optional(),
     })
     .strict(),
   // A plugin's video effect; the id and parameters are checked against the plugin's manifest at render time.
@@ -129,9 +136,10 @@ export const Fx = z.discriminatedUnion('type', [
       params: z.record(z.string().max(24), z.union([z.number(), z.string().max(120), z.boolean()])).optional(),
       /** a node switched off: kept in the stack, skipped by the render */
       bypass: z.boolean().optional(),
+      node: NodeId.optional(),
     })
     .strict(),
-  z.object({ type: z.literal('gain'), db: num(-60, 40) }).strict(),
+  z.object({ type: z.literal('gain'), db: num(-60, 40), node: NodeId.optional() }).strict(),
   z.object({ type: z.literal('highpass'), hz: num(20, 500) }).strict(),
   z
     .object({

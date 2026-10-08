@@ -32,7 +32,8 @@ export interface CmdMeta {
     | 'script'
     | 'color'
     | 'design'
-    | 'workspace';
+    | 'workspace'
+    | 'fx';
   fn: string;
 }
 
@@ -1596,5 +1597,103 @@ export const COMMANDS: CmdMeta[] = [
     usage: 'studio work status',
     example: 'studio work status --project workspaces/m1',
     flags: [],
+  }),
+  cmd({
+    name: 'fx.list',
+    module: 'fx',
+    writes: false,
+    summary: 'The effect stack of a clip: every effect with its id (node), settings, on/off, which parameters are keyframed. --verify also re-hashes the source file to show it is untouched.',
+    usage: 'studio fx list --clip c_xx [--verify]',
+    example: 'studio fx list --clip c_01 --verify',
+    flags: [s('clip', 'media clip id', true), b('verify', 'hash the original file and compare with the hash recorded at ingest')],
+  }),
+  cmd({
+    name: 'fx.verify',
+    module: 'fx',
+    writes: false,
+    summary: 'Prove the originals are untouched: re-hash the source files and compare with the hashes recorded when they were ingested (all assets, or the one a clip uses).',
+    usage: 'studio fx verify [--clip c_xx]',
+    example: 'studio fx verify',
+    flags: [s('clip', 'only the asset this clip uses')],
+  }),
+  cmd({
+    name: 'fx.add',
+    module: 'fx',
+    writes: true,
+    summary: 'Add an effect on top of a clip (never into the source): a plugin effect, a LUT, or a blur region. Returns its node id for later changes.',
+    usage: 'studio fx add --clip c_xx (--effect ID [--params JSON] | --lut FILE | --region x,y,w,h [--strength N]) [--at POSITION] [--bypass]',
+    example: 'studio fx add --clip c_01 --effect glow --params \'{"amount":0.6}\'',
+    flags: [
+      s('clip', 'media clip id', true),
+      s('effect', 'plugin effect id (studio color effects lists them)'),
+      s('params', 'parameters as JSON'),
+      s('lut', 'a .cube or .3dl inside the project'),
+      s('region', 'blur region as fractions of the frame: x,y,w,h'),
+      n('strength', 'blur strength 2..80'),
+      n('at', 'position in the stack (default: end)'),
+      b('bypass', 'add it switched off'),
+    ],
+  }),
+  cmd({
+    name: 'fx.set',
+    module: 'fx',
+    writes: true,
+    summary: 'Change an effect: merge parameters (or --replace), switch it on or off, move a blur region. The node is its id (f_xxxx) or its position.',
+    usage: 'studio fx set --clip c_xx --node f_xxxx [--params JSON] [--replace] [--bypass | --enable] [--region x,y,w,h] [--strength N]',
+    example: 'studio fx set --clip c_01 --node f_k3f9 --params \'{"amount":0.3}\'',
+    flags: [
+      s('clip', 'media clip id', true),
+      s('node', 'effect id or position', true),
+      s('params', 'parameters to change, as JSON'),
+      b('replace', 'replace all parameters instead of merging'),
+      b('bypass', 'switch the effect off (kept in the stack)'),
+      b('enable', 'switch it back on'),
+      s('region', 'blur region x,y,w,h'),
+      n('strength', 'blur strength'),
+    ],
+  }),
+  cmd({
+    name: 'fx.remove',
+    module: 'fx',
+    writes: true,
+    summary: 'Remove an effect, with its keyframes, in one undoable step. The source file is not touched. --all removes every video effect.',
+    usage: 'studio fx remove --clip c_xx (--node f_xxxx | --all)',
+    example: 'studio fx remove --clip c_01 --node f_k3f9',
+    flags: [s('clip', 'media clip id', true), s('node', 'effect id or position'), b('all', 'remove every video effect on the clip')],
+  }),
+  cmd({
+    name: 'fx.move',
+    module: 'fx',
+    writes: true,
+    summary: 'Change the order of effects (order matters: each one works on the result of the one before).',
+    usage: 'studio fx move --clip c_xx --node f_xxxx --to POSITION',
+    example: 'studio fx move --clip c_01 --node f_k3f9 --to 0',
+    flags: [s('clip', 'media clip id', true), s('node', 'effect id or position', true), n('to', 'new position', true)],
+  }),
+  cmd({
+    name: 'fx.bypass',
+    module: 'fx',
+    writes: true,
+    summary: 'Switch an effect off (it stays in the stack) or back on with --off; compare with and without it.',
+    usage: 'studio fx bypass --clip c_xx --node f_xxxx [--off]',
+    example: 'studio fx bypass --clip c_01 --node f_k3f9',
+    flags: [s('clip', 'media clip id', true), s('node', 'effect id or position', true), b('off', 'switch it back on')],
+  }),
+  cmd({
+    name: 'fx.key',
+    module: 'fx',
+    writes: true,
+    summary: 'Keyframe one parameter of an effect (any number parameter, `mix` for how much of the effect shows, or the `db` of a gain). --delete k_id removes a keyframe.',
+    usage: 'studio fx key --clip c_xx --node f_xxxx --param NAME --t MS --v N [--ease expo.out] | --delete k_xxxx',
+    example: 'studio fx key --clip c_01 --node f_k3f9 --param exposure --t 1000 --v 1.5 --ease sine.inOut',
+    flags: [
+      s('clip', 'media clip id', true),
+      s('node', 'effect id or position'),
+      s('param', 'parameter name, or mix'),
+      n('t', 'ms from the clip start'),
+      n('v', 'value'),
+      s('ease', 'easing name'),
+      s('delete', 'keyframe id to delete'),
+    ],
   }),
 ];

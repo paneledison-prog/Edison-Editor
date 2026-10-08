@@ -41,6 +41,7 @@ const loaders: Record<CmdMeta['module'], () => Promise<Record<string, unknown>>>
   color: () => import('./cmds/color.js'),
   design: () => import('./cmds/design.js'),
   workspace: () => import('./cmds/workspace.js'),
+  fx: () => import('./cmds/fx.js'),
 };
 
 function findCommand(argv: string[]): { meta: CmdMeta; rest: string[] } | undefined {

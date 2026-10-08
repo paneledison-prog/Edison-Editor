@@ -18,3 +18,4 @@ export * from './zoom.js';
 export * from './preview.js';
 export * from './plugins.js';
 export * from './design.js';
+export * from './fxanim.js';
