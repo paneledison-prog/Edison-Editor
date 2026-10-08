@@ -757,3 +757,13 @@ code.block {
   fill: var(--color-accent);
   outline: none;
 }
+
+/* ---- hub with no workspaces yet ---- */
+.boot {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: var(--space-6);
+  color: var(--color-text-secondary);
+  text-align: center;
+}

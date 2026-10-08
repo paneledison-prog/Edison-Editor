@@ -1,14 +1,15 @@
 import {
-  AudioLines, Circle, Download, Frame, Image as ImageIcon, Moon, MousePointer2, Pen, Redo2, Square, Star, Sun, Type, Undo2,
+  Circle, Download, Frame, Moon, MousePointer2, Pen, Redo2, Square, Star, Sun, Type, Undo2,
 } from 'lucide-preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { sendExport, useLiveSnapshot, type ExportResult } from './api';
+import { canLoad, scoped, sendExport, useLiveSnapshot, useWorkspaces, wsId, type ExportResult } from './api';
 import { AnimatePanel } from './AnimatePanel';
 import { Canvas } from './Canvas';
 import { Inspector } from './Inspector';
 import { Layers } from './Layers';
 import { Timeline, snapFrame } from './Timeline';
-import { commit, design, getState, notify, propSpecs, receive, redo, selected, setState, undo, useS, type Tool } from './state';
+import { WorkspaceTabs } from './WorkspaceTabs';
+import { commit, design, getState, locked, notify, propSpecs, receive, redo, selected, setState, undo, useS, type Tool } from './state';
 import { currentTheme, setTheme, type Theme } from './theme';
 
 const TOOLS: { tool: Tool; key: string; label: string; Icon: typeof Square }[] = [
@@ -18,8 +19,6 @@ const TOOLS: { tool: Tool; key: string; label: string; Icon: typeof Square }[] =
   { tool: 'rect', key: 'R', label: 'Rectangle', Icon: Square },
   { tool: 'ellipse', key: 'O', label: 'Ellipse', Icon: Circle },
   { tool: 'star', key: 'S', label: 'Star', Icon: Star },
-  { tool: 'image', key: 'I', label: 'Image', Icon: ImageIcon },
-  { tool: 'audio', key: 'A', label: 'Audio', Icon: AudioLines },
   { tool: 'pen', key: 'P', label: 'Pen (Enter to finish)', Icon: Pen },
 ];
 const EXPORTS = [
@@ -32,7 +31,8 @@ const EXPORTS = [
 ] as const;
 
 export function App() {
-  const { snap, problem, live, set } = useLiveSnapshot();
+  const workspaces = useWorkspaces();
+  const { snap, problem, live, set } = useLiveSnapshot(canLoad(workspaces));
   const s = useS((x) => x.snap);
   const tab = useS((x) => x.tab);
   const tool = useS((x) => x.tool);
@@ -51,37 +51,70 @@ export function App() {
   }, [problem]);
   void set;
 
+  // A hub opened without ?ws= goes to its first workspace.
+  useEffect(() => {
+    if (workspaces?.mode === 'hub' && !wsId && workspaces.workspaces[0]) location.replace(`?ws=${workspaces.workspaces[0].slot}`);
+  }, [workspaces]);
+  // Media is added by the agent. A file dropped on the page must not open in the browser or add anything.
+  useEffect(() => {
+    const stop = (e: DragEvent) => {
+      if (!e.dataTransfer?.types.includes('Files')) return;
+      e.preventDefault();
+      if (e.type === 'drop') notify('Images and audio are added by your agent: ask Claude Code to place the file.', 'info');
+    };
+    window.addEventListener('dragover', stop);
+    window.addEventListener('drop', stop);
+    return () => {
+      window.removeEventListener('dragover', stop);
+      window.removeEventListener('drop', stop);
+    };
+  }, []);
+
   usePlayback();
   useKeys();
 
+  if (workspaces?.mode === 'hub' && !wsId && workspaces.workspaces.length === 0)
+    return (
+      <div class="boot" role="status" data-testid="no-workspaces">
+        No design workspaces are open. Ask Claude Code to open them (up to {workspaces.limit}), or run <code>studio ws open --kind design --count {workspaces.limit}</code>.
+      </div>
+    );
   if (!s) return <div class="boot" role="status">{problem ?? 'Loading the design…'}</div>;
   const d = s.design;
   const exporting = getState().exporting;
+  const lease = s.lease;
 
   return (
-    <div class="shell" data-testid="design-editor">
+    <div class="shell" data-testid="design-editor" data-locked={lease ? 'true' : undefined}>
       <header class="topbar">
+        {workspaces?.mode === 'hub' && <WorkspaceTabs view={workspaces} />}
         <nav class="tools" aria-label="Tools" role="toolbar">
           {TOOLS.map(({ tool: t, key, label, Icon }) => (
-            <button key={t} class={`tool ${tool === t ? 'on' : ''}`} aria-label={label} aria-pressed={tool === t} title={`${label} (${key})`} data-tool={t} onClick={() => setState({ tool: t })}>
+            <button key={t} class={`tool ${tool === t ? 'on' : ''}`} disabled={!!lease && t !== 'select'} aria-label={label} aria-pressed={tool === t} title={`${label} (${key})`} data-tool={t} onClick={() => setState({ tool: t })}>
               <Icon size={17} />
             </button>
           ))}
         </nav>
-        <SceneTitle name={d.meta.name} />
+        <SceneTitle name={d.meta.name} disabled={!!lease} />
         <div class="top-right">
+          {lease && (
+            <span class="agent-pill" data-testid="agent-status" role="status" title={lease.note ?? ''}>
+              <span class="ws-dot" aria-hidden="true" />
+              {lease.agent} is working{lease.note ? `: ${lease.note}` : ''} · view only
+            </span>
+          )}
           <span class={`pill ${live ? 'live' : 'off'}`} title={live ? 'Connected: agent edits appear here as they happen' : 'Disconnected from the editor server'}>{live ? 'Live' : 'Offline'}</span>
-          <button class="icon-btn" aria-label="Undo" title="Undo (Ctrl+Z)" disabled={!s.canUndo} onClick={undo}><Undo2 size={16} /></button>
-          <button class="icon-btn" aria-label="Redo" title="Redo (Ctrl+Shift+Z)" disabled={!s.canRedo} onClick={redo}><Redo2 size={16} /></button>
+          <button class="icon-btn" aria-label="Undo" title="Undo (Ctrl+Z)" disabled={!s.canUndo || !!lease} onClick={undo}><Undo2 size={16} /></button>
+          <button class="icon-btn" aria-label="Redo" title="Redo (Ctrl+Shift+Z)" disabled={!s.canRedo || !!lease} onClick={redo}><Redo2 size={16} /></button>
           <button class="zoom" aria-label="Fit to screen" title="Zoom (Ctrl + scroll); click to fit" onClick={() => setState({ fit: true })}>{Math.round(zoom * 100)}%</button>
           <button class="icon-btn" aria-label={theme === 'dark' ? 'Light theme' : 'Dark theme'} onClick={() => { const n = theme === 'dark' ? 'light' : 'dark'; setTheme(n); setT(n); }}>
             {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
           </button>
           <div class="export-wrap">
-            <button class="primary" aria-haspopup="menu" aria-expanded={menu} data-testid="export-btn" onClick={() => setMenu((v) => !v)}>
+            <button class="primary" disabled={!!lease} title={lease ? `${lease.agent} is working: export when it finishes` : undefined} aria-haspopup="menu" aria-expanded={menu} data-testid="export-btn" onClick={() => setMenu((v) => !v)}>
               <Download size={14} /> Export
             </button>
-            {menu && <ExportMenu onClose={() => setMenu(false)} />}
+            {menu && !lease && <ExportMenu onClose={() => setMenu(false)} />}
           </div>
         </div>
       </header>
@@ -97,7 +130,7 @@ export function App() {
           <button role="tab" aria-selected={tab === 'design'} class={tab === 'design' ? 'on' : ''} onClick={() => setState({ tab: 'design' })}>Design</button>
           <button role="tab" aria-selected={tab === 'animate'} class={tab === 'animate' ? 'on' : ''} data-testid="animate-tab" onClick={() => setState({ tab: 'animate' })}>Animate</button>
         </div>
-        <div class="right-scroll">{tab === 'design' ? <Inspector /> : <AnimatePanel />}</div>
+        <div class="right-scroll" inert={!!lease}>{tab === 'design' ? <Inspector /> : <AnimatePanel />}</div>
       </aside>
       <footer class="bottom">
         <Timeline />
@@ -108,13 +141,14 @@ export function App() {
   );
 }
 
-function SceneTitle({ name }: { name: string }) {
+function SceneTitle({ name, disabled }: { name: string; disabled: boolean }) {
   const [v, setV] = useState(name);
   useEffect(() => setV(name), [name]);
   return (
     <input
       class="title"
       aria-label="Scene name"
+      disabled={disabled}
       value={v}
       onInput={(e) => setV((e.target as HTMLInputElement).value)}
       onBlur={() => v.trim() && v !== name ? commit([{ type: 'scene.set', args: { patch: { name: v.trim().slice(0, 80) } } }], 'rename scene') : setV(name)}
@@ -191,7 +225,7 @@ function usePlayback() {
         if (l.type !== 'audio' || l.visible === false) continue;
         let a = audio.current.get(l.id);
         if (!a) {
-          a = new Audio('/' + l.src);
+          a = new Audio(scoped('/' + l.src));
           audio.current.set(l.id, a);
         }
         const from = l.start ?? 0;
@@ -237,11 +271,13 @@ function useKeys() {
       const st = getState();
       const d = design();
       if (!d) return;
+      const view = locked(); // an agent is working: keys that look, play and select still work; keys that edit do nothing
       if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault();
         return e.shiftKey ? void redo() : void undo();
       }
       if (mod && e.key.toLowerCase() === 'y') return void (e.preventDefault(), redo());
+      if (view && mod && ['d', 'g'].includes(e.key.toLowerCase())) return void e.preventDefault();
       if (mod && e.key.toLowerCase() === 'd') {
         e.preventDefault();
         return void commit(selected().map((l) => ({ type: 'layer.duplicate', args: { id: l.id } })), 'duplicate');
@@ -289,6 +325,7 @@ function useKeys() {
       if (e.key === ',' || e.key === '.') return void (e.preventDefault(), frame(e.key === ',' ? -1 : 1));
       if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
         e.preventDefault();
+        if (view && st.selection.length) return;
         if (!st.selection.length) return e.key === 'ArrowLeft' ? frame(-1) : e.key === 'ArrowRight' ? frame(1) : undefined;
         const n = e.shiftKey ? 10 : 1;
         const dx = e.key === 'ArrowLeft' ? -n : e.key === 'ArrowRight' ? n : 0;
@@ -297,13 +334,14 @@ function useKeys() {
       }
       if ((e.key === 'Delete' || e.key === 'Backspace') && st.selection.length) {
         e.preventDefault();
+        if (view) return;
         const ids = st.selection;
         setState({ selection: [] });
         return void commit(ids.map((id) => ({ type: 'layer.delete', args: { id } })), 'delete');
       }
       if (e.key === 'Escape') return setState({ selection: [], tool: 'select' });
       const hit = TOOLS.find((t) => t.key.toLowerCase() === e.key.toLowerCase());
-      if (hit) setState({ tool: hit.tool });
+      if (hit && !(view && hit.tool !== 'select')) setState({ tool: hit.tool });
     };
     window.addEventListener('keydown', on);
     return () => window.removeEventListener('keydown', on);

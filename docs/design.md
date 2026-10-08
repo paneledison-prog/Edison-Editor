@@ -31,7 +31,7 @@ Presets (`studio design presets`): `fade-in fade-out slide-in slide-out scale-in
 
 ## Editing in the page
 
-`studio design ui` serves the editor on localhost. Tools: select (V), frame (F), text (T), rectangle (R), ellipse (O), star (S), image (I), audio (A), pen (P, Enter to finish). Drag to move; handles resize and rotate (Shift: proportional, 15 degree steps); layers snap to the scene and to each other (Alt: no snap); Ctrl+D duplicate, Ctrl+G group, Ctrl+Shift+G ungroup, Delete, Ctrl+Z / Ctrl+Shift+Z, arrows nudge (Shift: 10), Space plays, `,` `.` step a frame, Ctrl+scroll zooms.
+`studio design ui` serves the editor on localhost. Tools: select (V), frame (F), text (T), rectangle (R), ellipse (O), star (S), pen (P, Enter to finish). There is no Image or Audio tool and no upload: images and audio are placed by your agent (`studio design asset`, `studio design add image`), and the page refuses a file dropped on it. While an agent is working in the design the page is view-only (see `docs/workspaces.md`); `studio design ui --hub` shows up to five designs as tabs. Drag to move; handles resize and rotate (Shift: proportional, 15 degree steps); layers snap to the scene and to each other (Alt: no snap); Ctrl+D duplicate, Ctrl+G group, Ctrl+Shift+G ungroup, Delete, Ctrl+Z / Ctrl+Shift+Z, arrows nudge (Shift: 10), Space plays, `,` `.` step a frame, Ctrl+scroll zooms.
 
 * Design tab: layout, opacity, corner, fill, stroke, shadow, blurs, glass, text and shape options. A diamond beside a property keys it at the playhead.
 * Animate tab: presets, layer timing, every keyframe with its time, value and easing.

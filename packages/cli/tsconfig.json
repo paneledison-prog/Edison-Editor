@@ -23,6 +23,9 @@
     },
     {
       "path": "../design"
+    },
+    {
+      "path": "../workspace"
     }
   ]
 }

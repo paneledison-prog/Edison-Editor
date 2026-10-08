@@ -31,7 +31,8 @@ export interface CmdMeta {
     | 'expr'
     | 'script'
     | 'color'
-    | 'design';
+    | 'design'
+    | 'workspace';
   fn: string;
 }
 
@@ -237,11 +238,13 @@ export const COMMANDS: CmdMeta[] = [
     writes: true,
     summary:
       'Serve the UI on localhost, push project changes to it, and accept its edits as ops (actor ui). Stop with Ctrl+C.',
-    usage: 'studio ui [--port N] [--read-only]',
-    example: 'studio ui --port 4173',
+    usage: 'studio ui [--port N] [--read-only] [--hub [--root DIR]]',
+    example: 'studio ui --hub --root ~/edits',
     flags: [
       n('port', 'port (default 4173, 0 = any free port)'),
       b('read-only', 'refuse edits from the page'),
+      b('hub', 'serve the media workspaces m1..m5 under <root>/workspaces, with a tab for each, instead of one project'),
+      s('root', 'folder that holds workspaces/ (default: $STUDIO_ROOT or the project folder)'),
     ],
   }),
   cmd({
@@ -1227,9 +1230,14 @@ export const COMMANDS: CmdMeta[] = [
     fn: 'ui',
     writes: true,
     summary: 'Serve the design and animation editor on localhost; its edits are ops (actor ui) through the same store the CLI uses. Stop with Ctrl+C.',
-    usage: 'studio design ui [--port N] [--read-only]',
-    example: 'studio design ui --port 4174',
-    flags: [n('port', 'port (default 4174, 0 = any free port)'), b('read-only', 'refuse edits from the page')],
+    usage: 'studio design ui [--port N] [--read-only] [--hub [--root DIR]]',
+    example: 'studio design ui --hub --root ~/edits',
+    flags: [
+      n('port', 'port (default 4174, 0 = any free port)'),
+      b('read-only', 'refuse edits from the page'),
+      b('hub', 'serve the design workspaces d1..d5 under <root>/workspaces, with a tab for each, instead of one design'),
+      s('root', 'folder that holds workspaces/ (default: $STUDIO_ROOT or the project folder)'),
+    ],
   }),
   cmd({
     name: 'motion.templates',
@@ -1517,5 +1525,76 @@ export const COMMANDS: CmdMeta[] = [
     usage: 'studio tl marker --t MS --label TEXT',
     example: 'studio tl marker --t 5000 --label "Click: Save"',
     flags: [n('t', 'timeline ms', true), s('label', 'text', true)],
+  }),
+  cmd({
+    name: 'ws.open',
+    module: 'workspace',
+    writes: true,
+    summary:
+      'Open 1 to 5 workspaces at once (at most 5 media and 5 design in use): each is its own project folder, so one agent or subagent per workspace can work in parallel without touching the others. All or nothing.',
+    usage:
+      'studio ws open [--kind media|design] [--count N] [--name TEXT] [--slot m1] [--root DIR] [--width N --height N --fps N --duration MS --background #rrggbb]',
+    example: 'studio ws open --kind media --count 5 --name "Clip"',
+    flags: [
+      { name: 'kind', type: 'string', desc: 'media (image, video, audio; slots m1..m5) or design (design and animation; slots d1..d5). Default media', values: ['media', 'design'] },
+      n('count', 'how many workspaces to open (1 to 5, default 1)'),
+      s('name', 'name; with --count the workspaces are "name 1", "name 2", ...'),
+      s('slot', 'a specific free slot, e.g. m3 or d2'),
+      s('root', 'folder that will hold workspaces/ (default: $STUDIO_ROOT or the project folder)'),
+      n('width', 'canvas width'),
+      n('height', 'canvas height'),
+      n('fps', 'frame rate'),
+      n('duration', 'design scene length in ms'),
+      s('background', '#RRGGBB (design: or transparent)'),
+    ],
+  }),
+  cmd({
+    name: 'ws.list',
+    module: 'workspace',
+    writes: false,
+    summary: 'List the open workspaces with their folder, whether an agent is working in them, and what is in them. Shows how many of the 5 slots per editor are free.',
+    usage: 'studio ws list [--kind media|design] [--root DIR]',
+    example: 'studio ws list',
+    flags: [
+      { name: 'kind', type: 'string', desc: 'only this editor', values: ['media', 'design'] },
+      s('root', 'folder that holds workspaces/'),
+    ],
+  }),
+  cmd({
+    name: 'ws.close',
+    module: 'workspace',
+    writes: true,
+    summary: 'Free a slot: the workspace folder is moved to workspaces/.closed/ (nothing is deleted). Refused while an agent holds it, unless --force.',
+    usage: 'studio ws close <slot> [--root DIR] [--force]',
+    example: 'studio ws close m2',
+    flags: [s('root', 'folder that holds workspaces/')],
+  }),
+  cmd({
+    name: 'work.begin',
+    module: 'workspace',
+    writes: true,
+    summary:
+      'Take this workspace for your agent: the editor becomes view-only for the person until you finish. Every write you make with --agent keeps it alive; it expires by itself after --ttl seconds without activity. Another live agent holding it refuses.',
+    usage: 'studio work begin --agent NAME [--note TEXT] [--ttl SECONDS]',
+    example: 'studio work begin --agent m1-agent --note "cutting the intro" --project workspaces/m1',
+    flags: [s('note', 'what you are doing, shown to the person (200 characters)'), n('ttl', 'seconds of inactivity before it expires (1 to 3600, default 120)')],
+  }),
+  cmd({
+    name: 'work.end',
+    module: 'workspace',
+    writes: true,
+    summary: 'Give the workspace back: the editor opens for the person at once. Always do this when you finish.',
+    usage: 'studio work end --agent NAME [--force]',
+    example: 'studio work end --agent m1-agent --project workspaces/m1',
+    flags: [],
+  }),
+  cmd({
+    name: 'work.status',
+    module: 'workspace',
+    writes: false,
+    summary: 'Is an agent working in this workspace, who, and how long until the lease expires.',
+    usage: 'studio work status',
+    example: 'studio work status --project workspaces/m1',
+    flags: [],
   }),
 ];

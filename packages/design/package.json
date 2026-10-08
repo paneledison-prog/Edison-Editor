@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@studio/motion": "workspace:*",
-    "zod": "^3.25.0"
+    "zod": "^3.25.0",
+    "@studio/workspace": "workspace:*"
   }
 }

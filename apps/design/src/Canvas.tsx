@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { resolve, type Design, type Layer } from '@studio/design';
 import { Scene } from '@studio/design/render';
-import { uploadAsset } from './api';
-import { commit, design, getState, notify, propSpecs, setState, useS, withDescendants, type Tool } from './state';
+import { scoped } from './api';
+import { commit, design, getState, locked, notify, propSpecs, setState, useS, withDescendants, type Tool } from './state';
 
 const TOOL_TYPES: Partial<Record<Tool, string>> = { frame: 'frame', rect: 'rect', ellipse: 'ellipse', star: 'star', text: 'text' };
 
@@ -52,20 +52,19 @@ export function Canvas() {
   const [pen, setPen] = useState<{ pts: [number, number][]; cursor: [number, number] | null } | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [spaceDown, setSpaceDown] = useState(false);
-  const file = useRef<HTMLInputElement>(null);
-  const pendingTool = useRef<{ tool: Tool; at: [number, number] } | null>(null);
+  const lease = useS((s) => s.snap?.lease ?? null);
 
   // fonts: the editor draws text with the same font files the export uses
   useEffect(() => {
     for (const f of fonts ?? []) {
-      const face = new FontFace(f.family, `url(${f.url})`, { weight: f.weight });
+      const face = new FontFace(f.family, `url(${scoped(f.url)})`, { weight: f.weight });
       face.load().then((ff) => (document.fonts as unknown as { add(f: FontFace): void }).add(ff)).catch(() => undefined);
     }
   }, [fonts?.length]);
 
   useLayoutEffect(() => {
     if (!rootEl.current || sceneRef.current) return;
-    sceneRef.current = new Scene(rootEl.current, { assetUrl: (src) => (src.startsWith('data:') ? src : '/' + src), fontFamily: 'Inter' });
+    sceneRef.current = new Scene(rootEl.current, { assetUrl: (src) => (src.startsWith('data:') ? src : scoped('/' + src)), fontFamily: 'Inter' });
   }, []);
 
   useEffect(() => {
@@ -331,34 +330,6 @@ export function Canvas() {
     create('path', { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), d: dstr }, null);
   };
 
-  const pickFile = (type: 'image' | 'audio', at: [number, number]) => {
-    pendingTool.current = { tool: type, at };
-    if (file.current) {
-      file.current.accept = type === 'image' ? 'image/png,image/jpeg,image/webp,image/gif,image/svg+xml' : 'audio/*';
-      file.current.value = '';
-      file.current.click();
-    }
-  };
-  const onFile = async (e: Event) => {
-    const f = (e.target as HTMLInputElement).files?.[0];
-    const p = pendingTool.current;
-    if (!f || !p) return setState({ tool: 'select' });
-    try {
-      const src = await uploadAsset(f);
-      if (p.tool === 'image') {
-        const bmp = await createImageBitmap(f).catch(() => null);
-        const dd = design()!;
-        const k = bmp ? Math.min(1, (dd.meta.width * 0.6) / bmp.width, (dd.meta.height * 0.6) / bmp.height) : 1;
-        const w = Math.round((bmp?.width ?? 240) * k);
-        const h = Math.round((bmp?.height ?? 240) * k);
-        create('image', { src, x: Math.round(p.at[0] - w / 2), y: Math.round(p.at[1] - h / 2), w, h, name: f.name.replace(/\.[^.]+$/, '') }, null);
-      } else create('audio', { src, name: f.name.replace(/\.[^.]+$/, '') }, null);
-    } catch (err) {
-      notify((err as { message?: string }).message ?? 'Upload failed', 'error');
-      setState({ tool: 'select' });
-    }
-  };
-
   // ----- pointer entry ------------------------------------------------------------------------------------------
   const down = (e: PointerEvent) => {
     if (!d) return;
@@ -376,11 +347,15 @@ export function Canvas() {
     }
     if (e.button !== 0) return;
     if (editing) return;
+    if (locked()) {
+      // view only while an agent works: clicking selects, nothing moves, nothing is drawn
+      const l = hit(e.clientX, e.clientY);
+      return setState({ selection: l ? [l.id] : [] });
+    }
     if (s.tool === 'pen') {
       const [x, y] = toScene(e.clientX, e.clientY);
       return setPen((p) => ({ pts: [...(p?.pts ?? []), [x, y]], cursor: [x, y] }));
     }
-    if (s.tool === 'image' || s.tool === 'audio') return pickFile(s.tool, toScene(e.clientX, e.clientY));
     const type = TOOL_TYPES[s.tool];
     if (type) return startCreate(e, type);
     // select tool
@@ -476,6 +451,7 @@ export function Canvas() {
           }
           return null;
         })();
+        if (locked()) return;
         if (l?.type === 'text') setEditing(l.id);
         else if (l) setState({ selection: [l.id] });
         else if (pen) finishPen(pen.pts);
@@ -501,7 +477,7 @@ export function Canvas() {
           <polyline class="pen-line" fill="none" points={[...pen.pts, ...(pen.cursor ? [pen.cursor] : [])].map((p) => `${pan.x + p[0] * zoom},${pan.y + p[1] * zoom}`).join(' ')} />
         )}
       </svg>
-      {single && sbox && !single.locked && tool === 'select' && (
+      {single && sbox && !single.locked && !lease && tool === 'select' && (
         <div class="handles" style={{ left: `${sbox.cx}px`, top: `${sbox.cy}px`, width: `${sbox.w}px`, height: `${sbox.h}px`, transform: `translate(-50%, -50%) rotate(${sbox.rot}deg)` }}>
           {([[-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0]] as const).map(([hx, hy]) => (
             <div
@@ -523,8 +499,7 @@ export function Canvas() {
         const h = host.current!.getBoundingClientRect();
         return <TextEditor layer={editLayer} zoom={zoom} rect={{ left: r.left - h.left, top: r.top - h.top, width: r.width, height: r.height }} onDone={() => setEditing(null)} />;
       })()}
-      <input ref={file} type="file" hidden onChange={onFile} data-testid="file-input" />
-      {d && d.layers.length === 0 && !ghost && <div class="canvas-hint">Pick a tool above (R rectangle, O ellipse, T text) and drag on the artboard.</div>}
+      {d && d.layers.length === 0 && !ghost && <div class="canvas-hint">{lease ? `${lease.agent} is designing this. It appears here as it goes.` : 'Pick a tool above (R rectangle, O ellipse, T text) and drag on the artboard, or ask your agent to design it.'}</div>}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronRight, Pause, Play, Repeat, SkipBack } from 'lucide-preact';
 import { useRef, useState } from 'preact/hooks';
 import { CONTAINERS, type Design, type Layer } from '@studio/design';
-import { commit, getState, setState, useS } from './state';
+import { commit, getState, locked, setState, useS } from './state';
 
 const LABEL_W = 190;
 const ROW = 26;
@@ -62,6 +62,7 @@ export function Timeline() {
   const dragBar = (e: PointerEvent, l: Layer, mode: 'move' | 'start' | 'end') => {
     e.stopPropagation();
     e.preventDefault();
+    if (locked()) return void setState({ selection: [l.id] });
     const el = e.currentTarget as HTMLElement;
     el.setPointerCapture(e.pointerId);
     setState({ selection: [l.id] });
@@ -94,6 +95,7 @@ export function Timeline() {
   const dragKf = (e: PointerEvent, l: Layer, prop: string, id: string) => {
     e.stopPropagation();
     e.preventDefault();
+    if (locked()) return void setState({ selection: [l.id] });
     const el = e.currentTarget as HTMLElement;
     el.setPointerCapture(e.pointerId);
     setState({ selection: [l.id] });

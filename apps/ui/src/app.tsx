@@ -16,10 +16,11 @@ import {
   ZoomOut,
 } from 'lucide-preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { sendOps, sendRedo, sendUndo, useLiveProject, type OpSpec, type ProjectView } from './api';
+import { canLoad, sendOps, sendRedo, sendUndo, useLiveProject, useWorkspaces, wsId, type OpSpec, type ProjectView } from './api';
 import { Button, IconButton } from './components/Button';
 import { EaseEditor } from './components/EaseEditor';
 import { EmptyState, PanelHeader } from './components/PanelHeader';
+import { WorkspaceTabs } from './components/WorkspaceTabs';
 import { KF_STEP, frameMs, kfSetSpecs } from './timeline/edit';
 import { Canvas } from './Canvas';
 import { Settings } from './settings/Settings';
@@ -199,13 +200,15 @@ function Inspector({
 
 export function App() {
   const [theme, setT] = useState<Theme>(currentTheme());
-  const { project, timelineMs, status, problem, rev, canUndo, canRedo, readOnly } =
-    useLiveProject();
+  const workspaces = useWorkspaces();
+  const { project, timelineMs, status, problem, rev, canUndo, canRedo, readOnly, lease } =
+    useLiveProject(canLoad(workspaces));
   const [tool, setTool] = useState<'select' | 'split'>('select');
   const [notice, setNotice] = useState<string | null>(null);
   const revRef = useRef(rev);
   revRef.current = rev;
-  const editable = !!project && !readOnly && status === 'live';
+  // While an agent holds the workspace the page is view-only: you can watch, scrub and zoom, and edit when it finishes.
+  const editable = !!project && !readOnly && status === 'live' && !lease;
   const report = useCallback((r: { ok: boolean; message?: string }) => {
     setNotice(r.ok ? null : (r.message ?? 'edit failed'));
   }, []);
@@ -238,6 +241,26 @@ export function App() {
   useEffect(() => {
     if (selectedId && project && !project.clips.some((c) => c.id === selectedId)) setSelected(null);
   }, [project, selectedId]);
+
+  // A hub opened without ?ws= goes to its first workspace.
+  useEffect(() => {
+    if (workspaces?.mode === 'hub' && !wsId && workspaces.workspaces[0])
+      location.replace(`?ws=${workspaces.workspaces[0].slot}`);
+  }, [workspaces]);
+  // Media is added by the agent. A file dropped on the page must not open in the browser or import anything.
+  useEffect(() => {
+    const stop = (e: DragEvent) => {
+      if (!e.dataTransfer?.types.includes('Files')) return;
+      e.preventDefault();
+      if (e.type === 'drop') setNotice('Media is added by your agent: ask Claude Code to ingest the file.');
+    };
+    window.addEventListener('dragover', stop);
+    window.addEventListener('drop', stop);
+    return () => {
+      window.removeEventListener('dragover', stop);
+      window.removeEventListener('drop', stop);
+    };
+  }, []);
 
   const fps = project?.meta.fps ?? 30;
   // The handler is read through a ref and subscribed once: re-subscribing after every state change leaves a gap
@@ -328,13 +351,28 @@ export function App() {
     'no-server': 'No project loaded',
   }[status];
 
+  if (workspaces?.mode === 'hub' && !wsId && workspaces.workspaces.length === 0)
+    return (
+      <div class="boot" role="status" data-testid="no-workspaces">
+        No workspaces are open. Ask Claude Code to open them (up to {workspaces.limit}), or run{' '}
+        <code>studio ws open --kind media --count {workspaces.limit}</code>.
+      </div>
+    );
+
   return (
     <div class="shell">
       <header class="topbar">
-        <strong class="project-name">{project?.meta.name ?? 'Studio'}</strong>
+        {workspaces?.mode === 'hub' && <WorkspaceTabs view={workspaces} />}
+        {workspaces?.mode !== 'hub' && <strong class="project-name">{project?.meta.name ?? 'Studio'}</strong>}
         <span class="muted" data-testid="status" data-status={status} role="status">
           {statusText}
         </span>
+        {lease && (
+          <span class="agent-pill" data-testid="agent-status" role="status" title={lease.note ?? ''}>
+            <span class="ws-dot" aria-hidden="true" />
+            {lease.agent} is working{lease.note ? `: ${lease.note}` : ''} · view only
+          </span>
+        )}
         {problem && (
           <span class="problem" role="alert">
             {problem}

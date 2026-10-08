@@ -195,3 +195,17 @@ Not verified: skin-tone fidelity, any camera log material, 10-bit or HDR sources
 
 - Phase 7: only the tools capability is implemented (no resources, prompts, progress notifications, or cancellation); long renders block their call until done. Tested against the official SDK client only, not against Claude Code or other MCP clients.
 - Settings: `claude mcp add` was not run against a real Claude Code; the command is the documented form and its target (`studio mcp`) was checked with the MCP SDK client. The Connector command assumes a macOS or Linux shell (Windows quoting differs).
+
+## Parallel workspaces and the job governor
+
+Details and the table of tests: `docs/workspaces.md`. Measured on 4 cores and 16 GB, five 1280x720 design exports to MP4 started together:
+
+| Limit on heavy commands at once | Wall time | Peak memory (sum of resident sizes; overstates shared pages) |
+|---|---|---|
+| none | 11.2 s | 5.6 GB |
+| 2 (default on 4 cores) | 16.5 s | 2.5 GB |
+| 1 | 24.3 s | 1.4 GB |
+
+Five media workspaces each ingesting, adding a clip and rendering 640x360 (clips of 2 to 6 s) at a limit of 2: 2.5 s wall, never more than 2 renders at once. These clips are short; the saving that matters is memory and not being killed, and it costs wall time on a fast machine.
+
+UI bundles after this change: media shell 20.80 KB to 21.65 KB gzipped (+4.1%: workspace tabs, the agent-working state, the drop guard; budget 250 KB, baseline updated); design editor 54.1 KB to 55.2 KB gzipped in total (budget 250 KB).

@@ -11,7 +11,8 @@ Reference: `docs/design.md`. The design editor is its own app and file: `design.
 - **Text:** fonts come from `brand/` (Inter). Check long strings fit their box with a rendered frame; text does not shrink to fit.
 - **Transparency:** for an overlay to put on a video, set the background `transparent` (or pass `--alpha`) and export `mov` (ProRes 4444) or `webm`. MP4 and the GIF default have no real alpha (MP4 refuses it).
 - **Audio:** an `audio` layer comes from a file under `assets/` (`studio design asset <file>`). Shape it with `volume` keyframes. Only MP4, WebM and MOV carry audio.
-- **Assets:** `studio design asset <file...>` copies images and audio into `assets/`; reference them as `assets/<name>`. Never point a layer outside the project.
+- **Assets:** `studio design asset <file...>` copies images and audio into `assets/`; reference them as `assets/<name>`. Never point a layer outside the project. The person cannot add images or audio from the editor (no Image or Audio tool, no upload): you place them.
+- **The person edits after you, not while you work.** Pass `--agent <name>` on your writes (or `studio work begin`) so the design editor is view-only for them while you build, and `studio work end` when done. Several designs at once: `rules/15-parallel-workspaces.md`.
 
 ## Check before you report
 

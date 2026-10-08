@@ -25,6 +25,7 @@ Read in this order the first time in a session:
 | Plugins, expressions, scripts, new effects or templates | `rules/12-plugins-and-scripts.md` |
 | Colour grading, looks, keying, blur, light, distortion (the built-in colour plugin) | `rules/14-color-grading.md` |
 | Animated design: posters, titles, logo and UI animation, explainer scenes (the separate design editor) | `rules/13-design-and-animation.md` |
+| Several independent jobs at once (up to 5 media and 5 design workspaces, one subagent each) | `rules/15-parallel-workspaces.md` |
 | Speed, memory, bundle size | `rules/10-performance.md` |
 | UI work or tokens | `rules/11-ui-design-system.md` |
 

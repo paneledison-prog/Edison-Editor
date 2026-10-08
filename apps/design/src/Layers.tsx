@@ -33,6 +33,7 @@ export function Layers() {
   const d = useS((s) => s.draft ?? s.snap?.design ?? null);
   const sel = useS((s) => s.selection);
   const expanded = useS((s) => s.expanded);
+  const held = useS((s) => !!s.snap?.lease); // an agent is working: the list is for looking and selecting
   const [editing, setEditing] = useState<string | null>(null);
   const [drag, setDrag] = useState<string | null>(null);
   const [drop, setDrop] = useState<Drop>(null);
@@ -56,7 +57,7 @@ export function Layers() {
 
   return (
     <div class="layers" data-testid="layers" role="tree" aria-label="Layers">
-      {rows.length === 0 && <p class="empty">No layers yet. Pick a tool above and drag on the canvas.</p>}
+      {rows.length === 0 && <p class="empty">No layers yet. Pick a tool above and drag on the canvas, or ask your agent to design it.</p>}
       {rows.map(({ layer: l, depth }) => {
         const Icon = ICON[l.type] ?? Square;
         const isC = CONTAINERS.includes(l.type);
@@ -70,7 +71,7 @@ export function Layers() {
             class={`layer-row ${on ? 'on' : ''} ${l.visible === false ? 'off' : ''} ${drop?.id === l.id ? `drop-${drop.where}` : ''}`}
             style={{ paddingLeft: `${8 + depth * 14}px` }}
             data-layer-row={l.id}
-            draggable={editing !== l.id}
+            draggable={editing !== l.id && !held}
             onDragStart={(e) => {
               setDrag(l.id);
               e.dataTransfer?.setData('text/plain', l.id);
@@ -120,11 +121,12 @@ export function Layers() {
                 }}
               />
             ) : (
-              <span class="name" onDblClick={() => setEditing(l.id)}>{l.name}</span>
+              <span class="name" onDblClick={() => !held && setEditing(l.id)}>{l.name}</span>
             )}
             <span class="row-actions">
               <button
                 class="icon-btn"
+                disabled={held}
                 aria-label={l.locked ? 'Unlock' : 'Lock'}
                 title={l.locked ? 'Unlock' : 'Lock'}
                 onClick={(e) => {
@@ -136,6 +138,7 @@ export function Layers() {
               </button>
               <button
                 class="icon-btn"
+                disabled={held}
                 aria-label={l.visible === false ? 'Show' : 'Hide'}
                 title={l.visible === false ? 'Show' : 'Hide'}
                 onClick={(e) => {

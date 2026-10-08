@@ -15,6 +15,9 @@ export default defineConfig({
   },
   test: {
     include: ['tests/**/*.test.ts', 'packages/**/*.test.ts'],
+    // The job governor limits how many heavy commands run at once on a machine (a few). Test files already run in
+    // parallel and must not queue behind each other; tests/workspaces.test.ts sets real limits for the governor itself.
+    env: { STUDIO_MAX_JOBS: '64' },
     globalSetup: ['tests/global-setup.ts'],
     // Several files run at once on 4 cores, so single tests get a generous default.
     testTimeout: 60_000,

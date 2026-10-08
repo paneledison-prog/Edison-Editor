@@ -13,3 +13,4 @@
 11. **State your limits.** Each tool that has known failure modes lists them in its own `--help` and in the rule file for its domain.
 12. **Licenses recorded.** No model or engine is wired in until its license is noted.
 13. **Be terse.** The user reads results, not narration.
+14. **Media comes in through you.** The editors have no import, upload or file picker; the person asks you and you ingest. While you hold a workspace the person's editor is view-only: begin with `--agent`, end with `studio work end` (`rules/15-parallel-workspaces.md`).

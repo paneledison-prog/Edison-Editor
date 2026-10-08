@@ -12,8 +12,16 @@ export interface PresetInfo {
   defaults: { dur: number; ease: string };
   types?: string[];
 }
+/** An agent holds the design: the editor is view-only until it finishes. */
+export interface Lease {
+  agent: string;
+  note?: string;
+  since: number;
+  expires: number;
+}
 export interface Snapshot {
   rev: string;
+  lease: Lease | null;
   design: Design;
   canUndo: boolean;
   canRedo: boolean;
@@ -30,8 +38,53 @@ export interface ApiError {
 
 export type { Design, OpSpec };
 
+/** The workspace this page shows when the server is a hub (`studio design ui --hub`); null for a single design. */
+export const wsId: string | null = new URLSearchParams(location.search).get('ws');
+/** Adds the workspace to a request or file URL. */
+export const scoped = (path: string): string => (wsId ? `${path}${path.includes('?') ? '&' : '?'}ws=${encodeURIComponent(wsId)}` : path);
+
+export interface WsBrief {
+  slot: string;
+  name: string;
+  state: 'idle' | 'agent-working' | 'incomplete';
+  agent?: string;
+  note?: string;
+  items: number;
+  assets: number;
+}
+export interface WsView {
+  mode: 'hub' | 'single';
+  limit: number;
+  workspaces: WsBrief[];
+}
+/** The workspace tabs: which of the five exist and who is working in them, kept live by the server. */
+export function useWorkspaces(): WsView | null {
+  const [view, setView] = useState<WsView | null>(null);
+  useEffect(() => {
+    let es: EventSource | undefined;
+    let dead = false;
+    fetch('/api/workspaces', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d: WsView) => {
+        if (dead) return;
+        setView(d);
+        if (d.mode !== 'hub') return;
+        es = new EventSource('/api/workspaces/events');
+        es.addEventListener('workspaces', (e) => setView(JSON.parse((e as MessageEvent).data)));
+      })
+      .catch(() => !dead && setView({ mode: 'single', limit: 5, workspaces: [] })); // not a Studio server: the design load reports that
+    return () => {
+      dead = true;
+      es?.close();
+    };
+  }, []);
+  return view;
+}
+/** Whether the page can start loading its design: the server kind is known, and a hub has been told which workspace. */
+export const canLoad = (view: WsView | null): boolean => view !== null && !(view.mode === 'hub' && !wsId);
+
 async function post<T>(path: string, body: unknown): Promise<T> {
-  const r = await fetch(path, {
+  const r = await fetch(scoped(path), {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-studio-ui': '1' },
     body: JSON.stringify(body),
@@ -60,21 +113,20 @@ export interface ExportResult {
 }
 export const sendExport = (format: string, opts: { scale?: number; alpha?: boolean; at?: number }) => post<ExportResult>('/api/export', { format, ...opts });
 
-/** Uploads an image or audio file into the design's assets folder; returns its project path. */
-export async function uploadAsset(file: File): Promise<string> {
-  const buf = new Uint8Array(await file.arrayBuffer());
-  let s = '';
-  for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000));
-  return (await post<{ src: string }>('/api/asset', { name: file.name, data: btoa(s) })).src;
-}
-
 /** The live design: the first snapshot, then one per change (the agent's edits arrive here too). */
-export function useLiveSnapshot(): { snap: Snapshot | null; problem: string | null; live: boolean; set: (s: Snapshot) => void } {
+export function useLiveSnapshot(go: boolean): { snap: Snapshot | null; problem: string | null; live: boolean; set: (s: Snapshot) => void } {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [live, setLive] = useState(false);
   useEffect(() => {
-    const es = new EventSource('/api/events');
+    if (!go) return;
+    const es = new EventSource(scoped('/api/events'));
+    es.addEventListener('lease', (e) => setSnap((s) => (s ? { ...s, lease: JSON.parse((e as MessageEvent).data).lease ?? null } : s)));
+    es.addEventListener('gone', () => {
+      es.close();
+      setLive(false);
+      setProblem('This workspace was closed.');
+    });
     es.addEventListener('design', (e) => {
       setSnap(JSON.parse((e as MessageEvent).data));
       setProblem(null);
@@ -84,6 +136,6 @@ export function useLiveSnapshot(): { snap: Snapshot | null; problem: string | nu
     es.onopen = () => setLive(true);
     es.onerror = () => setLive(false);
     return () => es.close();
-  }, []);
+  }, [go]);
   return { snap, problem, live, set: setSnap };
 }

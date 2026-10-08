@@ -6,6 +6,7 @@
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { assertAgentIdle } from '@studio/workspace';
 import {
   applyBatch, defaultCtx, inverseSpecs, makeTxId, type Actor, type Ctx, type Op, type OpSpec,
 } from './ops.js';
@@ -148,7 +149,13 @@ export class DesignStore {
     return new Set(log.map((e) => e.id));
   }
 
+  /** A person's edit (actor "ui") is refused while an agent holds the workspace; the agent's own writes are never blocked. */
+  private personMayEdit(o: { actor?: Actor; ctx?: Ctx }): void {
+    if ((o.ctx?.actor ?? o.actor) === 'ui') assertAgentIdle(this.dir);
+  }
+
   apply(specs: OpSpec[], o: { actor?: Actor; label?: string; dryRun?: boolean; ctx?: Ctx } = {}): Step {
+    this.personMayEdit(o);
     return this.locked(() => {
       const { design, log } = this.load();
       const ctx = o.ctx ?? defaultCtx(o.actor ?? 'agent');
@@ -162,6 +169,7 @@ export class DesignStore {
   }
 
   private walk(kind: 'undo' | 'redo', o: { actor?: Actor; dryRun?: boolean; ctx?: Ctx }): Step {
+    this.personMayEdit(o);
     return this.locked(() => {
       const { design, log } = this.load();
       const ctx = o.ctx ?? defaultCtx(o.actor ?? 'agent');

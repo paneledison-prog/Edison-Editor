@@ -94,4 +94,9 @@ export const GLOBAL_FLAGS: FlagDef[] = [
     values: ['agent', 'ui', 'cli'],
   },
   { name: 'json', type: 'boolean', desc: 'accepted for clarity; output is always JSON' },
+  {
+    name: 'agent',
+    type: 'string',
+    desc: 'name of the agent writing, e.g. m1-agent: holds the workspace so the editor is view-only for the person while you work, and refuses another agent in the same workspace',
+  },
 ];

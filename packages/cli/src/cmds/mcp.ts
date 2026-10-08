@@ -32,10 +32,11 @@ function schemaFor(m: CmdMeta) {
   for (const f of m.flags) props[f.name] = flagSchema(f);
   // global flags that change what a call does
   for (const g of GLOBAL_FLAGS)
-    if (['dry-run', 'force'].includes(g.name)) props[g.name] = flagSchema(g);
+    if (['dry-run', 'force', 'agent'].includes(g.name)) props[g.name] = flagSchema(g);
   props['project'] = {
     type: 'string',
-    description: 'project directory (default: the one the server was started in)',
+    description:
+      'project or workspace directory (default: the one the server was started in). Parallel agents each pass their own workspace here and their own name as "agent".',
   };
   return {
     type: 'object',
@@ -65,7 +66,7 @@ export function argvFor(
   m: CmdMeta,
   a: Record<string, unknown>,
 ): { argv: string[] } | { error: string } {
-  const known = new Set([...m.flags.map((f) => f.name), 'args', 'project', 'dry-run', 'force']);
+  const known = new Set([...m.flags.map((f) => f.name), 'args', 'project', 'dry-run', 'force', 'agent']);
   for (const k of Object.keys(a))
     if (!known.has(k)) return { error: `unknown argument "${k}" for ${m.name}` };
   const argv = [...m.argv];
@@ -93,6 +94,10 @@ export function argvFor(
     }
   }
   for (const g of ['dry-run', 'force']) if (a[g] === true) argv.push(`--${g}`);
+  if (a['agent'] !== undefined) {
+    if (typeof a['agent'] !== 'string') return { error: '"agent" must be a string' };
+    argv.push('--agent', a['agent']);
+  }
   return { argv };
 }
 
@@ -156,7 +161,7 @@ export const mcp: Handler = async (inv) => {
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: 'studio', version: '0.0.0' },
           instructions:
-            'Studio edits real media through ops on project.studio.json. Every tool is a studio CLI command; results are the same JSON the CLI prints. State changes are undoable with studio_project_undo.',
+            'Studio edits real media through ops on project.studio.json. Every tool is a studio CLI command; results are the same JSON the CLI prints. State changes are undoable with studio_project_undo. For several jobs at once call studio_ws_open (up to 5 media and 5 design workspaces), give each subagent one workspace: pass its folder as "project" and its slot as "agent" on every call, and call studio_work_end when it finishes. Media is added by the agent (studio_ingest, studio_design_asset), never by the person.',
         });
       }
       if (method === 'ping') return reply(id, {});

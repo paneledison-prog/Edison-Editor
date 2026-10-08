@@ -46,11 +46,63 @@ export interface OpSpec {
 }
 export type Status = 'connecting' | 'live' | 'offline' | 'no-server';
 
+/** The workspace this page shows when the server is a hub (`studio ui --hub`); null for a single project. */
+export const wsId: string | null = new URLSearchParams(location.search).get('ws');
+/** Adds the workspace to a request to the server. */
+export const scoped = (path: string): string => (wsId ? `${path}${path.includes('?') ? '&' : '?'}ws=${encodeURIComponent(wsId)}` : path);
+
+/** An agent holds the workspace: the page is view-only until it finishes. */
+export interface Lease {
+  agent: string;
+  note?: string;
+  since: number;
+  expires: number;
+}
+export interface WsBrief {
+  slot: string;
+  name: string;
+  state: 'idle' | 'agent-working' | 'incomplete';
+  agent?: string;
+  note?: string;
+  items: number;
+  assets: number;
+}
+export interface WsView {
+  mode: 'hub' | 'single';
+  limit: number;
+  workspaces: WsBrief[];
+}
+/** The workspace tabs: which of the five exist and who is working in them, kept live by the server. */
+export function useWorkspaces(): WsView | null {
+  const [view, setView] = useState<WsView | null>(null);
+  useEffect(() => {
+    let es: EventSource | undefined;
+    let dead = false;
+    fetch('/api/workspaces', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d: WsView) => {
+        if (dead) return;
+        setView(d);
+        if (d.mode !== 'hub') return;
+        es = new EventSource('/api/workspaces/events');
+        es.addEventListener('workspaces', (e) => setView(JSON.parse((e as MessageEvent).data)));
+      })
+      .catch(() => !dead && setView({ mode: 'single', limit: 5, workspaces: [] })); // not a Studio server: the project load reports that
+    return () => {
+      dead = true;
+      es?.close();
+    };
+  }, []);
+  return view;
+}
+/** Whether the page can start loading its project: the server kind is known, and a hub has been told which workspace. */
+export const canLoad = (view: WsView | null): boolean => view !== null && !(view.mode === 'hub' && !wsId);
+
 /**
  * Loads the project from `studio ui` and follows changes over server-sent events.
  * Only the project value changes on a reload: playhead, selection, zoom, and scroll live elsewhere and are untouched.
  */
-export function useLiveProject(): {
+export function useLiveProject(go: boolean): {
   project: ProjectView | null;
   timelineMs: number;
   status: Status;
@@ -59,26 +111,29 @@ export function useLiveProject(): {
   canUndo: boolean;
   canRedo: boolean;
   readOnly: boolean;
+  lease: Lease | null;
 } {
   const [project, setProject] = useState<ProjectView | null>(null);
   const [timelineMs, setTimelineMs] = useState(0);
   const [status, setStatus] = useState<Status>('connecting');
   const [problem, setProblem] = useState<string | null>(null);
   const [meta, setMeta] = useState({ rev: '', canUndo: false, canRedo: false, readOnly: false });
+  const [lease, setLease] = useState<Lease | null>(null);
 
   useEffect(() => {
+    if (!go) return;
     let es: EventSource | undefined;
     let dead = false;
     (async () => {
       try {
-        const r = await fetch('/api/project', { cache: 'no-store' });
+        const r = await fetch(scoped('/api/project'), { cache: 'no-store' });
         if (!r.ok || !(r.headers.get('content-type') ?? '').includes('json'))
           throw new Error('not studio ui');
       } catch {
         if (!dead) setStatus('no-server');
         return;
       }
-      es = new EventSource('/api/events');
+      es = new EventSource(scoped('/api/events'));
       es.onopen = () => setStatus('live');
       es.onerror = () => setStatus('offline'); // EventSource reconnects by itself
       es.addEventListener('project', (e) => {
@@ -87,18 +142,25 @@ export function useLiveProject(): {
         setTimelineMs(d.timelineMs);
         setProblem(null);
         setMeta({ rev: d.rev, canUndo: !!d.canUndo, canRedo: !!d.canRedo, readOnly: !!d.readOnly });
+        setLease(d.lease ?? null);
         document.documentElement.setAttribute('data-rev', d.rev); // observable by tests and tooling
       });
       es.addEventListener('problem', (e) =>
         setProblem(JSON.parse((e as MessageEvent).data).message),
       );
+      es.addEventListener('lease', (e) => setLease(JSON.parse((e as MessageEvent).data).lease ?? null));
+      es.addEventListener('gone', () => {
+        es?.close();
+        setStatus('no-server');
+        setProblem('This workspace was closed.');
+      });
     })();
     return () => {
       dead = true;
       es?.close();
     };
-  }, []);
-  return { project, timelineMs, status, problem, ...meta };
+  }, [go]);
+  return { project, timelineMs, status, problem, lease, ...meta };
 }
 
 export interface WriteResult {
@@ -111,7 +173,7 @@ export interface WriteResult {
 /** POST an edit. The server answers 409 when an agent changed the project after `baseRev`; nothing is applied then. */
 async function post(path: string, body: unknown): Promise<WriteResult> {
   try {
-    const r = await fetch(path, {
+    const r = await fetch(scoped(path), {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-studio-ui': '1' },
       body: JSON.stringify(body),
@@ -148,7 +210,7 @@ export interface ConnectorCheck {
 }
 export async function getConnector(): Promise<ConnectorInfo | null> {
   try {
-    const r = await fetch('/api/connector', { cache: 'no-store' });
+    const r = await fetch(scoped('/api/connector'), { cache: 'no-store' });
     return r.ok ? await r.json() : null;
   } catch {
     return null;
@@ -156,7 +218,7 @@ export async function getConnector(): Promise<ConnectorInfo | null> {
 }
 export async function checkConnector(): Promise<ConnectorCheck> {
   try {
-    const r = await fetch('/api/connector/check', {
+    const r = await fetch(scoped('/api/connector/check'), {
       method: 'POST',
       headers: { 'x-studio-ui': '1' },
     });

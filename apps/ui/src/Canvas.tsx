@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { ProjectView } from './api';
+import { scoped, type ProjectView } from './api';
 
 interface Props {
   project: ProjectView | null;
@@ -31,7 +31,7 @@ export function Canvas({ project, timelineMs, playheadMs, rev, live }: Props) {
     setState('loading');
     const timer = setTimeout(async () => {
       try {
-        const r = await fetch(`/api/frame?t=${t}&w=640`, { cache: 'no-store' });
+        const r = await fetch(scoped(`/api/frame?t=${t}&w=640`), { cache: 'no-store' });
         if (r.status === 204) {
           // no preview for this frame (for example the media file is missing): say why, and drop the old image
           if (mine !== token.current) return;

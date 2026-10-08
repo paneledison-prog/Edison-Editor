@@ -20,6 +20,8 @@ project.studio.json  ◀─── ops (validated, logged, undoable) ◀───
         └──▶ UI (watches file)  ·  inspect (frames, sheets, loudness, QC)
 
 design.studio.json ◀─── ops ◀─── studio design ... / design editor   (a separate editor and file: see docs/design.md)
+
+workspaces/m1..m5 (media) and d1..d5 (design): each one of the above, one agent each, at the same time (docs/workspaces.md)
 ```
 
 Per-project directory:

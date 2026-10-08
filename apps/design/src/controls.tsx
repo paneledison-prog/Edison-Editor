@@ -1,6 +1,6 @@
 import { Diamond } from 'lucide-preact';
 import type { ComponentChildren } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { Layer } from '@studio/design';
 import { commit, getState, hasKeys } from './state';
 
@@ -25,8 +25,13 @@ interface NumProps {
 export function Num({ label, value, onChange, onLive, min = -Infinity, max = Infinity, step = 1, disabled, id, wide }: NumProps) {
   const [text, setText] = useState(fmt(value));
   const scrubbing = useRef(false);
-  useEffect(() => {
-    if (!scrubbing.current) setText(fmt(value));
+  /** While the box has focus the person owns its text: a snapshot that lands meanwhile must not overwrite what they typed. */
+  const editing = useRef(false);
+  /** Whether the person changed the text since they entered the box; only their own text is ever applied. */
+  const dirty = useRef(false);
+  // Layout effect, not a deferred one: a deferred sync from an earlier edit could run after the person had started typing.
+  useLayoutEffect(() => {
+    if (!scrubbing.current && !editing.current) setText(fmt(value));
   }, [value]);
   const clamp = (v: number) => Math.min(max, Math.max(min, v));
   const apply = (raw: string) => {
@@ -69,8 +74,18 @@ export function Num({ label, value, onChange, onLive, min = -Infinity, max = Inf
         disabled={disabled}
         data-field={id ?? label}
         aria-label={id ?? label}
-        onInput={(e) => setText((e.target as HTMLInputElement).value)}
-        onBlur={(e) => apply((e.target as HTMLInputElement).value)}
+        onFocus={() => (editing.current = true)}
+        onInput={(e) => {
+          dirty.current = true;
+          setText((e.target as HTMLInputElement).value);
+        }}
+        onBlur={(e) => {
+          editing.current = false;
+          if (dirty.current) {
+            dirty.current = false;
+            apply((e.target as HTMLInputElement).value);
+          } else setText(fmt(value)); // nothing typed: show the current value (an agent may have changed it meanwhile)
+        }}
         onKeyDown={(e) => {
           const el = e.target as HTMLInputElement;
           if (e.key === 'Enter') el.blur();
@@ -78,9 +93,11 @@ export function Num({ label, value, onChange, onLive, min = -Infinity, max = Inf
             e.preventDefault();
             const d = (e.key === 'ArrowUp' ? 1 : -1) * step * (e.shiftKey ? 10 : 1);
             const v = clamp(round(Number(el.value) + d, step / 10));
+            dirty.current = false;
             setText(fmt(v));
             onChange(v);
           } else if (e.key === 'Escape') {
+            dirty.current = false;
             setText(fmt(value));
             el.blur();
           }
@@ -92,7 +109,11 @@ export function Num({ label, value, onChange, onLive, min = -Infinity, max = Inf
 
 export function Color({ value, onChange, label, disabled }: { value: string; onChange: (c: string) => void; label: string; disabled?: boolean }) {
   const [text, setText] = useState(value.slice(1));
-  useEffect(() => setText(value.slice(1)), [value]);
+  const editing = useRef(false);
+  const dirty = useRef(false);
+  useLayoutEffect(() => {
+    if (!editing.current) setText(value.slice(1));
+  }, [value]);
   const good = (s: string) => /^[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(s);
   return (
     <div class="color">
@@ -111,8 +132,18 @@ export function Color({ value, onChange, label, disabled }: { value: string; onC
         maxLength={8}
         disabled={disabled}
         aria-label={`${label} hex`}
-        onInput={(e) => setText((e.target as HTMLInputElement).value.replace('#', ''))}
-        onBlur={() => (good(text) ? onChange('#' + text.toLowerCase()) : setText(value.slice(1)))}
+        onFocus={() => (editing.current = true)}
+        onInput={(e) => {
+          dirty.current = true;
+          setText((e.target as HTMLInputElement).value.replace('#', ''));
+        }}
+        onBlur={() => {
+          editing.current = false;
+          const typed = dirty.current;
+          dirty.current = false;
+          if (typed && good(text)) onChange('#' + text.toLowerCase());
+          else setText(value.slice(1));
+        }}
         onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
       />
     </div>

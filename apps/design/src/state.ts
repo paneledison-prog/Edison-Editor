@@ -2,9 +2,9 @@ import { useEffect, useState } from 'preact/hooks';
 import {
   ANIMATABLE, applyBatch, defaultCtx, OpError, subtree, type Design, type Layer, type OpSpec,
 } from '@studio/design';
-import { sendOps, sendRedo, sendUndo, type ApiError, type Snapshot } from './api';
+import { scoped, sendOps, sendRedo, sendUndo, type ApiError, type Snapshot } from './api';
 
-export type Tool = 'select' | 'frame' | 'text' | 'rect' | 'ellipse' | 'star' | 'image' | 'audio' | 'pen';
+export type Tool = 'select' | 'frame' | 'text' | 'rect' | 'ellipse' | 'star' | 'pen';
 
 export interface State {
   snap: Snapshot | null;
@@ -52,6 +52,13 @@ export function useS<T>(pick: (s: State) => T): T {
   return pick(state);
 }
 
+/** An agent holds the design: you can look, play and select, and edit when it finishes. */
+export const locked = (): boolean => !!state.snap?.lease;
+const lockNotice = (): string => {
+  const l = state.snap?.lease;
+  return `${l?.agent ?? 'An agent'} is working on this design. You can edit when it finishes.`;
+};
+
 export const design = (): Design | null => state.draft ?? state.snap?.design ?? null;
 export const layerById = (id: string): Layer | undefined => design()?.layers.find((l) => l.id === id);
 export const selected = (): Layer[] => state.selection.map(layerById).filter(Boolean) as Layer[];
@@ -78,6 +85,11 @@ export function commit(specs: OpSpec[], label: string): OpSpec[] {
   if (!snap || !specs.length) return [];
   if (snap.readOnly) {
     notify('This editor is read-only.', 'error');
+    return [];
+  }
+  if (snap.lease) {
+    notify(lockNotice(), 'info');
+    setState({ draft: null });
     return [];
   }
   let next: Design;
@@ -107,13 +119,14 @@ export function commit(specs: OpSpec[], label: string): OpSpec[] {
 
 export async function refetch(): Promise<void> {
   try {
-    receive(await (await fetch('/api/design')).json());
+    receive(await (await fetch(scoped('/api/design'))).json());
   } catch {
     /* the live stream will deliver it */
   }
 }
 export async function undo(): Promise<void> {
-  if (!state.snap?.canUndo || state.snap.readOnly) return;
+  await sending; // an edit still on its way must land first: until the server answers, the page does not know there is something to undo
+  if (!state.snap?.canUndo || state.snap.readOnly || state.snap.lease) return;
   try {
     receive(await sendUndo(state.snap.rev));
   } catch (e) {
@@ -122,7 +135,8 @@ export async function undo(): Promise<void> {
   }
 }
 export async function redo(): Promise<void> {
-  if (!state.snap?.canRedo || state.snap.readOnly) return;
+  await sending;
+  if (!state.snap?.canRedo || state.snap.readOnly || state.snap.lease) return;
   try {
     receive(await sendRedo(state.snap.rev));
   } catch (e) {

@@ -88,12 +88,18 @@ importers:
       '@studio/motion':
         specifier: workspace:*
         version: link:../../motion
+      '@studio/workspace':
+        specifier: workspace:*
+        version: link:../workspace
       sharp:
         specifier: ^0.35.5
         version: 0.35.5(@types/node@22.20.5)
 
   packages/core:
     dependencies:
+      '@studio/workspace':
+        specifier: workspace:*
+        version: link:../workspace
       zod:
         specifier: ^3.25.0
         version: 3.25.76
@@ -103,6 +109,9 @@ importers:
       '@studio/motion':
         specifier: workspace:*
         version: link:../../motion
+      '@studio/workspace':
+        specifier: workspace:*
+        version: link:../workspace
       zod:
         specifier: ^3.25.0
         version: 3.25.76
@@ -133,6 +142,8 @@ importers:
       '@studio/engines':
         specifier: workspace:*
         version: link:../engines
+
+  packages/workspace: {}
 
 packages:
 

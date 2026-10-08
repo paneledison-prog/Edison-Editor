@@ -188,3 +188,10 @@ input[type='checkbox'] { accent-color: var(--color-accent); }
 .toast.error { border-color: var(--color-danger); color: var(--color-danger); }
 .toast.info { border-color: var(--color-accent); }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* ---- an agent holds the design: look, play and select; the rest waits ---- */
+.tool:disabled, .primary:disabled, .title:disabled { opacity: 0.4; cursor: not-allowed; }
+.shell[data-locked] .right-scroll { opacity: 0.55; }
+.shell[data-locked] .canvas { cursor: default; }
+.top-right .agent-pill { margin-right: var(--space-2); }
+.boot code { margin-left: var(--space-1); }

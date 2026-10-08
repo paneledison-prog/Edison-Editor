@@ -9,6 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { assertAgentIdle } from '@studio/workspace';
 import { canonicalize, projectHash } from './canonical.js';
 import {
   stepApply,
@@ -159,10 +160,16 @@ export class ProjectStore {
     }
   }
 
+  /** A person's edit (actor "ui") is refused while an agent holds the workspace; the agent's own writes are never blocked. */
+  private personMayEdit(opts: { actor?: Actor; ctx?: Ctx }): void {
+    if ((opts.ctx?.actor ?? opts.actor) === 'ui') assertAgentIdle(this.dir);
+  }
+
   apply(
     specs: OpSpec[],
     opts: { actor?: Actor; label?: string; dryRun?: boolean; ctx?: Ctx } = {},
   ): Step {
+    this.personMayEdit(opts);
     return this.locked(() => {
       const { project, log } = this.load();
       const ctx = opts.ctx ?? defaultCtx(opts.actor ?? 'agent');
@@ -174,6 +181,7 @@ export class ProjectStore {
   }
 
   undo(opts: { actor?: Actor; dryRun?: boolean; ctx?: Ctx } = {}): Step {
+    this.personMayEdit(opts);
     return this.locked(() => {
       const { project, log } = this.load();
       const ctx = opts.ctx ?? defaultCtx(opts.actor ?? 'agent');
@@ -182,6 +190,7 @@ export class ProjectStore {
   }
 
   redo(opts: { actor?: Actor; dryRun?: boolean; ctx?: Ctx } = {}): Step {
+    this.personMayEdit(opts);
     return this.locked(() => {
       const { project, log } = this.load();
       const ctx = opts.ctx ?? defaultCtx(opts.actor ?? 'agent');

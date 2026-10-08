@@ -1,4 +1,6 @@
+import { acquireLease, checkAgentName, hasProject, readLease, touchLease } from '@studio/workspace';
 import { CliError, GLOBAL_FLAGS, parseArgs, type FlagValue } from './args.js';
+import { acquireJob, isHeavy } from './jobs.js';
 import { emit } from './output.js';
 import { COMMANDS, type CmdMeta } from './registry.js';
 
@@ -38,6 +40,7 @@ const loaders: Record<CmdMeta['module'], () => Promise<Record<string, unknown>>>
   script: () => import('./cmds/script.js'),
   color: () => import('./cmds/color.js'),
   design: () => import('./cmds/design.js'),
+  workspace: () => import('./cmds/workspace.js'),
 };
 
 function findCommand(argv: string[]): { meta: CmdMeta; rest: string[] } | undefined {
@@ -71,6 +74,9 @@ const EXIT: Record<string, 1 | 2 | 3 | 4 | 5> = {
   PARTIAL_FAILURE: 1,
   NEEDS_CONFIRMATION: 2,
   PLUGIN_INVALID: 4,
+  WORKSPACE_LIMIT: 5,
+  WORKSPACE_BUSY: 5,
+  AGENT_WORKING: 5,
 };
 
 export async function main(argv: string[]): Promise<void> {
@@ -111,7 +117,7 @@ export async function main(argv: string[]): Promise<void> {
       log: (m) => process.stderr.write(m + '\n'),
     };
     // Plugins add templates and effects; every module that renders or validates a composition must see them.
-    if (!['tools', 'project', 'ops', 'doctor', 'models', 'cache', 'ingest', 'design'].includes(meta.module)) {
+    if (!['tools', 'project', 'ops', 'doctor', 'models', 'cache', 'ingest', 'design', 'workspace'].includes(meta.module)) {
       const { activatePlugins } = await import('@studio/engines');
       activatePlugins(inv.dir);
     }
@@ -119,7 +125,32 @@ export async function main(argv: string[]): Promise<void> {
     const fn = mod[meta.fn] as Handler | undefined;
     if (!fn)
       throw new Error(`command ${meta.name} has no handler "${meta.fn}" in module ${meta.module}`);
-    const res = await fn(inv);
+
+    // Parallel agents. A write that names its agent takes the workspace (the editor turns view-only for the person, and
+    // another live agent is refused); any write while a lease is live keeps it alive, also during a long render.
+    const agent = typeof flags['agent'] === 'string' ? checkAgentName(flags['agent']) : undefined;
+    const serving = ['ui', 'design.ui', 'mcp'].includes(meta.name);
+    let stopBeat: (() => void) | undefined;
+    if (meta.writes && meta.module !== 'workspace' && !serving && !inv.dryRun && inv.actor !== 'ui' && hasProject(inv.dir)) {
+      if (agent) acquireLease(inv.dir, agent);
+      if (agent || readLease(inv.dir)) {
+        const beat = setInterval(() => touchLease(inv.dir, agent), 10_000);
+        beat.unref();
+        stopBeat = () => {
+          clearInterval(beat);
+          touchLease(inv.dir, agent);
+        };
+      }
+    }
+    // Heavy commands queue for one of a few machine-wide job slots, so five parallel workspaces cannot start five renders at once.
+    const held = isHeavy(meta.name, flags) && !inv.dryRun ? await acquireJob(meta.name, { inherit: true, log: inv.log }) : undefined;
+    let res;
+    try {
+      res = await fn(inv);
+    } finally {
+      held?.release();
+      stopBeat?.();
+    }
     emit(
       {
         ok: true,
