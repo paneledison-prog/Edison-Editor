@@ -44,5 +44,5 @@ Order: exposure → white balance (temperature/tint) → contrast → highlights
 - Default 1280×720 (16:9), JPEG or PNG under 2 MB for YouTube; also 1080×1920 for vertical covers.
 - Inputs: a frame (select candidates via `inspect sheet`), optional cutout subject, headline text, brand palette.
 - Rules: headline ≤ 5 words, high contrast, text over a clear region, subject not covered, safe margins ≥ 5%. **Legibility test:** downscale to 168×94 and inspect; if the headline is unreadable, fix it.
-- Text is rendered via the motion engine (motion `still`; the thumbnail text still uses sharp, not yet moved) so fonts, tokens, and templates are shared with video.
+- Text is rendered via the motion engine (the `thumbnail-headline` template, fitted by `motionHeadline`) so fonts, tokens, and templates are shared with video; sharp only composites.
 - Produce 3 variants only if asked. Otherwise one, with the reason for the choices.

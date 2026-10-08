@@ -107,6 +107,10 @@ Clip: `tests/jfk.flac` from the OpenAI Whisper repository (11 s, a short excerpt
 
 Reading: on real speech the three models place the same word start up to a second apart, and typically 200 ms. The earlier result on synthetic speech (whisper-small median 40 ms) does not carry over. Caption cue starts and the karaoke highlight on real speech should be treated as accurate to about a quarter of a second, not a frame. Nothing in the code was changed from this, since there is no truth to tune against; use medium for finals and view frames at cue starts.
 
+## Phase 8: thumbnail text
+
+The thumbnail headline is now set by the motion renderer (`thumbnail-headline` template, largest font that fits the box and 3 lines, fitted in one browser page), not sharp's text engine; sharp still composites. The existing thumbnail tests pass unchanged, and a new one checks the longest allowed headline (5 long words) stays on at most 3 lines inside the margins at 1280x720 and 1080x1920. A thumbnail now starts a headless Chromium (about 1.5 s) where sharp text did not.
+
 ## Settings window
 
 A modal with Appearance, Project and Connector tabs (9 tests in real Chromium plus the `project.set` op: focus trap and Escape, arrow-key tabs, theme persistence with storage blocked, saving the project settings as one `ui` op that Undo reverses byte for byte, the Connector tab's exact command and clipboard copy, and a real MCP handshake from the server). The Connector tab proves only that `studio mcp` starts; whether Claude Code is connected cannot be seen from the page, and the page never runs `claude`. UI shell bundle: 15.45 KB to 18.4 KB gzipped (budget 250 KB); the baseline was raised for the dialog.

@@ -452,6 +452,51 @@ const T: Record<string, (c: Ctx) => Instance> = {
     };
   },
 
+  'thumbnail-headline'(c) {
+    const { p } = c;
+    const box = h(
+      'div',
+      {
+        left: '0',
+        top: '0',
+        width: px(p['boxW']),
+        color: p['color'],
+        textAlign: p['align'],
+        whiteSpace: 'normal',
+        overflowWrap: 'break-word',
+      },
+      p['text'],
+      c.root,
+    );
+    let size = p['startPx'];
+    const lh = 1.25;
+    const set = () => Object.assign(box.style, { font: `800 ${size}px/${lh} "${c.family}"` });
+    const lines = () => Math.max(1, Math.round(box.scrollHeight / (size * lh)));
+    set();
+    // Largest size that fits the width, the height, and the line limit.
+    while (
+      (box.scrollHeight > p['boxH'] || box.scrollWidth > p['boxW'] || lines() > p['maxLines']) &&
+      size > 12
+    ) {
+      size = Math.floor(size * 0.92);
+      set();
+    }
+    // Tight width of the text itself (the widest line), so the caller can size its scrim to the text.
+    const range = document.createRange();
+    range.selectNodeContents(box);
+    const rects = Array.from(range.getClientRects());
+    const w = Math.ceil(
+      Math.max(...rects.map((r) => r.right)) - Math.min(...rects.map((r) => r.left)),
+    );
+    (window as any).__extra = {
+      size,
+      lines: lines(),
+      w: p['align'] === 'right' ? p['boxW'] : w,
+      h: Math.ceil(box.scrollHeight),
+    };
+    return { update() {} };
+  },
+
   captions(c) {
     const { W, H, p } = c;
     const cues: any[] = p['cues'];
@@ -743,7 +788,11 @@ const watched: { el: Element; label: string; within: 'frame' | 'safe' }[] = [];
           `${w.label} leaves the ${w.within === 'safe' ? 'safe area' : 'frame'} (box ${Math.round(r.left)},${Math.round(r.top)} to ${Math.round(r.right)},${Math.round(r.bottom)} in ${a.width}x${a.height})`,
         );
     }
-    return { warnings, captionBoxes: (window as any).__captionBoxes ?? null };
+    return {
+      warnings,
+      captionBoxes: (window as any).__captionBoxes ?? null,
+      extra: (window as any).__extra ?? null,
+    };
   },
   render(frame: number) {
     inst!.update((frame * 1000) / fpsG);

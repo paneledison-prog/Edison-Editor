@@ -627,6 +627,37 @@ describe('grade through the CLI', () => {
 });
 
 describe.skipIf(!fontFile)('thumbnail', () => {
+  it('the headline is set by the motion renderer: the longest allowed headline stays on at most 3 lines inside the margins, in both orientations', async () => {
+    const dir = await proj();
+    for (const [flag, W, H] of [
+      [[], 1280, 720],
+      [['--vertical'], 1080, 1920],
+    ] as const) {
+      const r = await studio([
+        'image',
+        'thumbnail',
+        '--image',
+        fx('still.png'),
+        '--headline',
+        'Extraordinarily unbelievable productivity improvements',
+        '--font',
+        fontFile!,
+        ...flag,
+        '--out',
+        `long${W}`,
+        '--project',
+        dir,
+      ]);
+      expect(r.json.ok, r.stdout).toBe(true);
+      const d = r.json.data;
+      expect(d.layout.lines).toBeLessThanOrEqual(3);
+      expect(d.layout.textBox.x).toBeGreaterThanOrEqual(d.layout.marginPx.x);
+      expect(d.layout.textBox.x + d.layout.textBox.w).toBeLessThanOrEqual(W - d.layout.marginPx.x);
+      expect(d.layout.textBox.y + d.layout.textBox.h).toBeLessThanOrEqual(H - d.layout.marginPx.y);
+      expect(d.reasons.join(' ')).toMatch(/headline set at \d+ pt/);
+    }
+  }, 120_000);
+
   it('builds one from a video frame with a cutout: checks pass, the reasons are stated, and it stays under 2 MB', async () => {
     const dir = await proj();
     const vid = fx('clean.mp4');

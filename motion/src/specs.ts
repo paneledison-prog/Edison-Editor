@@ -223,6 +223,28 @@ export const TEMPLATES: Record<string, TemplateSpec> = {
       ...COMMON,
     },
   },
+  'thumbnail-headline': {
+    id: 'thumbnail-headline',
+    summary:
+      'A headline fitted into a box: the largest font that stays inside the width, height and line limit. Used by thumbnails.',
+    kind: 'overlay',
+    defaultDurMs: 1000,
+    props: {
+      text: str('headline text', 120, false, 'Headline'),
+      color: colorProp('token:fg', 'text color'),
+      align: { type: 'enum', values: ['left', 'right'], default: 'left', desc: 'text alignment' },
+      boxW: { type: 'number', default: 800, min: 40, max: 8000, desc: 'available width in px' },
+      boxH: { type: 'number', default: 400, min: 40, max: 8000, desc: 'available height in px' },
+      maxLines: { type: 'number', default: 3, min: 1, max: 6, desc: 'most lines allowed' },
+      startPx: {
+        type: 'number',
+        default: 160,
+        min: 12,
+        max: 2000,
+        desc: 'font size to start the fit from (px)',
+      },
+    },
+  },
   captions: {
     id: 'captions',
     summary:

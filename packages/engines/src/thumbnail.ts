@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, renameSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import sharp, { type OverlayOptions } from 'sharp';
+import { motionHeadline } from './motion.js';
 import { EngineError } from './run.js';
 
 export interface ThumbnailOptions {
@@ -109,8 +110,8 @@ async function worstContrast(
 }
 
 /**
- * One thumbnail with the reasons for its layout. The headline is still rendered with sharp's text engine. Phase 4 built the
- * motion renderer (`motion still`) but did not move thumbnail text onto it, so thumbnail fonts and tokens are not yet shared with video.
+ * One thumbnail with the reasons for its layout. The headline is set by the motion renderer's `thumbnail-headline` template
+ * (the same Chromium and font loading as the video templates, a missing font fails); sharp composites everything.
  */
 export async function makeThumbnail(out: string, o: ThumbnailOptions): Promise<ThumbnailReport> {
   const { w: W, h: H } = o.size ?? { w: 1280, h: 720 };
@@ -163,44 +164,30 @@ export async function makeThumbnail(out: string, o: ThumbnailOptions): Promise<T
   const maxTextH = H - 2 * my;
   const pad = Math.round(H * 0.035);
 
-  // Largest font size whose rendered headline fits the box in at most 3 lines.
+  // Largest font size whose rendered headline fits the box in at most 3 lines: fitted by the motion renderer.
   const textColor0 = hexToRgb(o.palette?.text ?? '#ffffff');
-  const render = async (size: number, color: string) =>
-    sharp({
-      text: {
-        text: `<span foreground="${color}">${escapeMarkup(words.join(' '))}</span>`,
-        font: `${face.family} ${face.style} ${size}`,
-        fontfile: o.font,
-        width: textW - 2 * pad,
-        rgba: true,
-        wrap: 'word',
-        align: side === 'left' ? 'left' : 'right',
-        spacing: 0,
-      },
-    })
-      .png()
-      .toBuffer();
-  let size = Math.round(H * 0.22);
-  let textImg = await render(size, o.palette?.text ?? '#ffffff');
-  let tm = await sharp(textImg).metadata();
-  const lineH = () => Math.round(size * 1.25);
-  while (
-    (tm.height! > maxTextH - 2 * pad ||
-      tm.width! > textW - 2 * pad ||
-      Math.round(tm.height! / lineH()) > 3) &&
-    size > 12
-  ) {
-    size = Math.floor(size * 0.92);
-    textImg = await render(size, o.palette?.text ?? '#ffffff');
-    tm = await sharp(textImg).metadata();
-  }
-  const lines = Math.max(1, Math.round(tm.height! / lineH()));
+  const setText = (color: string) =>
+    motionHeadline({
+      text: words.join(' '),
+      color,
+      align: side === 'left' ? 'left' : 'right',
+      boxW: textW - 2 * pad,
+      boxH: maxTextH - 2 * pad,
+      maxLines: 3,
+      startPx: Math.round(H * 0.22),
+      fontFile: { path: o.font, family: face.family },
+    });
+  let head = await setText(o.palette?.text ?? '#ffffff');
+  let textImg = head.png;
+  const size = head.sizePx;
+  const tm = { width: head.width, height: head.height };
+  const lines = head.lines;
   reasons.push(
     `headline set at ${size} pt on ${lines} line(s): the largest size that fits ${textW - 2 * pad}x${maxTextH - 2 * pad} px in at most 3 lines`,
   );
 
-  const boxW = tm.width! + 2 * pad;
-  const boxH = tm.height! + 2 * pad;
+  const boxW = tm.width + 2 * pad;
+  const boxH = tm.height + 2 * pad;
   const boxX = side === 'left' ? textX : W - mx - boxW;
   const boxY = Math.round((H - boxH) / 2);
 
@@ -274,7 +261,8 @@ export async function makeThumbnail(out: string, o: ThumbnailOptions): Promise<T
       }
     }
     if (textHex !== (o.palette?.text ?? '#ffffff')) {
-      textImg = await render(size, textHex);
+      head = await setText(textHex);
+      textImg = head.png;
       reasons.push(
         `text colour switched to ${textHex}: the palette colour could not reach 4.5:1 even at 90% scrim`,
       );
