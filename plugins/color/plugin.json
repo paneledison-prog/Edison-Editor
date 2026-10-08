@@ -539,7 +539,7 @@
      "desc": "how much of the effect to apply"
     }
    },
-   "graph": "[in]format=gbrp,split=2[o][t];[t]format=gray,format=gbrp,lutrgb=r='(if(lt((val/maxval),0.5),{shadow.r}+({mid.r}-{shadow.r})*(val/maxval)*2,{mid.r}+({high.r}-{mid.r})*((val/maxval)-0.5)*2))*maxval':g='(if(lt((val/maxval),0.5),{shadow.g}+({mid.g}-{shadow.g})*(val/maxval)*2,{mid.g}+({high.g}-{mid.g})*((val/maxval)-0.5)*2))*maxval':b='(if(lt((val/maxval),0.5),{shadow.b}+({mid.b}-{shadow.b})*(val/maxval)*2,{mid.b}+({high.b}-{mid.b})*((val/maxval)-0.5)*2))*maxval'[tm];[o][tm]blend=all_mode=normal:all_opacity={mix},format=yuv420p[out]",
+   "graph": "[in]format=gbrp,split=2[o][t];[t]format=gray,format=gbrp,lutrgb=r='(if(lt((val/maxval),0.5),{shadow.r}+({mid.r}-{shadow.r})*(val/maxval)*2,{mid.r}+({high.r}-{mid.r})*((val/maxval)-0.5)*2))*maxval':g='(if(lt((val/maxval),0.5),{shadow.g}+({mid.g}-{shadow.g})*(val/maxval)*2,{mid.g}+({high.g}-{mid.g})*((val/maxval)-0.5)*2))*maxval':b='(if(lt((val/maxval),0.5),{shadow.b}+({mid.b}-{shadow.b})*(val/maxval)*2,{mid.b}+({high.b}-{mid.b})*((val/maxval)-0.5)*2))*maxval'[tm];[tm][o]blend=all_mode=normal:all_opacity={mix},format=yuv420p[out]",
    "cost": "light"
   },
   {

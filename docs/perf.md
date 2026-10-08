@@ -164,6 +164,16 @@ Verified by test (`tests/design.test.ts`, `design-cli.test.ts`, `design-ui.test.
 
 Not verified: other browsers than Chromium; touch input; scenes longer than 5 s or larger than 1080p; more than about 40 layers on a slow machine (the page redraws every layer on each change); text in scripts Inter does not cover; audio playback inside the page (the export mixes it, the page only starts it); the look of `glass` against busy backgrounds.
 
+## Colour plugin
+
+Per-effect cost: 24 frames at 1280x720 on this container, one run each, the FFmpeg process start included (about 60 ms of it). `lumetri` 524 ms, `primary` 207, `zones` 268, `curves` 135, `hue-sat` 257, `qualifier` 1121, `window` 681, `tritone` 206, `colorspace` 65, `channel-mixer` 174, `chromatic` 158, `gaussian-blur` 106, `sharpen` 120, `lens-blur` 516, `motion-blur` 92, `denoise` 129, `denoise-strong` 13296 (heavy), `light-rays` 999, `light-sweep` 440, `drop-shadow` 528, `wave-warp` 302, `turbulent-displace` 447, `glitch` 357, `optics` 145, `stabilize` 562, `slowmo` 2641 (heavy), `keyer` 615, `film-look` 626. The plugin is 38 KB of a 64 KB budget.
+
+Verified by `tests/color.test.ts` (15 tests, 104 s): every effect with every parameter at its minimum, maximum and each enum value, on a picture with and without alpha (about 340 runs, none failed); parameters are refused with their range before any render; neutral settings change no pixel by more than 3 levels; exposure, temperature, saturation, gain, lift, curve inversion, hue-sat and the qualifier act only where they should (checked on SMPTE bars); the window grades inside only; tritone maps black and white to its colours; the keyer clears a green screen and keeps the subject; drop shadow lands under the shape; blur softens an edge and sharpen does not; a LUT file changes a render and a missing or outside file is refused; `slowmo` asks FFmpeg to interpolate before the retime and is flagged heavy; node add, set, move, bypass, remove and undo; `analyze`, `auto` (median luma moved toward 0.45, crushed blacks fell), `match` (distance fell), scopes (a 960x600 sheet), gallery save and apply, `still` on an image.
+
+A bug the tests found: the first `tritone` did nothing (the blend layers were the wrong way round); a second, in the first `auto`, crushed a dark frame (contrast was computed before the exposure change); both fixed.
+
+Not verified: skin-tone fidelity, any camera log material, 10-bit or HDR sources, a calibrated display, real renders of long clips with several heavy effects, GPU encoders.
+
 ## Not measured
 
 - UI memory with a 2-hour project open (budget < 300 MB).

@@ -23,6 +23,7 @@ Read in this order the first time in a session:
 | Captions or subtitles | `rules/06-captions.md` |
 | Verifying any output | `rules/09-verification.md` |
 | Plugins, expressions, scripts, new effects or templates | `rules/12-plugins-and-scripts.md` |
+| Colour grading, looks, keying, blur, light, distortion (the built-in colour plugin) | `rules/14-color-grading.md` |
 | Animated design: posters, titles, logo and UI animation, explainer scenes (the separate design editor) | `rules/13-design-and-animation.md` |
 | Speed, memory, bundle size | `rules/10-performance.md` |
 | UI work or tokens | `rules/11-ui-design-system.md` |

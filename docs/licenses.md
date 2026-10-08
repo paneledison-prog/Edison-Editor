@@ -103,3 +103,7 @@ Test footage: the *Sintel* trailer (c) Blender Foundation, CC BY 3.0, was downlo
 
 No new dependency. `packages/design` (zod, already used) and `apps/design` (preact and lucide-preact, already used by the media editor) are Studio's own code, MIT like the repository. Export uses the Chromium and FFmpeg already recorded above; MP4 uses libx264, the others use libvpx-vp9, prores_ks, and the GIF palette filters of the same FFmpeg build. Fonts are the brand's Inter (SIL OFL, recorded above). The editor imitates the layout of design-and-animation tools in general (layers, properties, timeline); it contains no code or assets from any of them.
 
+## Colour plugin
+
+No new dependency. `plugins/color` is Studio's own code (MIT) and uses only filters already in the FFmpeg build recorded above (`lutrgb`, `curves`, `huesaturation`, `colorbalance`-style math, `gblur`, `unsharp`, `hqdn3d`, `nlmeans`, `minterpolate`, `deshake`, `chromakey`, `despill`, `displace`, `rgbashift`, `lenscorrection`, `lut3d`, `waveform`, `vectorscope`, `histogram`). The names of effects (Lumetri, Keylight, Twixtor-style, and so on) describe what an effect does; none uses code, assets, LUTs or presets from those products. No LUT files ship.
+
