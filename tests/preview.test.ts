@@ -5,7 +5,8 @@ import { chromium, type Browser, type Page } from 'playwright-core';
 import sharp from 'sharp';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ensureSpeech, FIX, fx } from './fixtures.js';
-import { tmpDir } from './helpers.js';
+import { ProjectStore } from '@studio/core';
+import { tmpDir, VIDEO_ASSET } from './helpers.js';
 
 const ROOT = join(import.meta.dirname, '..');
 const BIN = join(ROOT, 'packages', 'cli', 'dist', 'studio.js');
@@ -264,6 +265,43 @@ describe('canvas preview (GET /api/frame)', () => {
       await p2.screenshot({ path: join(FIX, 'preview-light.png') });
     },
     180_000,
+  );
+
+  it_(
+    'missing media is an expected state: 204 with the reason, the page says why, and the console stays clean',
+    async () => {
+      const dir = tmpDir('studio-prev-missing-');
+      const store = ProjectStore.init(dir, { name: 'missing', width: 640, height: 360, fps: 30 });
+      store.apply([
+        { type: 'asset.add', args: { id: 'a_gone', asset: VIDEO_ASSET } },
+        { type: 'track.add', args: { id: 't_v1', type: 'video', name: 'V' } },
+        {
+          type: 'clip.add',
+          args: {
+            clip: { id: 'c_01', track: 't_v1', asset: 'a_gone', start: 0, dur: 3000, srcIn: 0 },
+          },
+        },
+      ]);
+      const url = await serve(dir);
+      const r = await frame(url, 1000);
+      expect(r.status).toBe(204);
+      expect(decodeURIComponent(r.headers.get('x-preview-error') ?? '')).toMatch(
+        /ffmpeg|No such file|rec\.mp4/i,
+      );
+      const page = await (await browser.newContext()).newPage();
+      const problems: string[] = [];
+      page.on('console', (m) => m.type() === 'error' && problems.push(m.text()));
+      page.on('pageerror', (e) => problems.push(e.message));
+      await page.goto(url);
+      await page.waitForFunction(() =>
+        /Preview failed/.test(
+          document.querySelector('[data-testid=canvas-note]')?.textContent ?? '',
+        ),
+      );
+      expect(await page.getByTestId('preview-img').count()).toBe(0);
+      expect(problems).toEqual([]);
+    },
+    60_000,
   );
 
   it_(

@@ -223,6 +223,7 @@ describe('motion templates', () => {
       'lower-third',
       'outro',
       'speed-badge',
+      'thumbnail-headline',
       'title',
     ]);
     expect(r.json.data.templates.find((t: any) => t.id === 'lower-third').props.title.type).toBe(

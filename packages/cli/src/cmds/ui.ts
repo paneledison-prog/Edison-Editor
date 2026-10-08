@@ -110,6 +110,13 @@ export const ui: Handler = async (inv) => {
         res.end(readFileSync(r.file));
       } catch (e) {
         const code = (e as { code?: string }).code;
+        // "No preview for this frame" (missing media, an encoder failure) is an expected state, not a server error:
+        // 204 with the reason in a header keeps the browser console clean and lets the page say why.
+        if (code === 'ENGINE_MISSING' || code === 'ENGINE_FAILED') {
+          res.statusCode = 204;
+          res.setHeader('x-preview-error', encodeURIComponent((e as Error).message.slice(0, 300)));
+          return void res.end();
+        }
         json(res, code === 'INVALID_INPUT' ? 422 : 500, {
           code: code ?? 'ENGINE_FAILED',
           message: (e as Error).message,

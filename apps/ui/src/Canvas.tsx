@@ -32,6 +32,14 @@ export function Canvas({ project, timelineMs, playheadMs, rev, live }: Props) {
     const timer = setTimeout(async () => {
       try {
         const r = await fetch(`/api/frame?t=${t}&w=640`, { cache: 'no-store' });
+        if (r.status === 204) {
+          // no preview for this frame (for example the media file is missing): say why, and drop the old image
+          if (mine !== token.current) return;
+          setSrc(null);
+          setState('error');
+          setError(decodeURIComponent(r.headers.get('x-preview-error') ?? 'unavailable'));
+          return;
+        }
         if (!r.ok) {
           const e = await r.json().catch(() => ({}));
           throw new Error(e.message ?? `preview failed (${r.status})`);
