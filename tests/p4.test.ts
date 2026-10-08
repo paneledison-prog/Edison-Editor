@@ -214,7 +214,8 @@ describe('motion templates', () => {
 
   it('lists every template with its props', async () => {
     const r = await studio(['motion', 'templates']);
-    expect(r.json.data.templates.map((t: any) => t.id).sort()).toEqual([
+    // the built-in templates, plus whatever the shipped plugins add (shape-layer, particles, saber, ...)
+    expect(r.json.data.templates.map((t: any) => t.id).sort()).toEqual(expect.arrayContaining([
       'callout',
       'captions',
       'cursor-highlight',
@@ -225,7 +226,7 @@ describe('motion templates', () => {
       'speed-badge',
       'thumbnail-headline',
       'title',
-    ]);
+    ]));
     expect(r.json.data.templates.find((t: any) => t.id === 'lower-third').props.title.type).toBe(
       'string',
     );

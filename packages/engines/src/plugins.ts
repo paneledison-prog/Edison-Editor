@@ -70,15 +70,29 @@ export const pluginProblems = () => problems;
 export const pluginForTemplate = (comp: string): LoadedPlugin | undefined => owner.get(comp);
 export const pluginEffects = () => [...effects.values()];
 
+/** What a graph may use of the clip it runs on: `{W}` `{H}` canvas size, `{T0}` clip start (s), `{FPS}` project rate, `{SRCFPS}`, `{SPEED}`, `{INTERPFPS}`. */
+export interface FxContext {
+  W: number;
+  H: number;
+  FPS: number;
+  SRCFPS: number;
+  SPEED: number;
+  /** the clip's start on the timeline, in seconds: lets a generated source line up with the clip's timestamps */
+  T0: number;
+}
+
+export const pluginEffectDecl = (id: string) => effects.get(id)?.decl;
+
 /**
- * The FFmpeg lines for one clip's plugin effects: each effect reads `from` and writes `to`.
- * Internal labels get a per-clip suffix; parameters are validated and substituted.
+ * The FFmpeg lines for one plugin effect: it reads `from` and writes `to`.
+ * Internal labels get a per-clip suffix; parameters are validated and substituted; built-in variables are filled from `ctx`.
  */
 export function effectLines(
   fx: { id: string; params?: Record<string, unknown> },
   from: string,
   to: string,
   uid: string,
+  ctx: FxContext = { W: 1280, H: 720, FPS: 24, SRCFPS: 24, SPEED: 1, T0: 0 },
 ): string[] {
   const e = effects.get(fx.id);
   if (!e)
@@ -93,11 +107,37 @@ export function effectLines(
   } catch (err) {
     throw new EngineError('INVALID_INPUT', (err as PluginError).message, `studio plugins list --id ${e.plugin.manifest.id}`);
   }
+  const interp = Math.min(120, Math.max(ctx.SRCFPS, Math.round(ctx.SRCFPS / Math.max(ctx.SPEED, 0.05))));
+  const builtin: Record<string, string> = {
+    W: String(ctx.W),
+    H: String(ctx.H),
+    FPS: String(ctx.FPS),
+    SRCFPS: String(Math.round(ctx.SRCFPS * 1000) / 1000),
+    SPEED: String(ctx.SPEED),
+    INTERPFPS: String(interp),
+    T0: String(Math.round(ctx.T0 * 1000) / 1000),
+  };
   let g = e.decl.graph;
-  for (const k of graphParams(g)) g = g.replaceAll(`{${k}}`, values[k]!);
+  for (const k of graphParams(g)) g = g.replaceAll(`{${k}}`, values[k] ?? builtin[k]!);
   // rename every label except [in] and [out]
   g = g.replace(/\[([A-Za-z0-9_]+)\]/g, (m, name: string) =>
     name === 'in' ? `[${from}]` : name === 'out' ? `[${to}]` : `[${name}_${uid}]`,
   );
-  return g.split(';').filter(Boolean);
+  return splitGraph(g);
+}
+
+/** Splits a filtergraph on `;` that are outside single quotes (an expression may contain `;`). */
+export function splitGraph(g: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let q = false;
+  for (const ch of g) {
+    if (ch === "'") q = !q;
+    if (ch === ';' && !q) {
+      if (cur) out.push(cur);
+      cur = '';
+    } else cur += ch;
+  }
+  if (cur) out.push(cur);
+  return out;
 }

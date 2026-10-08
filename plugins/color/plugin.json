@@ -1,0 +1,1308 @@
+{
+ "api": 1,
+ "id": "color",
+ "name": "Color and look",
+ "version": "1.0.0",
+ "license": "MIT",
+ "summary": "Built-in colour grading and look effects: correction, wheels, curves, qualifier, windows, blur, light, distortion, keyer, film look.",
+ "effects": [
+  {
+   "id": "lumetri",
+   "summary": "All-in-one correction: exposure, contrast, highlights, shadows, whites, blacks, white balance, saturation, vibrance, sharpen.",
+   "params": {
+    "exposure": {
+     "type": "number",
+     "default": 0,
+     "min": -4,
+     "max": 4,
+     "desc": "stops; assumes gamma 2.2"
+    },
+    "contrast": {
+     "type": "number",
+     "default": 0,
+     "min": -100,
+     "max": 100,
+     "desc": "contrast around mid grey"
+    },
+    "highlights": {
+     "type": "number",
+     "default": 0,
+     "min": -100,
+     "max": 100,
+     "desc": "-100 darkens highlights"
+    },
+    "shadows": {
+     "type": "number",
+     "default": 0,
+     "min": -100,
+     "max": 100,
+     "desc": "+100 lifts shadows"
+    },
+    "whites": {
+     "type": "number",
+     "default": 0,
+     "min": -100,
+     "max": 100,
+     "desc": "white point"
+    },
+    "blacks": {
+     "type": "number",
+     "default": 0,
+     "min": -100,
+     "max": 100,
+     "desc": "black point; + lifts"
+    },
+    "temperature": {
+     "type": "number",
+     "default": 0,
+     "min": -100,
+     "max": 100,
+     "desc": "-100 cool, +100 warm"
+    },
+    "tint": {
+     "type": "number",
+     "default": 0,
+     "min": -100,
+     "max": 100,
+     "desc": "-100 green, +100 magenta"
+    },
+    "saturation": {
+     "type": "number",
+     "default": 0,
+     "min": -100,
+     "max": 100,
+     "desc": "-100 is monochrome"
+    },
+    "vibrance": {
+     "type": "number",
+     "default": 0,
+     "min": -100,
+     "max": 100,
+     "desc": "saturates muted colours more"
+    },
+    "sharpen": {
+     "type": "number",
+     "default": 0,
+     "min": 0,
+     "max": 3,
+     "desc": "unsharp amount"
+    }
+   },
+   "graph": "[in]format=gbrp,lutrgb=r='0*st(1,pow(clip(pow((val/maxval),2.2)*pow(2,{exposure}),0,1),1/2.2))+0*st(1,clip(ld(1)*(1+0.15*{temperature}/100),0,1))+0*st(1,clip((ld(1)-0.5)*(1+{contrast}/100)+0.5,0,1))+0*st(1,clip(ld(1)+1.7*{shadows}/100*ld(1)*pow(1-ld(1),2)+1.7*{highlights}/100*pow(ld(1),2)*(1-ld(1)),0,1))+0*st(1,clip(ld(1)+0.12*{blacks}/100*pow(1-ld(1),3)+0.12*{whites}/100*pow(ld(1),3),0,1))+ld(1)*maxval':g='0*st(1,pow(clip(pow((val/maxval),2.2)*pow(2,{exposure}),0,1),1/2.2))+0*st(1,clip(ld(1)*(1-0.1*{tint}/100),0,1))+0*st(1,clip((ld(1)-0.5)*(1+{contrast}/100)+0.5,0,1))+0*st(1,clip(ld(1)+1.7*{shadows}/100*ld(1)*pow(1-ld(1),2)+1.7*{highlights}/100*pow(ld(1),2)*(1-ld(1)),0,1))+0*st(1,clip(ld(1)+0.12*{blacks}/100*pow(1-ld(1),3)+0.12*{whites}/100*pow(ld(1),3),0,1))+ld(1)*maxval':b='0*st(1,pow(clip(pow((val/maxval),2.2)*pow(2,{exposure}),0,1),1/2.2))+0*st(1,clip(ld(1)*(1-0.15*{temperature}/100),0,1))+0*st(1,clip((ld(1)-0.5)*(1+{contrast}/100)+0.5,0,1))+0*st(1,clip(ld(1)+1.7*{shadows}/100*ld(1)*pow(1-ld(1),2)+1.7*{highlights}/100*pow(ld(1),2)*(1-ld(1)),0,1))+0*st(1,clip(ld(1)+0.12*{blacks}/100*pow(1-ld(1),3)+0.12*{whites}/100*pow(ld(1),3),0,1))+ld(1)*maxval',eq=saturation=(1+{saturation}/100),vibrance=intensity=({vibrance}/100*2),unsharp=5:5:{sharpen}:5:5:0,format=yuv420p[out]",
+   "cost": "light"
+  },
+  {
+   "id": "primary",
+   "summary": "Primary wheels: Lift, Gamma, Gain, Offset, master and per channel.",
+   "params": {
+    "liftM": {
+     "type": "number",
+     "default": 0,
+     "min": -0.5,
+     "max": 0.5,
+     "desc": "lift, all channels"
+    },
+    "liftR": {
+     "type": "number",
+     "default": 0,
+     "min": -0.5,
+     "max": 0.5,
+     "desc": "lift, red"
+    },
+    "liftG": {
+     "type": "number",
+     "default": 0,
+     "min": -0.5,
+     "max": 0.5,
+     "desc": "lift, green"
+    },
+    "liftB": {
+     "type": "number",
+     "default": 0,
+     "min": -0.5,
+     "max": 0.5,
+     "desc": "lift, blue"
+    },
+    "gammaM": {
+     "type": "number",
+     "default": 1,
+     "min": 0.2,
+     "max": 3,
+     "desc": "gamma, all channels"
+    },
+    "gammaR": {
+     "type": "number",
+     "default": 1,
+     "min": 0.2,
+     "max": 3,
+     "desc": "gamma, red"
+    },
+    "gammaG": {
+     "type": "number",
+     "default": 1,
+     "min": 0.2,
+     "max": 3,
+     "desc": "gamma, green"
+    },
+    "gammaB": {
+     "type": "number",
+     "default": 1,
+     "min": 0.2,
+     "max": 3,
+     "desc": "gamma, blue"
+    },
+    "gainM": {
+     "type": "number",
+     "default": 1,
+     "min": 0,
+     "max": 4,
+     "desc": "gain, all channels"
+    },
+    "gainR": {
+     "type": "number",
+     "default": 1,
+     "min": 0,
+     "max": 4,
+     "desc": "gain, red"
+    },
+    "gainG": {
+     "type": "number",
+     "default": 1,
+     "min": 0,
+     "max": 4,
+     "desc": "gain, green"
+    },
+    "gainB": {
+     "type": "number",
+     "default": 1,
+     "min": 0,
+     "max": 4,
+     "desc": "gain, blue"
+    },
+    "offsetM": {
+     "type": "number",
+     "default": 0,
+     "min": -0.5,
+     "max": 0.5,
+     "desc": "offset, all channels"
+    },
+    "offsetR": {
+     "type": "number",
+     "default": 0,
+     "min": -0.5,
+     "max": 0.5,
+     "desc": "offset, red"
+    },
+    "offsetG": {
+     "type": "number",
+     "default": 0,
+     "min": -0.5,
+     "max": 0.5,
+     "desc": "offset, green"
+    },
+    "offsetB": {
+     "type": "number",
+     "default": 0,
+     "min": -0.5,
+     "max": 0.5,
+     "desc": "offset, blue"
+    }
+   },
+   "graph": "[in]format=gbrp,lutrgb=r='clip(pow(clip(((val/maxval)+({liftM}+{liftR})*(1-(val/maxval)))*({gainM}*{gainR})+({offsetM}+{offsetR}),0,1),1/({gammaM}*{gammaR})),0,1)*maxval':g='clip(pow(clip(((val/maxval)+({liftM}+{liftG})*(1-(val/maxval)))*({gainM}*{gainG})+({offsetM}+{offsetG}),0,1),1/({gammaM}*{gammaG})),0,1)*maxval':b='clip(pow(clip(((val/maxval)+({liftM}+{liftB})*(1-(val/maxval)))*({gainM}*{gainB})+({offsetM}+{offsetB}),0,1),1/({gammaM}*{gammaB})),0,1)*maxval',format=yuv420p[out]",
+   "cost": "light"
+  },
+  {
+   "id": "zones",
+   "summary": "HDR-style tonal zones: exposure in stops for deep shadows, shadows, midtones, lights, and speculars.",
+   "params": {
+    "deep": {
+     "type": "number",
+     "default": 0,
+     "min": -3,
+     "max": 3,
+     "desc": "deep shadows, stops"
+    },
+    "shadows": {
+     "type": "number",
+     "default": 0,
+     "min": -3,
+     "max": 3,
+     "desc": "shadows, stops"
+    },
+    "mids": {
+     "type": "number",
+     "default": 0,
+     "min": -3,
+     "max": 3,
+     "desc": "midtones, stops"
+    },
+    "lights": {
+     "type": "number",
+     "default": 0,
+     "min": -3,
+     "max": 3,
+     "desc": "lights, stops"
+    },
+    "spec": {
+     "type": "number",
+     "default": 0,
+     "min": -3,
+     "max": 3,
+     "desc": "specular highlights, stops"
+    }
+   },
+   "graph": "[in]format=gbrp,lutrgb=r='clip((val/maxval)*pow(2,{deep}*exp(-pow(((val/maxval)-0.04)/0.1,2))+{shadows}*exp(-pow(((val/maxval)-0.22)/0.12,2))+{mids}*exp(-pow(((val/maxval)-0.5)/0.16,2))+{lights}*exp(-pow(((val/maxval)-0.78)/0.12,2))+{spec}*exp(-pow(((val/maxval)-0.96)/0.08,2))),0,1)*maxval':g='clip((val/maxval)*pow(2,{deep}*exp(-pow(((val/maxval)-0.04)/0.1,2))+{shadows}*exp(-pow(((val/maxval)-0.22)/0.12,2))+{mids}*exp(-pow(((val/maxval)-0.5)/0.16,2))+{lights}*exp(-pow(((val/maxval)-0.78)/0.12,2))+{spec}*exp(-pow(((val/maxval)-0.96)/0.08,2))),0,1)*maxval':b='clip((val/maxval)*pow(2,{deep}*exp(-pow(((val/maxval)-0.04)/0.1,2))+{shadows}*exp(-pow(((val/maxval)-0.22)/0.12,2))+{mids}*exp(-pow(((val/maxval)-0.5)/0.16,2))+{lights}*exp(-pow(((val/maxval)-0.78)/0.12,2))+{spec}*exp(-pow(((val/maxval)-0.96)/0.08,2))),0,1)*maxval',format=yuv420p[out]",
+   "cost": "light"
+  },
+  {
+   "id": "curves",
+   "summary": "Curves: master, red, green, blue, each a list of x/y points.",
+   "params": {
+    "master": {
+     "type": "points",
+     "default": "0/0 1/1",
+     "desc": "master curve"
+    },
+    "red": {
+     "type": "points",
+     "default": "0/0 1/1",
+     "desc": "red curve"
+    },
+    "green": {
+     "type": "points",
+     "default": "0/0 1/1",
+     "desc": "green curve"
+    },
+    "blue": {
+     "type": "points",
+     "default": "0/0 1/1",
+     "desc": "blue curve"
+    }
+   },
+   "graph": "[in]format=gbrp,curves=master='{master}':red='{red}':green='{green}':blue='{blue}',format=yuv420p[out]",
+   "cost": "light"
+  },
+  {
+   "id": "hue-sat",
+   "summary": "Hue, saturation, and intensity shifts for one colour family or all: a targeted Hue vs Hue / Sat / Lum.",
+   "params": {
+    "target": {
+     "type": "enum",
+     "default": "a",
+     "values": [
+      "a",
+      "r",
+      "y",
+      "g",
+      "c",
+      "b",
+      "m"
+     ],
+     "desc": "a all, r red, y yellow, g green, c cyan, b blue, m magenta"
+    },
+    "hue": {
+     "type": "number",
+     "default": 0,
+     "min": -180,
+     "max": 180,
+     "desc": "degrees"
+    },
+    "saturation": {
+     "type": "number",
+     "default": 0,
+     "min": -1,
+     "max": 1,
+     "desc": "-1 grey, +1 doubled"
+    },
+    "intensity": {
+     "type": "number",
+     "default": 0,
+     "min": -1,
+     "max": 1,
+     "desc": "luma shift"
+    },
+    "strength": {
+     "type": "number",
+     "default": 1,
+     "min": 0,
+     "max": 100,
+     "desc": "how strongly the family is selected"
+    }
+   },
+   "graph": "[in]format=gbrp,huesaturation=hue={hue}:saturation={saturation}:intensity={intensity}:colors={target}:strength={strength},format=yuv420p[out]",
+   "cost": "light"
+  },
+  {
+   "id": "qualifier",
+   "summary": "Qualifier: select a colour range (hue, saturation, value) with soft edges and grade only that.",
+   "params": {
+    "hue": {
+     "type": "number",
+     "default": 120,
+     "min": 0,
+     "max": 360,
+     "desc": "centre of the colour range, degrees (0 red, 120 green, 240 blue)"
+    },
+    "hueWidth": {
+     "type": "number",
+     "default": 30,
+     "min": 1,
+     "max": 180,
+     "desc": "half-width of the range, degrees"
+    },
+    "satMin": {
+     "type": "number",
+     "default": 0.3,
+     "min": 0,
+     "max": 1,
+     "desc": "lowest saturation selected"
+    },
+    "satMax": {
+     "type": "number",
+     "default": 1,
+     "min": 0,
+     "max": 1,
+     "desc": "highest saturation selected"
+    },
+    "valMin": {
+     "type": "number",
+     "default": 0.15,
+     "min": 0,
+     "max": 1,
+     "desc": "darkest value selected"
+    },
+    "valMax": {
+     "type": "number",
+     "default": 1,
+     "min": 0,
+     "max": 1,
+     "desc": "brightest value selected"
+    },
+    "edge": {
+     "type": "number",
+     "default": 0.25,
+     "min": 0,
+     "max": 1,
+     "desc": "softness of the selection edge"
+    },
+    "soften": {
+     "type": "number",
+     "default": 1.5,
+     "min": 0,
+     "max": 20,
+     "desc": "blur of the selection"
+    },
+    "invert": {
+     "type": "boolean",
+     "default": false,
+     "desc": "grade everything except the range"
+    },
+    "shift": {
+     "type": "number",
+     "default": 0,
+     "min": -180,
+     "max": 180,
+     "desc": "hue shift of the selection, degrees"
+    },
+    "sat": {
+     "type": "number",
+     "default": 0,
+     "min": -1,
+     "max": 1,
+     "desc": "saturation change"
+    },
+    "gamma": {
+     "type": "number",
+     "default": 1,
+     "min": 0.3,
+     "max": 3,
+     "desc": "gamma of the selection"
+    },
+    "warm": {
+     "type": "number",
+     "default": 0,
+     "min": -100,
+     "max": 100,
+     "desc": "warmth of the selection"
+    }
+   },
+   "graph": "[in]format=gbrp,split=3[o][g][k];[g]huesaturation=hue={shift}:saturation={sat},eq=gamma={gamma},lutrgb=r='clip(val*(1+0.15*{warm}/100),0,maxval)':b='clip(val*(1-0.15*{warm}/100),0,maxval)'[adj];[k]scale=192:108,geq=r='0*st(1,r(X,Y)/255)+0*st(2,g(X,Y)/255)+0*st(3,b(X,Y)/255)+0*st(4,max(ld(1),max(ld(2),ld(3))))+0*st(5,min(ld(1),min(ld(2),ld(3))))+0*st(6,if(gt(ld(4),0.0001),(ld(4)-ld(5))/ld(4),0))+0*st(7,mod(atan2(sqrt(3)*(ld(2)-ld(3)),2*ld(1)-ld(2)-ld(3))*180/PI+360,360))+0*st(8,abs(mod(ld(7)-{hue}+540,360)-180))+255*abs({invert}-clip(1-(ld(8)-{hueWidth})/({hueWidth}*{edge}+0.01),0,1)*clip(1-({satMin}-ld(6))/({edge}*0.3+0.01),0,1)*clip(1-(ld(6)-{satMax})/({edge}*0.3+0.01),0,1)*clip(1-({valMin}-ld(4))/({edge}*0.3+0.01),0,1)*clip(1-(ld(4)-{valMax})/({edge}*0.3+0.01),0,1))':g='0*st(1,r(X,Y)/255)+0*st(2,g(X,Y)/255)+0*st(3,b(X,Y)/255)+0*st(4,max(ld(1),max(ld(2),ld(3))))+0*st(5,min(ld(1),min(ld(2),ld(3))))+0*st(6,if(gt(ld(4),0.0001),(ld(4)-ld(5))/ld(4),0))+0*st(7,mod(atan2(sqrt(3)*(ld(2)-ld(3)),2*ld(1)-ld(2)-ld(3))*180/PI+360,360))+0*st(8,abs(mod(ld(7)-{hue}+540,360)-180))+255*abs({invert}-clip(1-(ld(8)-{hueWidth})/({hueWidth}*{edge}+0.01),0,1)*clip(1-({satMin}-ld(6))/({edge}*0.3+0.01),0,1)*clip(1-(ld(6)-{satMax})/({edge}*0.3+0.01),0,1)*clip(1-({valMin}-ld(4))/({edge}*0.3+0.01),0,1)*clip(1-(ld(4)-{valMax})/({edge}*0.3+0.01),0,1))':b='0*st(1,r(X,Y)/255)+0*st(2,g(X,Y)/255)+0*st(3,b(X,Y)/255)+0*st(4,max(ld(1),max(ld(2),ld(3))))+0*st(5,min(ld(1),min(ld(2),ld(3))))+0*st(6,if(gt(ld(4),0.0001),(ld(4)-ld(5))/ld(4),0))+0*st(7,mod(atan2(sqrt(3)*(ld(2)-ld(3)),2*ld(1)-ld(2)-ld(3))*180/PI+360,360))+0*st(8,abs(mod(ld(7)-{hue}+540,360)-180))+255*abs({invert}-clip(1-(ld(8)-{hueWidth})/({hueWidth}*{edge}+0.01),0,1)*clip(1-({satMin}-ld(6))/({edge}*0.3+0.01),0,1)*clip(1-(ld(6)-{satMax})/({edge}*0.3+0.01),0,1)*clip(1-({valMin}-ld(4))/({edge}*0.3+0.01),0,1)*clip(1-(ld(4)-{valMax})/({edge}*0.3+0.01),0,1))',gblur=sigma={soften},scale={W}:{H},format=gbrp[m];[o][adj][m]maskedmerge,format=yuv420p[out]",
+   "cost": "medium"
+  },
+  {
+   "id": "window",
+   "summary": "Power window: grade inside (or outside) an ellipse or rounded rectangle with a soft edge. Static; it does not track.",
+   "params": {
+    "cx": {
+     "type": "number",
+     "default": 0.5,
+     "min": 0,
+     "max": 1,
+     "desc": "centre x, fraction"
+    },
+    "cy": {
+     "type": "number",
+     "default": 0.5,
+     "min": 0,
+     "max": 1,
+     "desc": "centre y, fraction"
+    },
+    "w": {
+     "type": "number",
+     "default": 0.4,
+     "min": 0.02,
+     "max": 1,
+     "desc": "width, fraction"
+    },
+    "h": {
+     "type": "number",
+     "default": 0.4,
+     "min": 0.02,
+     "max": 1,
+     "desc": "height, fraction"
+    },
+    "corner": {
+     "type": "number",
+     "default": 0,
+     "min": 0,
+     "max": 1,
+     "desc": "0 ellipse, 1 near-rectangle"
+    },
+    "feather": {
+     "type": "number",
+     "default": 0.25,
+     "min": 0.01,
+     "max": 1,
+     "desc": "edge softness"
+    },
+    "invert": {
+     "type": "boolean",
+     "default": false,
+     "desc": "grade outside the window"
+    },
+    "exposure": {
+     "type": "number",
+     "default": 0,
+     "min": -3,
+     "max": 3,
+     "desc": "stops inside"
+    },
+    "saturation": {
+     "type": "number",
+     "default": 0,
+     "min": -1,
+     "max": 1,
+     "desc": "saturation change inside"
+    },
+    "warm": {
+     "type": "number",
+     "default": 0,
+     "min": -100,
+     "max": 100,
+     "desc": "warmth inside"
+    },
+    "blur": {
+     "type": "number",
+     "default": 0,
+     "min": 0,
+     "max": 40,
+     "desc": "blur inside (privacy or focus)"
+    }
+   },
+   "graph": "[in]format=gbrp,split=3[o][g][k];[g]lutrgb=r='clip(val*pow(2,{exposure})*(1+0.15*{warm}/100),0,maxval)':g='clip(val*pow(2,{exposure}),0,maxval)':b='clip(val*pow(2,{exposure})*(1-0.15*{warm}/100),0,maxval)',eq=saturation=(1+{saturation}),gblur=sigma={blur}[adj];[k]scale=192:108,geq=r='255*abs({invert}-clip((1-pow(pow(abs(X/W-{cx})/({w}/2),2+18*{corner})+pow(abs(Y/H-{cy})/({h}/2),2+18*{corner}),1/(2+18*{corner})))/{feather},0,1))':g='255*abs({invert}-clip((1-pow(pow(abs(X/W-{cx})/({w}/2),2+18*{corner})+pow(abs(Y/H-{cy})/({h}/2),2+18*{corner}),1/(2+18*{corner})))/{feather},0,1))':b='255*abs({invert}-clip((1-pow(pow(abs(X/W-{cx})/({w}/2),2+18*{corner})+pow(abs(Y/H-{cy})/({h}/2),2+18*{corner}),1/(2+18*{corner})))/{feather},0,1))',scale={W}:{H},format=gbrp[m];[o][adj][m]maskedmerge,format=yuv420p[out]",
+   "cost": "medium"
+  },
+  {
+   "id": "tritone",
+   "summary": "Tint / tritone: map brightness onto two or three colours for duotone, sepia, or monochrome looks.",
+   "params": {
+    "shadow": {
+     "type": "color",
+     "default": "#101830",
+     "desc": "colour of the shadows"
+    },
+    "mid": {
+     "type": "color",
+     "default": "#806a58",
+     "desc": "colour of the midtones"
+    },
+    "high": {
+     "type": "color",
+     "default": "#f4e6c8",
+     "desc": "colour of the highlights"
+    },
+    "mix": {
+     "type": "number",
+     "default": 1,
+     "min": 0,
+     "max": 1,
+     "desc": "how much of the effect to apply"
+    }
+   },
+   "graph": "[in]format=gbrp,split=2[o][t];[t]format=gray,format=gbrp,lutrgb=r='(if(lt((val/maxval),0.5),{shadow.r}+({mid.r}-{shadow.r})*(val/maxval)*2,{mid.r}+({high.r}-{mid.r})*((val/maxval)-0.5)*2))*maxval':g='(if(lt((val/maxval),0.5),{shadow.g}+({mid.g}-{shadow.g})*(val/maxval)*2,{mid.g}+({high.g}-{mid.g})*((val/maxval)-0.5)*2))*maxval':b='(if(lt((val/maxval),0.5),{shadow.b}+({mid.b}-{shadow.b})*(val/maxval)*2,{mid.b}+({high.b}-{mid.b})*((val/maxval)-0.5)*2))*maxval'[tm];[o][tm]blend=all_mode=normal:all_opacity={mix},format=yuv420p[out]",
+   "cost": "light"
+  },
+  {
+   "id": "colorspace",
+   "summary": "Convert between colour spaces (Rec.601, Rec.709, Rec.2020) so footage from different sources matches. Not a camera log transform.",
+   "params": {
+    "from": {
+     "type": "enum",
+     "default": "bt709",
+     "values": [
+      "bt709",
+      "bt2020",
+      "bt601-6-625",
+      "bt601-6-525"
+     ],
+     "desc": "colour space of the source"
+    },
+    "to": {
+     "type": "enum",
+     "default": "bt709",
+     "values": [
+      "bt709",
+      "bt2020",
+      "bt601-6-625",
+      "bt601-6-525"
+     ],
+     "desc": "colour space to convert to"
+    }
+   },
+   "graph": "[in]colorspace=all={to}:iall={from}:fast=1,format=yuv420p[out]",
+   "cost": "light"
+  },
+  {
+   "id": "channel-mixer",
+   "summary": "Channel mixer: each output channel from the three input channels.",
+   "params": {
+    "rr": {
+     "type": "number",
+     "default": 1,
+     "min": -2,
+     "max": 2,
+     "desc": "red output from red input"
+    },
+    "rg": {
+     "type": "number",
+     "default": 0,
+     "min": -2,
+     "max": 2,
+     "desc": "red output from green input"
+    },
+    "rb": {
+     "type": "number",
+     "default": 0,
+     "min": -2,
+     "max": 2,
+     "desc": "red output from blue input"
+    },
+    "gr": {
+     "type": "number",
+     "default": 0,
+     "min": -2,
+     "max": 2,
+     "desc": "green output from red input"
+    },
+    "gg": {
+     "type": "number",
+     "default": 1,
+     "min": -2,
+     "max": 2,
+     "desc": "green output from green input"
+    },
+    "gb": {
+     "type": "number",
+     "default": 0,
+     "min": -2,
+     "max": 2,
+     "desc": "green output from blue input"
+    },
+    "br": {
+     "type": "number",
+     "default": 0,
+     "min": -2,
+     "max": 2,
+     "desc": "blue output from red input"
+    },
+    "bg": {
+     "type": "number",
+     "default": 0,
+     "min": -2,
+     "max": 2,
+     "desc": "blue output from green input"
+    },
+    "bb": {
+     "type": "number",
+     "default": 1,
+     "min": -2,
+     "max": 2,
+     "desc": "blue output from blue input"
+    }
+   },
+   "graph": "[in]format=gbrp,colorchannelmixer=rr={rr}:rg={rg}:rb={rb}:gr={gr}:gg={gg}:gb={gb}:br={br}:bg={bg}:bb={bb},format=yuv420p[out]",
+   "cost": "light"
+  },
+  {
+   "id": "chromatic",
+   "summary": "Chromatic aberration: shift the red and blue channels apart.",
+   "params": {
+    "redX": {
+     "type": "number",
+     "default": 2,
+     "min": -60,
+     "max": 60,
+     "desc": "red horizontal shift, pixels",
+     "integer": true
+    },
+    "redY": {
+     "type": "number",
+     "default": 0,
+     "min": -60,
+     "max": 60,
+     "desc": "red vertical shift, pixels",
+     "integer": true
+    },
+    "blueX": {
+     "type": "number",
+     "default": -2,
+     "min": -60,
+     "max": 60,
+     "desc": "blue horizontal shift, pixels",
+     "integer": true
+    },
+    "blueY": {
+     "type": "number",
+     "default": 0,
+     "min": -60,
+     "max": 60,
+     "desc": "blue vertical shift, pixels",
+     "integer": true
+    }
+   },
+   "graph": "[in]format=gbrp,rgbashift=rh={redX}:rv={redY}:bh={blueX}:bv={blueY}:edge=smear,format=yuv420p[out]",
+   "cost": "light"
+  },
+  {
+   "id": "gaussian-blur",
+   "summary": "Gaussian blur: soften backgrounds, glows, mattes.",
+   "params": {
+    "radius": {
+     "type": "number",
+     "default": 8,
+     "min": 0,
+     "max": 100,
+     "desc": "blur radius (sigma) in pixels"
+    }
+   },
+   "graph": "[in]gblur=sigma={radius},format=yuv420p[out]",
+   "cost": "light"
+  },
+  {
+   "id": "sharpen",
+   "summary": "Sharpen / unsharp mask: recover crispness on soft or scaled footage.",
+   "params": {
+    "amount": {
+     "type": "number",
+     "default": 0.8,
+     "min": 0,
+     "max": 3,
+     "desc": "strength"
+    },
+    "size": {
+     "type": "enum",
+     "default": "5",
+     "values": [
+      "3",
+      "5",
+      "7",
+      "9",
+      "11",
+      "13"
+     ],
+     "desc": "kernel size in pixels (odd)"
+    }
+   },
+   "graph": "[in]unsharp=lx={size}:ly={size}:la={amount}:cx={size}:cy={size}:ca=0,format=yuv420p[out]",
+   "cost": "light"
+  },
+  {
+   "id": "lens-blur",
+   "summary": "Camera lens blur (approximation): a sharp focus area, a blurred rest, brightened highlights for bokeh. It is not a depth-map blur.",
+   "params": {
+    "radius": {
+     "type": "number",
+     "default": 14,
+     "min": 1,
+     "max": 80,
+     "desc": "blur radius outside the focus area"
+    },
+    "cx": {
+     "type": "number",
+     "default": 0.5,
+     "min": 0,
+     "max": 1,
+     "desc": "focus centre x"
+    },
+    "cy": {
+     "type": "number",
+     "default": 0.5,
+     "min": 0,
+     "max": 1,
+     "desc": "focus centre y"
+    },
+    "w": {
+     "type": "number",
+     "default": 0.35,
+     "min": 0.05,
+     "max": 1,
+     "desc": "focus width, fraction"
+    },
+    "h": {
+     "type": "number",
+     "default": 0.5,
+     "min": 0.05,
+     "max": 1,
+     "desc": "focus height, fraction"
+    },
+    "falloff": {
+     "type": "number",
+     "default": 0.5,
+     "min": 0.05,
+     "max": 1,
+     "desc": "how gradually focus falls off"
+    },
+    "bokeh": {
+     "type": "number",
+     "default": 0.4,
+     "min": 0,
+     "max": 1,
+     "desc": "extra weight on bright highlights in the blur"
+    }
+   },
+   "graph": "[in]format=gbrp,split=3[o][g][k];[g]lutrgb=r='clip(val*(1+{bokeh}*pow(val/maxval,4)*3),0,maxval)':g='clip(val*(1+{bokeh}*pow(val/maxval,4)*3),0,maxval)':b='clip(val*(1+{bokeh}*pow(val/maxval,4)*3),0,maxval)',gblur=sigma={radius}[bl];[k]scale=192:108,geq=r='255*clip((hypot((X/W-{cx})/({w}/2),(Y/H-{cy})/({h}/2))-1)/{falloff},0,1)':g='255*clip((hypot((X/W-{cx})/({w}/2),(Y/H-{cy})/({h}/2))-1)/{falloff},0,1)':b='255*clip((hypot((X/W-{cx})/({w}/2),(Y/H-{cy})/({h}/2))-1)/{falloff},0,1)',scale={W}:{H},format=gbrp[m];[o][bl][m]maskedmerge,format=yuv420p[out]",
+   "cost": "medium"
+  },
+  {
+   "id": "motion-blur",
+   "summary": "Motion blur by averaging neighbouring frames (frame blending, not motion-vector blur).",
+   "params": {
+    "frames": {
+     "type": "enum",
+     "default": "3",
+     "values": [
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "8"
+     ],
+     "desc": "frames averaged; more is a longer shutter"
+    }
+   },
+   "graph": "[in]tmix=frames={frames},format=yuv420p[out]",
+   "cost": "light"
+  },
+  {
+   "id": "denoise",
+   "summary": "Noise reduction, fast: spatial and temporal (hqdn3d).",
+   "params": {
+    "spatial": {
+     "type": "number",
+     "default": 4,
+     "min": 0,
+     "max": 20,
+     "desc": "luma spatial strength"
+    },
+    "temporal": {
+     "type": "number",
+     "default": 6,
+     "min": 0,
+     "max": 20,
+     "desc": "luma temporal strength"
+    },
+    "chroma": {
+     "type": "number",
+     "default": 3,
+     "min": 0,
+     "max": 20,
+     "desc": "chroma spatial strength"
+    }
+   },
+   "graph": "[in]hqdn3d=luma_spatial={spatial}:chroma_spatial={chroma}:luma_tmp={temporal}:chroma_tmp={temporal},format=yuv420p[out]",
+   "cost": "light"
+  },
+  {
+   "id": "denoise-strong",
+   "summary": "Noise reduction, strong: non-local means (slow). Use on short, very noisy clips.",
+   "params": {
+    "strength": {
+     "type": "number",
+     "default": 4,
+     "min": 1,
+     "max": 30,
+     "desc": "denoising strength"
+    },
+    "patch": {
+     "type": "enum",
+     "default": "7",
+     "values": [
+      "3",
+      "5",
+      "7",
+      "9"
+     ],
+     "desc": "patch size"
+    },
+    "research": {
+     "type": "enum",
+     "default": "15",
+     "values": [
+      "7",
+      "11",
+      "15",
+      "21"
+     ],
+     "desc": "research window"
+    }
+   },
+   "graph": "[in]nlmeans=s={strength}:p={patch}:r={research},format=yuv420p[out]",
+   "cost": "heavy"
+  },
+  {
+   "id": "light-rays",
+   "summary": "Light rays: streaks radiating from a point, built from the brightest parts of the picture.",
+   "params": {
+    "x": {
+     "type": "number",
+     "default": 0.5,
+     "min": 0,
+     "max": 1,
+     "desc": "origin x, fraction"
+    },
+    "y": {
+     "type": "number",
+     "default": 0.3,
+     "min": 0,
+     "max": 1,
+     "desc": "origin y, fraction"
+    },
+    "threshold": {
+     "type": "number",
+     "default": 0.65,
+     "min": 0.2,
+     "max": 0.98,
+     "desc": "brightness above which light is cast"
+    },
+    "length": {
+     "type": "number",
+     "default": 0.12,
+     "min": 0.02,
+     "max": 0.4,
+     "desc": "length of the rays, fraction of the frame"
+    },
+    "strength": {
+     "type": "number",
+     "default": 0.8,
+     "min": 0,
+     "max": 1,
+     "desc": "strength"
+    },
+    "tint": {
+     "type": "color",
+     "default": "#ffe2b0",
+     "desc": "ray colour"
+    }
+   },
+   "graph": "[in]format=gbrp,split=5[o][a][b][c][d];[a]lutrgb=r='if(gte(val/maxval,{threshold}),val,0)':g='if(gte(val/maxval,{threshold}),val,0)':b='if(gte(val/maxval,{threshold}),val,0)',split=3[h1][h2][h3];[h1]scale=iw*(1+{length}*0.4):ih*(1+{length}*0.4),crop={W}:{H}:(iw-ow)*{x}:(ih-oh)*{y},gblur=sigma=2[r1];[h2]scale=iw*(1+{length}*0.75):ih*(1+{length}*0.75),crop={W}:{H}:(iw-ow)*{x}:(ih-oh)*{y},gblur=sigma=4[r2];[h3]scale=iw*(1+{length}*1.2):ih*(1+{length}*1.2),crop={W}:{H}:(iw-ow)*{x}:(ih-oh)*{y},gblur=sigma=7[r3];[r1][r2]blend=all_mode=lighten[r12];[r12][r3]blend=all_mode=lighten,lutrgb=r='val*{tint.r}':g='val*{tint.g}':b='val*{tint.b}'[rays];[o][rays]blend=all_mode=screen:all_opacity={strength},format=yuv420p[out];[b]nullsink;[c]nullsink;[d]nullsink",
+   "cost": "medium"
+  },
+  {
+   "id": "light-sweep",
+   "summary": "Light sweep: a soft shine band that passes across the picture on a repeating timer.",
+   "params": {
+    "period": {
+     "type": "number",
+     "default": 3,
+     "min": 0.5,
+     "max": 20,
+     "desc": "seconds between sweeps"
+    },
+    "sweep": {
+     "type": "number",
+     "default": 1,
+     "min": 0.2,
+     "max": 5,
+     "desc": "seconds one sweep takes"
+    },
+    "width": {
+     "type": "number",
+     "default": 0.12,
+     "min": 0.02,
+     "max": 0.5,
+     "desc": "band width, fraction"
+    },
+    "angle": {
+     "type": "number",
+     "default": 25,
+     "min": -80,
+     "max": 80,
+     "desc": "band tilt, degrees"
+    },
+    "intensity": {
+     "type": "number",
+     "default": 0.7,
+     "min": 0,
+     "max": 1,
+     "desc": "brightness of the band"
+    },
+    "tint": {
+     "type": "color",
+     "default": "#ffffff",
+     "desc": "band colour"
+    }
+   },
+   "graph": "[in]format=gbrp,split=2[o][k];[k]scale=192:108,geq=r='255*{intensity}*{tint.r}*exp(-pow(((X/W-0.5)*cos({angle}*PI/180)+(Y/H-0.5)*sin({angle}*PI/180)-(-0.7+2.4*clip(mod(T-{T0},{period})/{sweep},0,1)))/{width},2))':g='255*{intensity}*{tint.g}*exp(-pow(((X/W-0.5)*cos({angle}*PI/180)+(Y/H-0.5)*sin({angle}*PI/180)-(-0.7+2.4*clip(mod(T-{T0},{period})/{sweep},0,1)))/{width},2))':b='255*{intensity}*{tint.b}*exp(-pow(((X/W-0.5)*cos({angle}*PI/180)+(Y/H-0.5)*sin({angle}*PI/180)-(-0.7+2.4*clip(mod(T-{T0},{period})/{sweep},0,1)))/{width},2))',scale={W}:{H},format=gbrp[band];[o][band]blend=all_mode=screen,format=yuv420p[out]",
+   "cost": "medium"
+  },
+  {
+   "id": "drop-shadow",
+   "summary": "Drop shadow for clips with transparency (titles, cut-outs, logos).",
+   "params": {
+    "dx": {
+     "type": "number",
+     "default": 10,
+     "min": -200,
+     "max": 200,
+     "desc": "shadow offset x, pixels",
+     "integer": true
+    },
+    "dy": {
+     "type": "number",
+     "default": 14,
+     "min": -200,
+     "max": 200,
+     "desc": "shadow offset y, pixels",
+     "integer": true
+    },
+    "blur": {
+     "type": "number",
+     "default": 10,
+     "min": 0,
+     "max": 60,
+     "desc": "softness, pixels"
+    },
+    "opacity": {
+     "type": "number",
+     "default": 0.6,
+     "min": 0,
+     "max": 1,
+     "desc": "shadow opacity"
+    }
+   },
+   "graph": "[in]format=rgba,split=3[a][b][c];[a]colorchannelmixer=rr=0:gg=0:bb=0:aa={opacity},gblur=sigma={blur}[sh];[c]colorchannelmixer=aa=0[tr];[tr][sh]overlay=x={dx}:y={dy}:format=auto[shifted];[shifted][b]overlay=format=auto,format=yuva420p[out]",
+   "cost": "light"
+  },
+  {
+   "id": "wave-warp",
+   "summary": "Wave warp: ripples and flag-like waves across the picture.",
+   "params": {
+    "amplitude": {
+     "type": "number",
+     "default": 12,
+     "min": 0,
+     "max": 100,
+     "desc": "wave height in pixels at 720p"
+    },
+    "frequency": {
+     "type": "number",
+     "default": 3,
+     "min": 0.2,
+     "max": 20,
+     "desc": "waves across the frame"
+    },
+    "speed": {
+     "type": "number",
+     "default": 0.5,
+     "min": -4,
+     "max": 4,
+     "desc": "cycles per second"
+    },
+    "direction": {
+     "type": "enum",
+     "default": "h",
+     "values": [
+      "h",
+      "v"
+     ],
+     "desc": "h moves pixels sideways (waves run down); v moves them up and down"
+    }
+   },
+   "graph": "[in]format=gbrp,split=3[o][kx][ky];[kx]scale=192:108,format=gray,geq=lum='128+if(eq(0,0),{amplitude}*{H}/720*sin(Y/H*{frequency}*6.2832+(T-{T0})*{speed}*6.2832),0)',scale={W}:{H},format=gbrp[wx];[ky]scale=192:108,format=gray,geq=lum='128',scale={W}:{H},format=gbrp[flat];[o][wx][flat]displace=edge=smear,format=yuv420p[out]",
+   "cost": "medium"
+  },
+  {
+   "id": "turbulent-displace",
+   "summary": "Turbulent displace: organic wobble for heat haze, water, liquid text (layered waves, not true noise).",
+   "params": {
+    "amount": {
+     "type": "number",
+     "default": 10,
+     "min": 0,
+     "max": 60,
+     "desc": "displacement in pixels at 720p"
+    },
+    "scale": {
+     "type": "number",
+     "default": 3,
+     "min": 0.5,
+     "max": 12,
+     "desc": "size of the swirls (higher is finer)"
+    },
+    "speed": {
+     "type": "number",
+     "default": 0.4,
+     "min": 0,
+     "max": 4,
+     "desc": "how fast it evolves"
+    }
+   },
+   "graph": "[in]format=gbrp,split=3[o][kx][ky];[kx]scale=192:108,format=gray,geq=lum='128+{amount}*{H}/720*(sin(X/W*{scale}*6.2832+(T-{T0})*{speed}*6.2832)+0.5*sin(Y/H*{scale}*1.7*6.2832-(T-{T0})*{speed}*8)+0.25*sin((X/W+Y/H)*{scale}*2.3*6.2832+(T-{T0})*{speed}*5))/1.75',scale={W}:{H},format=gbrp[tx];[ky]scale=192:108,format=gray,geq=lum='128+{amount}*{H}/720*(sin(Y/H*{scale}*6.2832-(T-{T0})*{speed}*6.2832+1)+0.5*sin(X/W*{scale}*1.3*6.2832+(T-{T0})*{speed}*7)+0.25*sin((X/W-Y/H)*{scale}*2.9*6.2832-(T-{T0})*{speed}*4))/1.75',scale={W}:{H},format=gbrp[ty];[o][tx][ty]displace=edge=smear,format=yuv420p[out]",
+   "cost": "medium"
+  },
+  {
+   "id": "glitch",
+   "summary": "Glitch: horizontal slice jumps and RGB split, seeded by time so a render repeats exactly.",
+   "params": {
+    "amount": {
+     "type": "number",
+     "default": 30,
+     "min": 0,
+     "max": 100,
+     "desc": "slice shift in pixels at 720p"
+    },
+    "blocks": {
+     "type": "number",
+     "default": 14,
+     "min": 2,
+     "max": 60,
+     "desc": "slices down the frame",
+     "integer": true
+    },
+    "rate": {
+     "type": "number",
+     "default": 8,
+     "min": 1,
+     "max": 30,
+     "desc": "changes per second"
+    },
+    "chance": {
+     "type": "number",
+     "default": 0.3,
+     "min": 0,
+     "max": 1,
+     "desc": "share of slices that jump"
+    },
+    "split": {
+     "type": "number",
+     "default": 4,
+     "min": 0,
+     "max": 40,
+     "desc": "red/blue split in pixels",
+     "integer": true
+    }
+   },
+   "graph": "[in]format=gbrp,rgbashift=rh={split}:bh=-{split}:edge=smear,split=3[o][kx][ky];[kx]scale=192:108,format=gray,geq=lum='128+{amount}*{H}/720*gt(mod(sin(floor(Y/H*{blocks})*12.9898+floor((T-{T0})*{rate})*78.233)*43758.5453,1),1-{chance})*(mod(sin(floor(Y/H*{blocks})*39.346+floor((T-{T0})*{rate})*11.135)*43758.5453,1)-0.5)*2',scale={W}:{H}:flags=neighbor,format=gbrp[gx];[ky]scale=192:108,format=gray,geq=lum='128',scale={W}:{H},format=gbrp[flat];[o][gx][flat]displace=edge=smear,format=yuv420p[out]",
+   "cost": "medium"
+  },
+  {
+   "id": "optics",
+   "summary": "Optics compensation: add or remove lens distortion (negative k1 barrel/fisheye, positive pincushion).",
+   "params": {
+    "k1": {
+     "type": "number",
+     "default": -0.2,
+     "min": -1,
+     "max": 1,
+     "desc": "main distortion"
+    },
+    "k2": {
+     "type": "number",
+     "default": 0,
+     "min": -1,
+     "max": 1,
+     "desc": "secondary distortion"
+    }
+   },
+   "graph": "[in]lenscorrection=cx=0.5:cy=0.5:k1={k1}:k2={k2}:i=bilinear,format=yuv420p[out]",
+   "cost": "light"
+  },
+  {
+   "id": "stabilize",
+   "summary": "Stabilize (single pass, light): reduces handheld shake. It is not a two-pass tracker.",
+   "params": {
+    "range": {
+     "type": "number",
+     "default": 16,
+     "min": 0,
+     "max": 64,
+     "desc": "largest shake it will correct, pixels",
+     "integer": true
+    },
+    "edge": {
+     "type": "enum",
+     "default": "mirror",
+     "values": [
+      "mirror",
+      "clamp",
+      "blank",
+      "original"
+     ],
+     "desc": "what fills the edges"
+    }
+   },
+   "graph": "[in]deshake=rx={range}:ry={range}:edge={edge},format=yuv420p[out]",
+   "cost": "medium"
+  },
+  {
+   "id": "slowmo",
+   "summary": "Smooth slow motion (Twixtor-style): interpolates new frames before the clip is slowed. Only useful when the clip speed is below 1.",
+   "params": {
+    "mode": {
+     "type": "enum",
+     "default": "mci",
+     "values": [
+      "blend",
+      "mci"
+     ],
+     "desc": "blend mixes neighbours (fast); mci estimates motion (best, slow)"
+    }
+   },
+   "graph": "[in]minterpolate=fps={INTERPFPS}:mi_mode={mode}:mc_mode=aobmc:me_mode=bidir:vsbmc=1,format=yuv420p[out]",
+   "cost": "heavy",
+   "stage": "source"
+  },
+  {
+   "id": "keyer",
+   "summary": "Keyer (Keylight-style): remove a green or blue screen, suppress spill, soften the edge. Leaves transparency for the layers below.",
+   "params": {
+    "key": {
+     "type": "color",
+     "default": "#00ff00",
+     "desc": "screen colour"
+    },
+    "similarity": {
+     "type": "number",
+     "default": 0.18,
+     "min": 0.01,
+     "max": 1,
+     "desc": "how far from the key colour is removed"
+    },
+    "blend": {
+     "type": "number",
+     "default": 0.08,
+     "min": 0,
+     "max": 1,
+     "desc": "softness at the transition"
+    },
+    "spill": {
+     "type": "enum",
+     "default": "green",
+     "values": [
+      "green",
+      "blue"
+     ],
+     "desc": "which spill to suppress"
+    },
+    "mix": {
+     "type": "number",
+     "default": 0.5,
+     "min": 0,
+     "max": 1,
+     "desc": "spill suppression strength"
+    },
+    "expand": {
+     "type": "number",
+     "default": 0,
+     "min": 0,
+     "max": 1,
+     "desc": "extra spill suppression"
+    },
+    "soften": {
+     "type": "number",
+     "default": 1,
+     "min": 0,
+     "max": 10,
+     "desc": "edge blur"
+    }
+   },
+   "graph": "[in]format=yuva444p,chromakey=color=0x{key}:similarity={similarity}:blend={blend},format=gbrap,despill=type={spill}:mix={mix}:expand={expand},format=yuva444p,split=2[ka][kb];[kb]alphaextract,gblur=sigma={soften}[km];[ka][km]alphamerge,format=yuva420p[out]",
+   "cost": "medium"
+  },
+  {
+   "id": "film-look",
+   "summary": "Film look in one node: halation, bloom, faded blacks, warmth, saturation, grain.",
+   "params": {
+    "halation": {
+     "type": "number",
+     "default": 0.5,
+     "min": 0,
+     "max": 1,
+     "desc": "red-orange glow around highlights"
+    },
+    "halationRadius": {
+     "type": "number",
+     "default": 18,
+     "min": 2,
+     "max": 80,
+     "desc": "how far it spreads, pixels"
+    },
+    "threshold": {
+     "type": "number",
+     "default": 0.7,
+     "min": 0.3,
+     "max": 0.98,
+     "desc": "brightness above which glow is cast"
+    },
+    "bloom": {
+     "type": "number",
+     "default": 0.25,
+     "min": 0,
+     "max": 1,
+     "desc": "white glow strength"
+    },
+    "fade": {
+     "type": "number",
+     "default": 0.04,
+     "min": 0,
+     "max": 0.2,
+     "desc": "lifted blacks"
+    },
+    "warmth": {
+     "type": "number",
+     "default": 10,
+     "min": -100,
+     "max": 100,
+     "desc": "warm or cool cast"
+    },
+    "saturation": {
+     "type": "number",
+     "default": -8,
+     "min": -100,
+     "max": 100,
+     "desc": "saturation change"
+    },
+    "grain": {
+     "type": "number",
+     "default": 10,
+     "min": 0,
+     "max": 40,
+     "desc": "film grain"
+    }
+   },
+   "graph": "[in]format=gbrp,split=3[o][a][c];[a]lutrgb=r='if(gte(val/maxval,{threshold}),val,0)':g='if(gte(val/maxval,{threshold}),val,0)':b='if(gte(val/maxval,{threshold}),val,0)',split=2[h1][h2];[h1]gblur=sigma={halationRadius},colorchannelmixer=rr=1:gg=0.28:bb=0.06[hal];[h2]gblur=sigma={halationRadius}*0.6[blm];[o][hal]blend=all_mode=screen:all_opacity={halation}[s1];[s1][blm]blend=all_mode=screen:all_opacity={bloom}[s2];[c]nullsink;[s2]lutrgb=r='clip(val*(1-{fade})+{fade}*maxval*0.9,0,maxval)*(1+0.06*{warmth}/100)':g='clip(val*(1-{fade})+{fade}*maxval*0.9,0,maxval)':b='clip(val*(1-{fade})+{fade}*maxval*0.9,0,maxval)*(1-0.06*{warmth}/100)',eq=saturation=(1+{saturation}/100),noise=alls={grain}:allf=t,format=yuv420p[out]",
+   "cost": "medium"
+  }
+ ]
+}

@@ -109,6 +109,8 @@ export function validateProject(p: unknown): Issue[] {
             `clips.${c.id}.fx`,
           );
       }
+      if (f.type === 'lut' && track.type !== 'video' && track.type !== 'graphics')
+        add('FX_INVALID', `clip ${c.id}: lut needs a video track`, `clips.${c.id}.fx`);
       if (f.type === 'plugin' && track.type !== 'video' && track.type !== 'graphics')
         add('FX_INVALID', `clip ${c.id}: plugin effect ${f.id} needs a video track`, `clips.${c.id}.fx`);
       if (f.type === 'blur-region') {

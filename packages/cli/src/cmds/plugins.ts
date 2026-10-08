@@ -160,7 +160,8 @@ export const check: Handler = async (inv) => {
   }
   const results: { kind: string; id: string; ok: boolean; detail: string }[] = [];
   for (const e of found.manifest.effects ?? []) {
-    const lines = E.effectLines({ id: e.id }, 'src', 'fxout', 'chk');
+    // the test pattern is 320x180 at 24 fps, so the graph's {W} {H} {FPS} must say so
+    const lines = E.effectLines({ id: e.id }, 'src', 'fxout', 'chk', { W: 320, H: 180, FPS: 24, SRCFPS: 24, SPEED: 1, T0: 0 });
     let failure = '';
     try {
       await E.ffmpeg([
@@ -168,7 +169,7 @@ export const check: Handler = async (inv) => {
       '-f',
       'lavfi',
       '-i',
-      'testsrc2=s=320x180:d=0.5:r=24',
+      'testsrc2=s=320x180:d=1:r=24',
       '-filter_complex',
       `[0:v]format=yuv420p[src];${lines.join(';')}`,
       '-map',

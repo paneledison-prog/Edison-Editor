@@ -110,12 +110,25 @@ export const Fx = z.discriminatedUnion('type', [
       strength: num(2, 80).optional(),
     })
     .strict(),
+  // A 3D LUT (.cube or .3dl) from inside the project folder, applied to the picture after the clip's own scale and zoom.
+  z
+    .object({
+      type: z.literal('lut'),
+      file: z
+        .string()
+        .max(200)
+        .regex(/^(?!.*\.\.)[A-Za-z0-9_][A-Za-z0-9_./ -]*\.(cube|3dl)$/i, 'a .cube or .3dl path inside the project'),
+      bypass: z.boolean().optional(),
+    })
+    .strict(),
   // A plugin's video effect; the id and parameters are checked against the plugin's manifest at render time.
   z
     .object({
       type: z.literal('plugin'),
       id: z.string().regex(/^[a-z][a-z0-9-]{1,31}$/),
-      params: z.record(z.string().max(24), z.union([z.number(), z.string().max(24), z.boolean()])).optional(),
+      params: z.record(z.string().max(24), z.union([z.number(), z.string().max(120), z.boolean()])).optional(),
+      /** a node switched off: kept in the stack, skipped by the render */
+      bypass: z.boolean().optional(),
     })
     .strict(),
   z.object({ type: z.literal('gain'), db: num(-60, 40) }).strict(),

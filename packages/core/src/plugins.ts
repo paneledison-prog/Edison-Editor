@@ -43,14 +43,26 @@ export const TemplateDecl = z
   })
   .strict();
 
+const HEX6 = /^#[0-9a-fA-F]{6}$/;
+/** "x/y x/y ...": curve points, x strictly increasing, both 0..1, at least two, at most 12 */
+const POINTS = /^(\d(?:\.\d{1,4})?\/\d(?:\.\d{1,4})?)( \d(?:\.\d{1,4})?\/\d(?:\.\d{1,4})?){1,11}$/;
+export function validPoints(v: string): boolean {
+  if (!POINTS.test(v)) return false;
+  const pts = v.split(' ').map((p) => p.split('/').map(Number) as [number, number]);
+  return pts.every(([x, y], i) => x >= 0 && x <= 1 && y >= 0 && y <= 1 && (i === 0 || x > pts[i - 1]![0]));
+}
+
 const EffectParam = z
   .object({
-    type: z.enum(['number', 'enum', 'boolean']),
+    /** `color` is #RRGGBB (graph gets {name.r} {name.g} {name.b} as 0..1); `points` is a curve "0/0 0.5/0.6 1/1" */
+    type: z.enum(['number', 'enum', 'boolean', 'color', 'points']),
     default: z.union([z.number(), z.string(), z.boolean()]),
     desc: z.string().min(1).max(160),
     min: z.number().optional(),
     max: z.number().optional(),
     values: z.array(z.string().regex(/^[A-Za-z0-9_.-]{1,24}$/)).max(24).optional(),
+    /** a number that must be a whole number (the value is rounded) */
+    integer: z.boolean().optional(),
   })
   .strict();
 
@@ -63,7 +75,14 @@ export const EffectDecl = z
      * An FFmpeg filter graph from `[in]` to `[out]`. `{name}` is replaced by a validated parameter.
      * Internal labels are renamed per clip, so two clips never collide.
      */
-    graph: z.string().min(3).max(1200),
+    graph: z.string().min(3).max(6000),
+    /**
+     * `clip` (default): runs on the clip's finished picture. `source`: runs on the source frames before the clip is
+     * retimed, so frame interpolation for slow motion sees real neighbouring frames.
+     */
+    stage: z.enum(['clip', 'source']).optional(),
+    /** a rough cost label shown by `plugins list`; `heavy` effects are measured and flagged in render warnings */
+    cost: z.enum(['light', 'medium', 'heavy']).optional(),
   })
   .strict();
 
@@ -86,7 +105,7 @@ export const Manifest = z
     /** browser-side source for `templates` (relative path to a .js file) */
     page: z.string().regex(/^[A-Za-z0-9_./-]{1,80}\.js$/).optional(),
     templates: z.array(TemplateDecl).max(16).optional(),
-    effects: z.array(EffectDecl).max(16).optional(),
+    effects: z.array(EffectDecl).max(48).optional(),
     scripts: z.array(ScriptDecl).max(32).optional(),
   })
   .strict();
@@ -126,7 +145,6 @@ const BANNED_FILTERS = [
   'drawtext',
   'lut3d',
   'haldclut',
-  'geq',
   'frei0r',
   'ladspa',
   'lv2',
@@ -157,8 +175,11 @@ function inside(root: string, rel: string): string {
 
 /** Placeholders in a graph, e.g. `{amount}` */
 export function graphParams(graph: string): string[] {
-  return [...new Set([...graph.matchAll(/\{([a-zA-Z][a-zA-Z0-9]*)\}/g)].map((m) => m[1]!))];
+  return [...new Set([...graph.matchAll(/\{([a-zA-Z][a-zA-Z0-9]*(?:\.[rgb])?)\}/g)].map((m) => m[1]!))];
 }
+
+/** Values the renderer fills in itself, so a graph can size a source filter to the picture. */
+export const BUILTIN_VARS = ['W', 'H', 'FPS', 'SRCFPS', 'SPEED', 'INTERPFPS', 'T0'] as const;
 
 export function loadPlugin(dir: string, source: LoadedPlugin['source']): LoadedPlugin {
   const root = resolve(dir);
@@ -215,13 +236,20 @@ export function loadPlugin(dir: string, source: LoadedPlugin['source']): LoadedP
       if (new RegExp(`(^|[;,\\]\\s])${b}\\s*[=,;\\[]`).test(e.graph) || new RegExp(`(^|[;,\\]\\s])${b}$`).test(e.graph))
         throw new PluginError(`${m.id}: effect ${e.id} uses the "${b}" filter, which reads files or runs code`);
     const used = graphParams(e.graph);
-    for (const u of used)
-      if (!(u in e.params)) throw new PluginError(`${m.id}: effect ${e.id} graph uses {${u}} but declares no such param`);
+    for (const u of used) {
+      const base = u.replace(/\.[rgb]$/, '');
+      const ok = (BUILTIN_VARS as readonly string[]).includes(u) || (base in e.params && (u === base || e.params[base]!.type === 'color'));
+      if (!ok) throw new PluginError(`${m.id}: effect ${e.id} graph uses {${u}} but declares no such param`);
+    }
     for (const [k, ps] of Object.entries(e.params)) {
       if (ps.type === 'enum' && !ps.values?.includes(String(ps.default)))
         throw new PluginError(`${m.id}: effect ${e.id} param ${k} default is not in its values`);
       if (ps.type === 'number' && (ps.min === undefined || ps.max === undefined))
         throw new PluginError(`${m.id}: effect ${e.id} param ${k} needs min and max`);
+      if (ps.type === 'color' && !(typeof ps.default === 'string' && HEX6.test(ps.default)))
+        throw new PluginError(`${m.id}: effect ${e.id} param ${k} default must be #RRGGBB`);
+      if (ps.type === 'points' && !(typeof ps.default === 'string' && validPoints(ps.default)))
+        throw new PluginError(`${m.id}: effect ${e.id} param ${k} default is not a valid curve like "0/0 0.5/0.6 1/1"`);
     }
   }
   const h = createHash('sha256');
@@ -272,10 +300,23 @@ export function resolveEffectParams(
     if (ps.type === 'number') {
       if (typeof v !== 'number' || !Number.isFinite(v)) problems.push(`param "${k}": expected a number`);
       else if (v < ps.min! || v > ps.max!) problems.push(`param "${k}": ${v} is outside ${ps.min}..${ps.max}`);
-      else out[k] = String(Math.round(v * 10000) / 10000);
+      else out[k] = String(ps.integer ? Math.round(v) : Math.round(v * 10000) / 10000);
     } else if (ps.type === 'boolean') {
       if (typeof v !== 'boolean') problems.push(`param "${k}": expected true or false`);
       else out[k] = v ? '1' : '0';
+    } else if (ps.type === 'color') {
+      if (typeof v !== 'string' || !HEX6.test(v)) problems.push(`param "${k}": expected a #RRGGBB color`);
+      else {
+        const n = parseInt(v.slice(1), 16);
+        out[`${k}.r`] = String(Math.round(((n >> 16) & 255) / 2.55) / 100);
+        out[`${k}.g`] = String(Math.round(((n >> 8) & 255) / 2.55) / 100);
+        out[`${k}.b`] = String(Math.round((n & 255) / 2.55) / 100);
+        out[k] = v.slice(1);
+      }
+    } else if (ps.type === 'points') {
+      if (typeof v !== 'string' || !validPoints(v))
+        problems.push(`param "${k}": expected curve points like "0/0 0.5/0.6 1/1" (x increasing, 0..1, 2 to 12 points)`);
+      else out[k] = v;
     } else if (typeof v !== 'string' || !ps.values?.includes(v))
       problems.push(`param "${k}": expected one of ${ps.values?.join(', ')}`);
     else out[k] = v;

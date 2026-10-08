@@ -1,9 +1,10 @@
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { displaySize, speedOf, type Clip, type Fx, type Project } from '@studio/core';
 import { MAX_AUDIO_SPEED, clipAudioChain, dbToLin } from './audiofx.js';
 import { EngineError } from './run.js';
 import { blurRegionFilter, hasMotion, zoomFilter } from './zoom.js';
-import { effectLines } from './plugins.js';
+import { effectLines, pluginEffectDecl, type FxContext } from './plugins.js';
 import type { Preset } from './presets.js';
 
 export interface Plan {
@@ -244,6 +245,7 @@ export function compile(inp: CompileInput): Plan {
       const at = sec(c.start);
       const head = a.kind === 'image' ? `fps=${fps}` : `setpts=(PTS-STARTPTS)/${speed},fps=${fps}`;
       const cm = 'flags=lanczos:out_color_matrix=bt709:out_range=tv';
+      const lineStart = vLines.length;
       const zf = zoomFilter(c, width, height);
       const bf = blurRegionFilter(c, width, height, nV);
       if (t.type === 'graphics' && a.kind === 'image') {
@@ -266,8 +268,67 @@ export function compile(inp: CompileInput): Plan {
           `[${k}:v]${head},scale=${width}:${height}:force_original_aspect_ratio=decrease:${cm},pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=${bg},setsar=1,format=yuv420p,${bf}${zf}setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
         );
       }
-      // Plugin effects: each is a small filter graph that reads the clip's finished picture and writes a new one.
-      const pfx = (c.fx ?? []).filter((f): f is Extract<Fx, { type: 'plugin' }> => f.type === 'plugin');
+      // LUTs run right after the clip's own scale and zoom, before plugin nodes: order of the fx array decides among nodes of
+      // the same kind, and a LUT is always first, as camera conversions are on a colourist's first node.
+      const luts = (c.fx ?? []).filter((f): f is Extract<Fx, { type: 'lut' }> => f.type === 'lut' && !f.bypass);
+      if (luts.length) {
+        const base = `v${nV}`;
+        const last = vLines.pop()!;
+        let cur = `${base}lutin`;
+        vLines.push(last.replace(new RegExp(`\\[${base}\\]$`), `[${cur}]`));
+        luts.forEach((f, i) => {
+          const out = i === luts.length - 1 ? base : `${base}lut${i}`;
+          const path = join(projectDir, f.file).replace(/\\/g, '/');
+          if (!existsSync(path))
+            throw new EngineError(
+              'INVALID_INPUT',
+              `${c.id}: LUT file ${f.file} does not exist`,
+              'put the .cube file inside the project folder',
+            );
+          vLines.push(
+            `[${cur}]format=gbrp,lut3d=file='${path.replace(/'/g, "\\'")}':interp=tetrahedral,format=yuv420p[${out}]`,
+          );
+          cur = out;
+        });
+      }
+      // Plugin effects: each is a small filter graph. `source` stage ones read the unretimed source frames (slow-motion
+      // interpolation needs real neighbours); the rest read the clip's finished picture. A bypassed node is skipped.
+      const live = (c.fx ?? []).filter(
+        (f): f is Extract<Fx, { type: 'plugin' }> => f.type === 'plugin' && !f.bypass,
+      );
+      const fxCtx: FxContext = {
+        W: width,
+        H: height,
+        FPS: fps,
+        SRCFPS: a.probe.fps || fps,
+        SPEED: speed,
+        T0: c.start / 1000,
+      };
+      const isSource = (f: { id: string }) => pluginEffectDecl(f.id)?.stage === 'source';
+      for (const f of live) {
+        const decl = pluginEffectDecl(f.id);
+        if (decl?.cost === 'heavy') {
+          const msg = `${c.id}: effect "${f.id}" is heavy (per-pixel math or temporal search); expect a slower render`;
+          if (!notes.includes(msg)) notes.push(msg);
+        }
+      }
+      const pfx = live.filter((f) => !isSource(f));
+      const sfx = live.filter(isSource);
+      if (sfx.length) {
+        const base = `v${nV}`;
+        const firstIdx = vLines.findIndex((l, i) => i >= lineStart && l.includes(`[${k}:v]`));
+        if (firstIdx >= 0) {
+          let cur = `${k}:v`;
+          const pre: string[] = [];
+          sfx.forEach((f, i) => {
+            const out = `${base}s${i}`;
+            pre.push(...effectLines(f, cur, out, `${base}s${i}`, fxCtx));
+            cur = out;
+          });
+          vLines[firstIdx] = vLines[firstIdx]!.replace(`[${k}:v]`, `[${cur}]`);
+          vLines.splice(firstIdx, 0, ...pre);
+        }
+      }
       if (pfx.length) {
         const base = `v${nV}`;
         const last = vLines.pop()!;
@@ -275,7 +336,7 @@ export function compile(inp: CompileInput): Plan {
         vLines.push(last.replace(new RegExp(`\\[${base}\\]$`), `[${cur}]`));
         pfx.forEach((f, i) => {
           const out = i === pfx.length - 1 ? base : `${base}fx${i}`;
-          vLines.push(...effectLines(f, cur, out, `${base}f${i}`));
+          vLines.push(...effectLines(f, cur, out, `${base}f${i}`, fxCtx));
           cur = out;
         });
       }
