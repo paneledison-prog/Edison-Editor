@@ -16,7 +16,9 @@ import {
   apply, cornersOf, drawPoly, fillGaps, fromBytes, inv3, lerpCorners, fromCorners, mul3, probeVideo, readFrames, readSize, tileRgb, trackPlane,
   type Gray, type Mat3, type Quad,
 } from '@studio/vision';
+import { grabFrame } from './grab.js';
 import { EngineError } from './run.js';
+import { ensureSolve, fitScenePlane, planeHomographies } from './solve.js';
 
 /** Bump when the tracking changes in a way that makes old data wrong. */
 const TRACK_VERSION = 1;
@@ -41,7 +43,16 @@ export interface TrackData {
   /** per frame: r = aligned to the reference image, f = point fit only, x = lost (interpolated) */
   state: string;
   inliers: number[];
-  stats: { lost: number; refined: number; meanInliers: number; ms: number; model: string; lostRanges: [number, number][] };
+  stats: {
+    lost: number;
+    refined: number;
+    meanInliers: number;
+    ms: number;
+    model: string;
+    lostRanges: [number, number][];
+    /** plane3d: what the camera solve and the plane fit found */
+    solve?: { f: number; hfovDeg: number; rmsPx: number; points: number; planeInliers: number; planePoints: number; planeRms: number; cached: boolean; frames: number; registered: number };
+  };
 }
 
 const mat = (h: number[]): Mat3 => [h[0]!, h[1]!, h[2]!, h[3]!, h[4]!, h[5]!, h[6]!, h[7]!, 1];
@@ -108,6 +119,50 @@ export async function buildTrack(o: TrackBuildOptions): Promise<{ data: TrackDat
   const quad = t.quad.map(([x, y]) => [toIdx(x, size.w), toIdx(y, size.h)]) as Quad;
   const gray = (b: Buffer): Gray => fromBytes(b, size.w, size.h, 1);
 
+  if (t.model === 'plane3d') {
+    const { solve, cached: solveCached } = await ensureSolve({
+      projectDir, file: a.workingCopy?.path ?? a.path, assetHash: a.hash, fromMs: t.from, toMs: t.to, fps, width: size.w,
+      ...(t.focal ? { focalDeg: t.focal } : {}), fixFocal: t.fixFocal, log: o.log, force: o.force,
+    });
+    const refI = Math.min(solve.frames - 1, r);
+    const plane = fitScenePlane(solve, quad, refI);
+    const Hs = planeHomographies(solve, plane, quad, refI);
+    const T3: Mat3 = [1 / solve.w, 0, 0.5 / solve.w, 0, 1 / solve.h, 0.5 / solve.h, 0, 0, 1];
+    const T3i = inv3(T3)!;
+    const unit3 = Hs.map((H) => (H ? (mul3(mul3(T3, H), T3i) as Mat3) : null));
+    const filled3 = fillGaps(unit3);
+    const st = Hs.map((H, i) => (!H ? 'x' : solve.how[i] === 'b' || solve.how[i] === 'r' ? 'r' : 'f')).join('');
+    const lost3: [number, number][] = [];
+    [...st].forEach((c, i) => {
+      if (c !== 'x') return;
+      const last = lost3[lost3.length - 1];
+      if (last && last[1] === i - 1) last[1] = i;
+      else lost3.push([i, i]);
+    });
+    const data3: TrackData = {
+      v: TRACK_VERSION, tracker: id, asset: t.asset, key, fps, w: solve.w, h: solve.h, fromMs: t.from, refIndex: refI, frames: filled3.length,
+      H: filled3.map((H) => [H[0], H[1], H[2], H[3], H[4], H[5], H[6], H[7]].map((v) => Math.round(v * 1e9) / 1e9)),
+      state: st, inliers: st.split('').map(() => plane.inliers),
+      stats: {
+        lost: [...st].filter((c) => c === 'x').length,
+        refined: [...st].filter((c) => c === 'r').length,
+        meanInliers: plane.inliers,
+        ms: Date.now() - t0,
+        model: t.model,
+        lostRanges: lost3.map(([x, y]) => [Math.round(t.from + x * step), Math.round(t.from + y * step)]),
+        solve: {
+          f: solve.f, hfovDeg: solve.stats.hfovDeg, rmsPx: solve.stats.rmsPx, points: solve.stats.points, planeInliers: plane.inliers, planePoints: plane.candidates,
+          planeRms: plane.rms, cached: solveCached, frames: solve.frames, registered: solve.stats.registered,
+        },
+      },
+    };
+    mkdirSync(join(projectDir, '.studio', 'cache', 'track'), { recursive: true });
+    const tmp3 = `${file}.${process.pid}.tmp`;
+    writeFileSync(tmp3, JSON.stringify(data3));
+    renameSync(tmp3, file);
+    return { data: data3, cached: false };
+  }
+
   // the reference frame, then the frames after it
   const fwdSpec = { file: src, startMs: t.from + r * step, durMs: Math.ceil((total - r) * step) + 1, fps, size, channels: 1 as const };
   const fwd = readFrames(fwdSpec)[Symbol.asyncIterator]();
@@ -124,7 +179,7 @@ export async function buildTrack(o: TrackBuildOptions): Promise<{ data: TrackDat
     if (back.length > r) back.splice(0, back.length - r);
   }
 
-  const opts = { model: t.model, refine: t.refine !== false } as const;
+  const opts = { model: t.model as Exclude<typeof t.model, 'plane3d'>, refine: t.refine !== false } as const;
   const forward: { H: Mat3 | null; ok: boolean; refined: boolean; inliers: number }[] = [];
   const nFwd = total - r - 1;
   let seen = 0;
@@ -283,11 +338,7 @@ export async function trackSheet(o: { projectDir: string; project: Project; id: 
   const rows: { index: number; ms: number; state: string }[] = [];
   for (const i of list) {
     const ms = data.fromMs + i * step;
-    let frame: Buffer | undefined;
-    for await (const b of readFrames({ file: src, startMs: ms, durMs: Math.ceil(step * 1.6), fps: data.fps, size, channels: 3 })) {
-      frame = b;
-      break;
-    }
+    const frame = await grabFrame(src, ms, data.fps, size);
     const buf = new Uint8Array(frame ?? Buffer.alloc(size.w * size.h * 3));
     const pts = quadAt(data, ms, q, path).map(([x, y]) => [x * size.w - 0.5, y * size.h - 0.5] as [number, number]);
     const st = data.state[i] ?? 'f';

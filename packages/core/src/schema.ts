@@ -75,7 +75,12 @@ export const Tracker = z
     at: z.number().int().min(0),
     /** the region at the reference frame, four corners clockwise from the top left, as fractions of the displayed frame */
     quad: z.tuple([Pt01, Pt01, Pt01, Pt01]),
-    model: z.enum(['translation', 'similarity', 'affine', 'homography']),
+    /** plane3d solves the camera in 3D and follows the plane through it (needs a camera that moves through space) */
+    model: z.enum(['translation', 'similarity', 'affine', 'homography', 'plane3d']),
+    /** plane3d: the camera's horizontal field of view in degrees, as the starting value of the solve (default 58) */
+    focal: z.number().min(10).max(150).optional(),
+    /** plane3d: keep `focal` as given instead of refining it */
+    fixFocal: z.boolean().optional(),
     /** align the reference picture to every frame after the point fit (removes drift; needs a region that stays visible) */
     refine: z.boolean().optional(),
     /** analysis frame rate and width (defaults: the source rate up to 30, 480 px) */

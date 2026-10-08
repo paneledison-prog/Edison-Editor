@@ -175,3 +175,33 @@ export function rng(seed = 1): Rng {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+
+/** Solves A x = b for a symmetric positive definite A (n x n, row-major) by Cholesky; null when it is not positive definite. */
+export function cholSolve(A: Float64Array, b: Float64Array, n: number): Float64Array | null {
+  const L = new Float64Array(n * n);
+  for (let i = 0; i < n; i++) {
+    const li = i * n;
+    for (let j = 0; j <= i; j++) {
+      const lj = j * n;
+      let s = A[li + j]!;
+      for (let k = 0; k < j; k++) s -= L[li + k]! * L[lj + k]!;
+      if (i === j) {
+        if (!(s > 1e-300)) return null;
+        L[li + i] = Math.sqrt(s);
+      } else L[li + j] = s / L[lj + j]!;
+    }
+  }
+  const y = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    let s = b[i]!;
+    for (let k = 0; k < i; k++) s -= L[i * n + k]! * y[k]!;
+    y[i] = s / L[i * n + i]!;
+  }
+  const x = new Float64Array(n);
+  for (let i = n - 1; i >= 0; i--) {
+    let s = y[i]!;
+    for (let k = i + 1; k < n; k++) s -= L[k * n + i]! * x[k]!;
+    x[i] = s / L[i * n + i]!;
+  }
+  return x;
+}

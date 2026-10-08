@@ -13,6 +13,7 @@ import {
   type Gray, type Mat3, type Quad,
 } from '../packages/vision/src/index.js';
 import { cameraPath, renderPlane, texture, toBytes } from './vision-helpers.js';
+import { grays, median, shake, steps } from './shake.js';
 import { tmpDir } from './helpers.js';
 
 const BIN = join(import.meta.dirname, '..', 'packages', 'cli', 'dist', 'studio.js');
@@ -68,31 +69,6 @@ async function project(video: string): Promise<P> {
 const render = async (p: P, name: string) =>
   join(p.dir, ok(await run(['render', '--out', name, '--width', String(W), '--no-normalize', '--force', '--project', p.dir])).output as string);
 
-/** Frames of a video as gray images, half size. */
-async function grays(file: string, w = 320, h = 180): Promise<Gray[]> {
-  const out: Gray[] = [];
-  for await (const b of readFrames({ file, size: { w, h } })) out.push(fromBytes(b, w, h, 1));
-  return out;
-}
-const median = (a: ArrayLike<number>) => Float32Array.from(a).sort()[a.length >> 1]!;
-/** Global translation between consecutive frames: the median of the dense flow over the middle of the picture. */
-function steps(frames: Gray[]): [number, number][] {
-  const out: [number, number][] = [];
-  for (let i = 0; i + 1 < frames.length; i++) {
-    const f = denseFlow(frames[i]!, frames[i + 1]!);
-    const u: number[] = [];
-    const v: number[] = [];
-    for (let y = f.h * 0.2; y < f.h * 0.8; y += 2) for (let x = f.w * 0.2; x < f.w * 0.8; x += 2) (u.push(f.u[Math.floor(y) * f.w + Math.floor(x)]!), v.push(f.v[Math.floor(y) * f.w + Math.floor(x)]!));
-    out.push([median(u), median(v)]);
-  }
-  return out;
-}
-/** rms of the change of the step from one frame to the next: what a viewer sees as shake (px, at the measured width). */
-function shake(s: [number, number][]): number {
-  let sq = 0;
-  for (let i = 0; i + 1 < s.length; i++) sq += (s[i + 1]![0] - s[i]![0]) ** 2 + (s[i + 1]![1] - s[i]![1]) ** 2;
-  return Math.sqrt(sq / Math.max(1, s.length - 1));
-}
 /** the same measure on the known path, for the centre of the frame, at the measured width */
 function pathShake(path: Mat3[], scale = 0.5): number {
   const c = path.map((p) => apply(p, W / 2, H / 2));

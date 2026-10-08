@@ -7,3 +7,7 @@ export * from './frames.js';
 export * from './planar.js';
 export * from './stabilize.js';
 export * from './draw.js';
+export * from './cam.js';
+export * from './ba.js';
+export * from './tracks.js';
+export * from './sfm.js';
