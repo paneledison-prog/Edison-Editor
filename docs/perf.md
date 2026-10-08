@@ -78,6 +78,29 @@ Machine as above (4 cores, no GPU). Chromium 141 headless, software rendering (`
 
 Also from the first ASR runs: whisper-medium was later than the truth by a mean of 167 ms (a median of +169 ms), while whisper-small was slightly early. Different models place word starts differently, so a caption timing claim needs a measurement on the model actually used.
 
+## Phase 5
+
+Acceptance A on a **synthetic** 3-minute 2560x1440 "screen recording" (drawn panels, no text), 11 known clicks, flite VO, synthetic music. Machine as above.
+
+| Area                                  | Measured                                                                                                                                                                                                                                                                     |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Zoom render                           | a scale keyframe renders as one FFmpeg scale+crop; the frame at scale 2 matched a reference center crop (mean pixel difference 1.8 of 255). `crop` evaluates `iw` once, so the scaled size is written out in the expression (the first version showed the top-left quadrant) |
+| Activity analysis, 180 s at 2560x1440 | 15 to 16 s. With one-second smoothing the fixture's 4 still spans and 2 low-activity spans were all found within 1 s of the truth (still 0-3.4, 20.4-26.4, 60.4-74.4, 140.4-169.4 s; low 26.4-39.4, 95.4-119.4 s)                                                            |
+| Result                                | 82.2 s 16:9, 9:16 and 1:1 from beats totalling 4.5-17, 27-58, 75-95, 120-135, 170-178 s of the recording; one 12.4 s loading span ramped 6x to 2.1 s                                                                                                                         |
+| Zoom                                  | 19 zoom changes per cut. 16:9: max 1.7x, **soft** (crop 1506 source px across a 1920 px output; sharp zoom would be 1.33x). 9:16: 2.37x, sharp (1080 px). 1:1: 2.22x, sharp                                                                                                  |
+| QC on all three cuts                  | passed, 12 checks pass, 2 skipped; loudness -14.0 LUFS, true peak -3.1 dBTP, LRA 18.8                                                                                                                                                                                        |
+| Render time                           | 181.8 s (16:9), 177.1 s (9:16), 143.4 s (1:1) for 82 s of video, three renders after one 16 s analysis and one 9 s transcription                                                                                                                                             |
+
+Two defects found by this run and fixed: the activity classifier treated a blinking spinner as busy (fixed by judging each second by its busiest sample), and the first run measured -15.6 LUFS because loudnorm's linear mode silently falls back to dynamic when the measured loudness range exceeds its LRA target (fixed by raising the pass-2 LRA target to the measured value plus 1). Before the second fix the demo failed its own loudness check.
+
+Dead-time cutting was **not exercised by the delivered plan**: the chosen beats avoid the still spans (the report shows 0.0 s cut). The cutting logic is covered by a unit test only.
+
+## Phase 6
+
+Browser tests with real pointer input in headless Chromium (9 tests, run 3 times in a row, all passed): drag, edge trim (the source in-point follows the head), a drag that would overlap stops at the neighbour, Escape cancels, split, delete and ripple delete, keyframe arrows and the easing editor, a 409 for an edit made against an old revision, `--read-only`, and 12 concurrent CLI writers (all 12 landed under the new lock). The exit test interleaves UI and agent edits (ui move, agent trim, ui split, agent marker) and then undoes them alternately from the page and from the CLI: the project file came back byte for byte, and redo replayed all four.
+
+UI shell bundle: 11.2 KB to 15.8 KB gzipped (budget 250 KB); the baseline was raised for the write path, snapping and trim logic, and the easing editor.
+
 ## Not measured
 
 - UI memory with a 2-hour project open (budget < 300 MB).
@@ -95,3 +118,7 @@ Also from the first ASR runs: whisper-medium was later than the truth by a mean 
 - Motion rendering on a GPU, and templates at 4K.
 - Keyframes and transforms on media clips: not implemented in any backend.
 - Translation: not implemented.
+- Phase 5 on a real recording: the fixture has no text, so privacy scanning, text legibility, and click-driven zoom on real UI are untested. OCR is not installed.
+- Dead-time cutting on the delivered demo (0 s cut), and visuals re-timed to narration.
+- Window or device frame, chapter cards: not implemented.
+- Phase 6: touch input, multi-select, dragging keyframes in the timeline (they are nudged from the inspector), and two browser tabs editing at once.

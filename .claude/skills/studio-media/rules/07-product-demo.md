@@ -5,7 +5,7 @@ A product demo is a screen recording turned into a clear, short story. This pipe
 ## Inputs
 
 - **Required:** a screen recording. Best: the display's native resolution (1440p or higher), 30 or 60 fps CFR.
-- **Strongly recommended:** `events.jsonl` from the recorder: one JSON object per line, `{ "t": ms, "type": "move|click|key|scroll", "x": px, "y": px, "button": "left", "target": "optional label" }`, times relative to recording start, coordinates in recording pixels. Studio does not ship a recorder in Phase 1; it accepts this format from any tool, and `Context.md` documents it.
+- **Strongly recommended:** `events.jsonl` from the recorder: one JSON object per line, `{ "t": ms, "type": "move|click|key|scroll", "x": px, "y": px, "button": "left", "target": "optional label" }`, times relative to recording start, coordinates in recording pixels. Studio does not ship a recorder; it accepts this format from any tool, and `Context.md` documents it. `studio demo ingest` validates it and rejects events outside the recording.
 - Optional: script text, VO audio, logo, brand palette, fonts, music.
 
 Without `events.jsonl`, there is no cursor data. Say so and plan zooms from inspected frames and transcript timing instead of pretending to detect clicks. Pixel-based cursor tracking is not provided.
@@ -35,7 +35,7 @@ Input: clicks (and optionally key and scroll events). Output: scale and position
 5. Zoom out to 1.0x when idle > 1.5 s or when the next target is far.
 6. Constraints: at most one zoom change per 1.5 s; minimum hold 1.2 s; max scale 2.5x; clamp the crop inside the frame; low-pass filter the center path so it doesn't jitter.
 7. **Sharpness check:** crop width in source pixels must be ≥ output width. If not, the zoom is soft; report effective resolution and either lower the max zoom or accept and say so.
-8. Render path: needs animated scale and crop, so the router sends it to **Remotion** (not FFmpeg expressions, which cannot animate crop size cleanly).
+8. Render path: `scale` (zoom, 1..8), `x`, `y` (focus point, fractions of the frame) keyframes on a media clip render as one FFmpeg `scale=eval=frame` + `crop` per clip, sampled from the keyframe easing. `crop` cannot change its own size per frame, so the scale filter does the zoom and the crop only pans.
 
 Every auto-generated keyframe is a normal keyframe the human can edit in the UI. The command prints the zoom list with timestamps so you can verify against frames.
 
@@ -52,3 +52,7 @@ Every auto-generated keyframe is a normal keyframe the human can edit in the UI.
 ## Report additions for demos
 
 List: beats, runtime per beat, number of zooms and their max scale, effective resolution at max zoom, sped-up spans, privacy scan result, loudness numbers, QC results, anything not verified.
+
+## Commands (Phase 5)
+
+`studio demo ingest <recording> --name N [--events F] [--vo F] [--music F] [--logo F]` ingests, validates events, and starts the privacy scan (1 fps contact sheets plus a text scan of event labels). **There is no OCR**, so someone must view the sheets. `studio demo autozoom --clip C --events F` writes ordinary scale/x/y keyframes. `studio demo build --name N --plan plan.json --privacy-reviewed` cuts still spans, ramps low-activity spans, adds overlays, intro/outro, VO cleanup, ducked music and captions, renders 16:9, 9:16 and 1:1 as separate layouts, runs QC on each, and writes `report.md`. Not implemented: window/device frame, chapter cards, visual re-timing to the narration. When the crop would have fewer source pixels than the output, autozoom zooms to 1.7x anyway and reports the zoom as soft.

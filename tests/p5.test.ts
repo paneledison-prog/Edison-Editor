@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { expr, propPoints, valueAt } from '../packages/engines/src/zoom.js';
 import { easeFn } from '../motion/src/ease.js';
-import { fx } from './fixtures.js';
+import { FIX, fx } from './fixtures.js';
 import { ensureFixtures } from './fixtures.js';
 import { tmpDir } from './helpers.js';
 
@@ -342,3 +342,183 @@ describe('autozoom planner', () => {
     expect(p.steps[0]!.scale).toBe(2.5);
   });
 });
+
+import { copyFileSync, mkdirSync as mk, writeFileSync as wf } from 'node:fs';
+import { planSegments } from '../packages/cli/src/cmds/demo.js';
+import { activityProfile, activitySpans } from '../packages/engines/src/demo.js';
+import { ensureDemo } from './fixtures.js';
+
+describe('demo pipeline', () => {
+  it('segments: still spans are cut (keeping a margin), low-activity spans ramp, the rest stays 1x', () => {
+    const beats = [{ id: 'b', name: 'b', srcStartMs: 0, srcEndMs: 30_000 }];
+    const spans = {
+      still: [{ startMs: 10_000, endMs: 16_000 }],
+      low: [{ startMs: 20_000, endMs: 26_000 }],
+    };
+    const { segs, end, cutMs } = planSegments(beats, spans, {
+      keepMs: 300,
+      rampSpeed: 6,
+      startAt: 1000,
+    });
+    expect(segs.map((s) => [s.srcStart, s.srcEnd, s.speed])).toEqual([
+      [0, 10_300, 1],
+      [15_700, 20_000, 1],
+      [20_000, 26_000, 6],
+      [26_000, 30_000, 1],
+    ]);
+    expect(cutMs[0]!.ms).toBe(5400);
+    // contiguous on the timeline, starting where asked
+    expect(segs[0]!.tlStart).toBe(1000);
+    for (let i = 1; i < segs.length; i++)
+      expect(segs[i]!.tlStart).toBe(segs[i - 1]!.tlStart + segs[i - 1]!.dur);
+    expect(end).toBe(segs.at(-1)!.tlStart + segs.at(-1)!.dur);
+  });
+
+  it('activity: the fixture hides 4 still spans and 2 low-activity spans, and they are found within 1 s', async () => {
+    const truth = ensureDemo();
+    const prof = await activityProfile(join(FIXDIR, 'demo', 'rec.mp4'));
+    const s = activitySpans(prof);
+    const near = (found: { startMs: number; endMs: number }[], want: [number, number][]) =>
+      want.every(([a, b]) =>
+        found.some((f) => Math.abs(f.startMs - a) < 1000 && Math.abs(f.endMs - b) < 1000),
+      );
+    expect(near(s.still, truth.still)).toBe(true);
+    expect(near(s.low, truth.low)).toBe(true);
+    console.log(
+      `P5 activity: still ${JSON.stringify(s.still.map((x) => [x.startMs, x.endMs]))} low ${JSON.stringify(s.low.map((x) => [x.startMs, x.endMs]))}`,
+    );
+  }, 120_000);
+
+  it('demo ingest rejects an events file with bad coordinates, and build refuses without the privacy statement', async () => {
+    ensureDemo();
+    const dir = tmpDir('studio-p5-demo-');
+    await studio(['init', 'd', '--project', dir]);
+    const bad = join(dir, 'bad.jsonl');
+    wf(bad, '{"t":100,"type":"click","x":99999,"y":10}\n');
+    const r = await studio([
+      'demo',
+      'ingest',
+      fx('clean.mp4'),
+      '--name',
+      'x',
+      '--events',
+      bad,
+      '--project',
+      dir,
+    ]);
+    expect(r.code).toBe(2);
+    expect(r.json.error.message).toMatch(/outside the 640x360 recording/);
+    const ok = join(dir, 'ok.jsonl');
+    wf(ok, '{"t":1000,"type":"click","x":100,"y":100,"target":"mail ada@example.com"}\n');
+    const g = await studio([
+      'demo',
+      'ingest',
+      fx('clean.mp4'),
+      '--name',
+      'x',
+      '--events',
+      ok,
+      '--project',
+      dir,
+    ]);
+    expect(g.json.ok, JSON.stringify(g.json)).toBe(true);
+    expect(g.json.data.privacy.reviewed).toBe(false);
+    expect(g.json.data.privacy.textFindings).toBe(1); // the email in an event label
+    expect(g.json.warnings.join('|')).toMatch(/privacy scan is NOT finished/);
+    const b = await studio(['demo', 'build', '--name', 'x', '--project', dir]);
+    expect(b.code).toBe(4);
+    expect(b.json.error.code).toBe('PRIVACY_NOT_REVIEWED');
+  }, 120_000);
+
+  it('blur-region fx blurs only its rectangle', async () => {
+    ensureFixtures();
+    const dir = tmpDir('studio-p5-blur-');
+    await studio(['init', 'b', '--width', '640', '--height', '360', '--project', dir]);
+    const id = (await studio(['ingest', fx('clean.mp4'), '--project', dir])).json.data.ingested[0]
+      .id;
+    await studio([
+      'tl',
+      'add-track',
+      '--type',
+      'video',
+      '--name',
+      'S',
+      '--id',
+      't_v1',
+      '--project',
+      dir,
+    ]);
+    await studio([
+      'tl',
+      'add-clip',
+      '--track',
+      't_v1',
+      '--asset',
+      id,
+      '--start',
+      '0',
+      '--dur',
+      '2000',
+      '--id',
+      'c_bl',
+      '--project',
+      dir,
+    ]);
+    const set = await studio([
+      'tl',
+      'set',
+      '--id',
+      'c_bl',
+      '--patch',
+      JSON.stringify({ fx: [{ type: 'blur-region', x: 0, y: 0, w: 0.25, h: 0.25, strength: 30 }] }),
+      '--project',
+      dir,
+    ]);
+    expect(set.json.ok, JSON.stringify(set.json)).toBe(true);
+    const r = await studio([
+      'render',
+      '--preset',
+      'youtube-1080p',
+      '--width',
+      '640',
+      '--no-normalize',
+      '--project',
+      dir,
+    ]);
+    expect(r.json.ok, JSON.stringify(r.json)).toBe(true);
+    const out = join(dir, r.json.data.output);
+    const edges = (vf: string, file: string) => {
+      const raw = execFileSync(
+        'ffmpeg',
+        [
+          '-v',
+          'error',
+          '-ss',
+          '1',
+          '-i',
+          file,
+          '-vf',
+          `${vf},format=gray,sobel`,
+          '-frames:v',
+          '1',
+          '-f',
+          'rawvideo',
+          '-',
+        ],
+        { maxBuffer: 1 << 24, encoding: 'buffer' },
+      );
+      return raw.reduce((s, v) => s + v, 0) / raw.length;
+    };
+    // the testsrc2 clock lives in the top-left corner: blurred there, sharp elsewhere
+    const blurred = edges('crop=160:90:0:0', out);
+    const rest = edges('crop=160:90:480:270', out);
+    const srcBlurred = edges('crop=160:90:0:0', fx('clean.mp4'));
+    expect(blurred).toBeLessThan(srcBlurred * 0.6);
+    expect(Math.abs(rest - edges('crop=160:90:480:270', fx('clean.mp4')))).toBeLessThan(
+      srcBlurred * 0.3,
+    );
+  }, 120_000);
+});
+const FIXDIR = FIX;
+void copyFileSync;
+void mk;

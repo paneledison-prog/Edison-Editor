@@ -92,19 +92,15 @@ export const ingest: Handler = async (inv) => {
   ] as string[];
   if (inv.dryRun) return { data: { wouldIngest: files, name } };
   const ing = await must(inv.dir, ['ingest', ...files], inv.log);
-  const rows: { path: string; id: string; kind: string }[] = ing.data.ingested.map((r: any) => ({
-    path: r.path,
-    id: r.id ?? '',
-    kind: r.kind,
-  }));
+  const all: { path: string; hash: string; id?: string }[] = [
+    ...(ing.data.ingested ?? []),
+    ...(ing.data.skipped ?? []),
+  ];
   const { project } = store(inv).load();
+  // Files that were already in the project come back under `skipped`: match either list by file and content hash.
   const idOf = (path: string) => {
-    const hash = ing.data.ingested.find((r: any) => r.path === path)?.hash;
-    return (
-      Object.entries(project.assets).find(([, a]) => a.hash === hash)?.[0] ??
-      rows.find((r) => r.path === path)?.id ??
-      ''
-    );
+    const hash = all.find((r) => r.path === path)?.hash;
+    return Object.entries(project.assets).find(([, a]) => a.hash === hash)?.[0] ?? '';
   };
   const recId = idOf(recording);
   const rec = project.assets[recId];

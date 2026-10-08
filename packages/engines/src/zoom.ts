@@ -133,7 +133,11 @@ export function blurRegionFilter(c: Clip, width: number, height: number, n: numb
     const w = Math.max(2, 2 * Math.ceil((f.w * width) / 2));
     const h = Math.max(2, 2 * Math.ceil((f.h * height) / 2));
     const k = `br${n}_${i}`;
-    const r = Math.max(2, Math.round(f.strength ?? 24));
+    // boxblur radii may not exceed a quarter of the region's shorter side (the chroma planes are half size)
+    const r = Math.max(
+      1,
+      Math.min(Math.round(f.strength ?? 24), Math.floor(Math.min(w, h) / 4) - 1),
+    );
     out += `split=2[${k}a][${k}b];[${k}b]crop=${w}:${h}:${x}:${y},boxblur=${r}:3[${k}c];[${k}a][${k}c]overlay=${x}:${y},`;
   });
   return out;
