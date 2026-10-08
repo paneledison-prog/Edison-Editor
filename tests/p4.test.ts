@@ -217,10 +217,12 @@ describe('motion templates', () => {
     expect(r.json.data.templates.map((t: any) => t.id).sort()).toEqual([
       'callout',
       'captions',
+      'cursor-highlight',
       'intro',
       'kinetic-text',
       'lower-third',
       'outro',
+      'speed-badge',
       'title',
     ]);
     expect(r.json.data.templates.find((t: any) => t.id === 'lower-third').props.title.type).toBe(

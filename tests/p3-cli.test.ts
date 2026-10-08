@@ -801,7 +801,7 @@ describe('tools registry after P3', () => {
       'models fetch',
     ])
       expect(names).toContain(n);
-    for (const absent of ['captions transcribe', 'demo build', 'video broll'])
+    for (const absent of ['captions transcribe', 'video broll'])
       expect(names).not.toContain(absent);
   });
 });

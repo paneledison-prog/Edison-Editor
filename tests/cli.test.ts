@@ -59,7 +59,7 @@ describe('output contract', () => {
     const names: string[] = r.json.data.commands.map((c: any) => c.name);
     expect(names).toContain('ingest');
     expect(names).toContain('tl add-clip');
-    for (const absent of ['captions transcribe', 'demo build']) {
+    for (const absent of ['captions transcribe']) {
       expect(names).not.toContain(absent);
     }
     expect(r.json.data.commands.every((c: any) => c.example && c.usage && c.summary)).toBe(true);

@@ -101,6 +101,12 @@ Browser tests with real pointer input in headless Chromium (9 tests, run 3 times
 
 UI shell bundle: 11.2 KB to 15.8 KB gzipped (budget 250 KB); the baseline was raised for the write path, snapping and trim logic, and the easing editor.
 
+## Phase 7
+
+`studio mcp` exposes 61 tools (every command except `ui` and `mcp`), each one running the same CLI as a child process, so a call has the CLI's validation, ops, undo, JSON, and exit codes. 4 tests drive it over real stdio (initialize with version negotiation, ping, list, calls that create a project and add a clip, an invalid call that returns the CLI's own error code, undo through the tool, protocol errors, 6 calls in flight, clean exit on stdin close, nothing but protocol messages on stdout). The official SDK client (1.32.1, scratch install) connected, listed 61 tools, and made successful and failing calls.
+
+Per-call cost is one process start (about 50 ms) plus the command itself.
+
 ## Not measured
 
 - UI memory with a 2-hour project open (budget < 300 MB).
@@ -122,3 +128,5 @@ UI shell bundle: 11.2 KB to 15.8 KB gzipped (budget 250 KB); the baseline was ra
 - Dead-time cutting on the delivered demo (0 s cut), and visuals re-timed to narration.
 - Window or device frame, chapter cards: not implemented.
 - Phase 6: touch input, multi-select, dragging keyframes in the timeline (they are nudged from the inspector), and two browser tabs editing at once.
+  
+- Phase 7: only the tools capability is implemented (no resources, prompts, progress notifications, or cancellation); long renders block their call until done. Tested against the official SDK client only, not against Claude Code or other MCP clients.

@@ -26,7 +26,8 @@ export interface CmdMeta {
     | 'models'
     | 'motion'
     | 'captions'
-    | 'demo';
+    | 'demo'
+    | 'mcp';
   fn: string;
 }
 
@@ -791,6 +792,17 @@ export const COMMANDS: CmdMeta[] = [
       s('model', 'whisper model for the VO (default whisper-small)'),
       b('allow-soft', 'allow soft zooms up to the maximum'),
     ],
+  }),
+  cmd({
+    name: 'mcp',
+    module: 'mcp',
+    writes: false,
+    summary:
+      'Run an MCP server on stdio: every command except ui and mcp is a tool, executed by the same CLI.',
+    usage: 'studio mcp [--project DIR]',
+    example:
+      'claude mcp add studio -- node packages/cli/dist/studio.js mcp --project /path/to/project',
+    flags: [],
   }),
   cmd({
     name: 'motion.templates',

@@ -307,7 +307,7 @@ describe('tools registry', () => {
       'inspect qc',
     ])
       expect(names).toContain(n);
-    for (const absent of ['captions transcribe', 'demo build']) expect(names).not.toContain(absent);
+    for (const absent of ['captions transcribe']) expect(names).not.toContain(absent);
     expect(readFileSync(join(ROOT, 'packages/cli/src/registry.ts'), 'utf8')).not.toMatch(
       /not implemented|TODO/,
     );

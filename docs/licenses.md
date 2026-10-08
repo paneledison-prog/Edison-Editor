@@ -49,6 +49,10 @@ Python adapter for transcription (`tools/whisper.py`, pinned in `tools/requireme
 | huggingface_hub                                 | 1.33.0  | Apache-2.0                                                                 | 8 MB                 | Required by faster-whisper; **not used to download**: Studio fetches models itself                                                           |
 | hf_xet, httpx, httpcore, tqdm, filelock, fsspec | see pip | Apache-2.0, BSD-3-Clause, BSD-3-Clause, MPL-2.0 AND MIT, MIT, BSD-3-Clause | about 17 MB together | Dependencies pulled in by huggingface_hub (tqdm is MPL-2.0 and MIT; MPL applies to modifications of tqdm itself, which Studio does not make) |
 
+### MCP (Phase 7)
+
+`studio mcp` is a hand-written stdio JSON-RPC server (about 150 lines, no dependency). The official `@modelcontextprotocol/sdk` (MIT, 4.5 MB unpacked) was **not added**; version 1.32.1 was installed in a scratch directory only to check that its client can connect, list, and call tools.
+
 ## Models and engines (models/manifest.json)
 
 Checksums were recorded on first download and are verified on every `studio models fetch`. Licenses are the upstream repository licenses; verify them for your use before shipping.
