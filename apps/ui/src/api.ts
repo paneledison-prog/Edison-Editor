@@ -131,3 +131,37 @@ export const sendOps = (baseRev: string, specs: OpSpec[], label: string) =>
   post('/api/ops', { baseRev, specs, label });
 export const sendUndo = (baseRev: string) => post('/api/undo', { baseRev });
 export const sendRedo = (baseRev: string) => post('/api/redo', { baseRev });
+
+export interface ConnectorInfo {
+  cli: string;
+  node: string;
+  project: string;
+  tools: number;
+  command: string;
+  mcpJson: unknown;
+}
+export interface ConnectorCheck {
+  ok: boolean;
+  tools?: number;
+  message?: string;
+  ms?: number;
+}
+export async function getConnector(): Promise<ConnectorInfo | null> {
+  try {
+    const r = await fetch('/api/connector', { cache: 'no-store' });
+    return r.ok ? await r.json() : null;
+  } catch {
+    return null;
+  }
+}
+export async function checkConnector(): Promise<ConnectorCheck> {
+  try {
+    const r = await fetch('/api/connector/check', {
+      method: 'POST',
+      headers: { 'x-studio-ui': '1' },
+    });
+    return await r.json();
+  } catch {
+    return { ok: false, message: 'could not reach the Studio server' };
+  }
+}

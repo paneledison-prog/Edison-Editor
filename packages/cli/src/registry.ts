@@ -836,6 +836,23 @@ export const COMMANDS: CmdMeta[] = [
     flags: [b('all', 'every model in the manifest')],
   }),
   cmd({
+    name: 'project.set',
+    module: 'project',
+    writes: true,
+    summary:
+      'Change the project name, canvas size, frame rate, or background (an op: validated, logged, undoable).',
+    usage:
+      'studio project set [--name N] [--width W] [--height H] [--fps F] [--background #RRGGBB]',
+    example: 'studio project set --width 1080 --height 1920 --fps 30',
+    flags: [
+      s('name', 'project name'),
+      n('width', 'canvas width in px'),
+      n('height', 'canvas height in px'),
+      n('fps', 'frames per second'),
+      s('background', 'background color #RRGGBB'),
+    ],
+  }),
+  cmd({
     name: 'project.show',
     module: 'project',
     writes: false,

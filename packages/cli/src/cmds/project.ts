@@ -8,7 +8,7 @@ import {
 } from '@studio/core';
 import { CliError } from '../args.js';
 import type { Handler } from '../main.js';
-import { num, store, stepResult } from './shared.js';
+import { num, runSpecs, str, store, stepResult } from './shared.js';
 
 export const init: Handler = async (inv) => {
   const name = inv.positionals[0];
@@ -48,6 +48,27 @@ export const init: Handler = async (inv) => {
   return {
     data: { dir: inv.dir, meta: s.load().project.meta },
     artifacts: [{ kind: 'project', path: 'project.studio.json' }],
+  };
+};
+
+export const set: Handler = async (inv) => {
+  const patch: Record<string, unknown> = {};
+  for (const k of ['width', 'height', 'fps'] as const)
+    if (num(inv, k) !== undefined) patch[k] = num(inv, k);
+  for (const k of ['name', 'background'] as const)
+    if (str(inv, k) !== undefined) patch[k] = str(inv, k);
+  const res = runSpecs(inv, [{ type: 'project.set', args: { patch } }], 'project set');
+  return {
+    ...res,
+    warnings: [
+      ...(patch['width'] !== undefined ||
+      patch['height'] !== undefined ||
+      patch['fps'] !== undefined
+        ? [
+            'canvas size or frame rate changed: cached motion overlays are keyed by size and fps, so they render again on the next render',
+          ]
+        : []),
+    ],
   };
 };
 

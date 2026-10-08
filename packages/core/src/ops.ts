@@ -7,6 +7,7 @@ import {
   Ease,
   Export,
   Fx,
+  Meta,
   speedOf,
   KeyframeId,
   MarkerId,
@@ -431,6 +432,22 @@ export const OPS = {
       if (!found) throw new OpError('NOT_FOUND', `keyframe ${a.id} not found on clip ${a.clip}`);
       if (c.keyframes && !Object.keys(c.keyframes).length) delete c.keyframes;
       return [putSpec(prev)];
+    },
+  }),
+
+  /** Canvas, frame rate, name, background. Validated like the schema; the inverse restores the previous values. */
+  'project.set': def({
+    args: z.object({ patch: Meta.partial().strict() }),
+    apply(p, a) {
+      const prev: Record<string, unknown> = {};
+      for (const k of Object.keys(a.patch) as (keyof typeof a.patch)[]) prev[k] = p.meta[k];
+      if (!Object.keys(prev).length)
+        throw new OpError(
+          'INVALID_ARGS',
+          'nothing to change: give at least one of name, fps, width, height, background',
+        );
+      Object.assign(p.meta, a.patch);
+      return [{ type: 'project.set', args: { patch: prev } }];
     },
   }),
 

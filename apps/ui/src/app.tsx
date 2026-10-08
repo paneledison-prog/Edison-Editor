@@ -6,6 +6,7 @@ import {
   Moon,
   Play,
   Redo2,
+  Settings as SettingsIcon,
   Repeat,
   Scissors,
   SkipBack,
@@ -20,13 +21,14 @@ import { Button, IconButton } from './components/Button';
 import { EaseEditor } from './components/EaseEditor';
 import { EmptyState, PanelHeader } from './components/PanelHeader';
 import { KF_STEP, frameMs, kfSetSpecs } from './timeline/edit';
+import { Settings } from './settings/Settings';
+import { loadPrefs, savePrefs, type Prefs } from './settings/prefs';
 import { currentTheme, setTheme, type Theme } from './theme';
 import { snapToFrame, timecode } from './timeline/format';
 import { Timeline } from './timeline/Timeline';
 
 const ic = { size: 16, strokeWidth: 1.5 } as const;
 const LATER = 'Not available yet';
-const DEFAULT_ZOOM = 0.1; // px per ms = 100 px per second
 const MIN_ZOOM = 0.002;
 const MAX_ZOOM = 2;
 
@@ -183,14 +185,22 @@ export function App() {
   }, []);
   // Every edit names the revision it was made against; the server refuses it if an agent changed the project since.
   const edit = useCallback(
-    async (specs: OpSpec[], label: string) => report(await sendOps(revRef.current, specs, label)),
+    async (specs: OpSpec[], label: string) => {
+      const r = await sendOps(revRef.current, specs, label);
+      report(r);
+      return r;
+    },
     [report],
   );
   const undo = useCallback(async () => report(await sendUndo(revRef.current)), [report]);
   const redo = useCallback(async () => report(await sendRedo(revRef.current)), [report]);
   const [playheadMs, setPlayhead] = useState(0);
   const [selectedId, setSelected] = useState<string | null>(null);
-  const [zoom, setZoom] = useState(DEFAULT_ZOOM);
+  const [prefs, setPrefs] = useState<Prefs>(loadPrefs);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [zoom, setZoom] = useState(() =>
+    Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, prefs.zoomPxPerSec / 1000)),
+  );
   const flip = () => {
     const next: Theme = theme === 'dark' ? 'light' : 'dark';
     setTheme(next);
@@ -208,6 +218,12 @@ export function App() {
   // in which fast key presses are lost.
   const keyHandler = useRef<(e: KeyboardEvent) => void>(() => {});
   keyHandler.current = (e: KeyboardEvent) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+      e.preventDefault();
+      setSettingsOpen((o) => !o);
+      return;
+    }
+    if (settingsOpen) return; // the dialog owns the keyboard while it is open
     const el = e.target as HTMLElement | null;
     if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
     if ((e.ctrlKey || e.metaKey) && !e.altKey && editable) {
@@ -319,6 +335,9 @@ export function App() {
           onClick={() => void redo()}
         >
           <Redo2 {...ic} />
+        </IconButton>
+        <IconButton label="Settings" shortcut="Ctrl+," onClick={() => setSettingsOpen(true)}>
+          <SettingsIcon {...ic} />
         </IconButton>
         <IconButton
           label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
@@ -467,6 +486,7 @@ export function App() {
             onZoom={(z) => setZoom(clampZoom(z))}
             tool={tool}
             editable={editable}
+            showKeyframes={prefs.showKeyframes}
             onEdit={edit}
           />
         ) : (
@@ -478,6 +498,24 @@ export function App() {
           </>
         )}
       </section>
+      {settingsOpen && (
+        <Settings
+          project={project}
+          editable={editable}
+          theme={theme}
+          prefs={prefs}
+          onTheme={(t) => {
+            setTheme(t);
+            setT(t);
+          }}
+          onPrefs={(p) => {
+            setPrefs(p);
+            savePrefs(p);
+          }}
+          onEdit={edit}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
     </div>
   );
 }

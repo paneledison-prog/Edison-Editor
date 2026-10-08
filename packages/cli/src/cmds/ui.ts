@@ -85,6 +85,87 @@ export const ui: Handler = async (inv) => {
    * CLI uses. `baseRev` is the project the person was looking at: if an agent changed it since, nothing is applied
    * (409) and the page, which already received the new project, shows what happened.
    */
+  const sh = (v: string) => (/^[\w@%+=:,./-]+$/.test(v) ? v : `'${v.replace(/'/g, `'\\''`)}'`);
+  /** What a person needs to connect Claude Code to this project: the exact command for this machine and folder. */
+  const connectorInfo = async () => {
+    const cli = process.argv[1]!;
+    const { listTools } = await import('./mcp.js');
+    return {
+      cli,
+      node: process.execPath,
+      project: inv.dir,
+      tools: listTools().length,
+      command: `claude mcp add studio -- node ${sh(cli)} mcp --project ${sh(inv.dir)}`,
+      mcpJson: {
+        mcpServers: { studio: { command: 'node', args: [cli, 'mcp', '--project', inv.dir] } },
+      },
+    };
+  };
+  /** Starts a throwaway `studio mcp`, performs initialize and tools/list, and reports what came back. */
+  const checkMcp = () =>
+    new Promise<Record<string, unknown>>((resolve) => {
+      const t0 = Date.now();
+      import('node:child_process').then(({ spawn }) => {
+        const child = spawn(process.execPath, [process.argv[1]!, 'mcp', '--project', inv.dir], {
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        let buf = '';
+        let err = '';
+        let done = false;
+        const finish = (r: Record<string, unknown>) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          child.kill();
+          resolve({ ...r, ms: Date.now() - t0 });
+        };
+        const timer = setTimeout(
+          () => finish({ ok: false, message: 'the MCP server did not answer within 10 s' }),
+          10_000,
+        );
+        child.stderr.on('data', (d) => (err += d));
+        child.on('error', (e) => finish({ ok: false, message: e.message }));
+        child.on('close', (code) =>
+          finish({
+            ok: false,
+            message: `the MCP server exited (${code}): ${err.trim().split('\n').pop() ?? ''}`,
+          }),
+        );
+        child.stdout.on('data', (d) => {
+          buf += d;
+          for (const line of buf.split('\n')) {
+            let m: any;
+            try {
+              m = JSON.parse(line);
+            } catch {
+              continue;
+            }
+            if (m.id === 1)
+              child.stdin.write(
+                JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }) + '\n',
+              );
+            if (m.id === 2)
+              finish({
+                ok: Array.isArray(m.result?.tools),
+                tools: m.result?.tools?.length ?? 0,
+                server: 'studio',
+              });
+          }
+        });
+        child.stdin.write(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'initialize',
+            params: {
+              protocolVersion: '2025-06-18',
+              capabilities: {},
+              clientInfo: { name: 'studio-ui-check', version: '0' },
+            },
+          }) + '\n',
+        );
+      });
+    });
   const handleWrite = (
     req: import('node:http').IncomingMessage,
     res: ServerResponse,
@@ -156,6 +237,14 @@ export const ui: Handler = async (inv) => {
       return res.end('forbidden host');
     }
     const url = new URL(req.url ?? '/', 'http://localhost');
+    if (req.method === 'GET' && url.pathname === '/api/connector') {
+      return void connectorInfo().then((d) => json(res, 200, d));
+    }
+    if (req.method === 'POST' && url.pathname === '/api/connector/check') {
+      if (req.headers['x-studio-ui'] !== '1')
+        return json(res, 403, { code: 'FORBIDDEN', message: 'missing x-studio-ui header' });
+      return void checkMcp().then((d) => json(res, 200, d));
+    }
     if (req.method === 'POST' && url.pathname.startsWith('/api/')) {
       return void handleWrite(req, res, url.pathname);
     }

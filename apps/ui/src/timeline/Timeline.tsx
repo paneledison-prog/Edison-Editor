@@ -41,6 +41,7 @@ interface Props {
   /** the tool in the rail: select (drag, trim) or split (click a clip) */
   tool: 'select' | 'split';
   editable: boolean;
+  showKeyframes?: boolean;
   onEdit: (specs: OpSpec[], label: string) => void;
 }
 
@@ -71,6 +72,7 @@ export function Timeline({
   onZoom,
   tool,
   editable,
+  showKeyframes = true,
   onEdit,
 }: Props) {
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -333,7 +335,7 @@ export function Timeline({
                         />
                       )}
                       <span class="clip-label">{clipLabel(c, project)}</span>
-                      {kfs.map((k) => (
+                      {(showKeyframes ? kfs : []).map((k) => (
                         <span
                           key={k.id}
                           class="kf"
