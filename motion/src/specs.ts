@@ -167,7 +167,7 @@ export const TEMPLATES: Record<string, TemplateSpec> = {
     props: {
       title: str('title', 80, false, 'Episode title'),
       subtitle: str('subtitle', 120, true),
-      logo: str('logo image path (PNG), relative to the project', 300, true),
+      logo: str('logo image path (PNG), relative to the project', 4_000_000, true),
       background: colorProp('token:bg', 'background color, or "transparent"'),
       color: colorProp('token:fg', 'title color'),
       subtitleColor: colorProp('token:muted', 'subtitle color'),
@@ -183,7 +183,7 @@ export const TEMPLATES: Record<string, TemplateSpec> = {
     props: {
       title: str('message', 80, false, 'Thanks for watching'),
       cta: str('call to action', 80, true),
-      logo: str('logo image path (PNG), relative to the project', 300, true),
+      logo: str('logo image path (PNG), relative to the project', 4_000_000, true),
       background: colorProp('token:bg', 'background color, or "transparent"'),
       color: colorProp('token:fg', 'message color'),
       accent: colorProp('token:accent', 'call-to-action color'),
