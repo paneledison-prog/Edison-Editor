@@ -11,6 +11,9 @@ export const doctor: Handler = async (inv) => {
     data: r,
     warnings: [
       ...r.problems.map((p) => `${p.message} (${p.fix})`),
+      ...r.optional
+        .filter((o) => !o.ok || /software/.test(o.detail))
+        .map((o) => `${o.name}: ${o.detail}${o.fix ? ` (${o.fix})` : ''}`),
       ...(hw.length && !hw.some((e) => e.usable)
         ? [
             'no hardware encoder is usable here (listed in ffmpeg, failed a test encode); x264 will be used',

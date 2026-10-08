@@ -11,6 +11,7 @@ const r = await build({
   splitting: true,
   format: 'esm',
   platform: 'node',
+  external: ['sharp'], // native module: resolved from node_modules at run time
   target: 'node20',
   minify: false,
   banner: { js: '#!/usr/bin/env node' },

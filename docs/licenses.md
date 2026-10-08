@@ -13,6 +13,42 @@ Sizes are unpacked package size in `node_modules` on linux-x64 (measured, not gz
 | prettier    | 3.9.9   | MIT        | 9.9 MB     | Formatting                                                               | dev            |
 | @types/node | 22.x    | MIT        | types only | Node typings                                                             | dev            |
 
+### Image tools (Phase 3)
+
+| Package                      | Version | License           | Size                                 | Why                                                               | Scope                                                                   |
+| ---------------------------- | ------- | ----------------- | ------------------------------------ | ----------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| sharp                        | 0.35.5  | Apache-2.0        | 1.0 MB, plus a 0.5 MB native binding | Resize, convert, composite, text, alpha. Streaming and low memory | runtime (engines, cli); external in the CLI bundle because it is native |
+| @img/sharp-libvips-linux-x64 | 1.3.4   | LGPL-3.0-or-later | 18 MB                                | The libvips build sharp loads (prebuilt, dynamically linked)      | runtime, via sharp                                                      |
+
+Python adapter (`tools/bgremove.py`, pinned in `tools/requirements.txt`; rembg itself is not used because it pulls numba, scipy, and opencv for features Studio does not need):
+
+| Package     | Version | License                                                    | Size           | Why                                                  |
+| ----------- | ------- | ---------------------------------------------------------- | -------------- | ---------------------------------------------------- |
+| onnxruntime | 1.29.0  | MIT                                                        | 62 MB          | Runs the U2-Net ONNX models (CPU provider only here) |
+| numpy       | 2.5.3   | BSD-3-Clause (bundled libraries: 0BSD, MIT, Zlib, CC0-1.0) | system package | Tensor preparation                                   |
+| pillow      | 12.3.0  | MIT-CMU                                                    | system package | Image I/O and resizing for the model input           |
+
+## Models and engines (models/manifest.json)
+
+Checksums were recorded on first download and are verified on every `studio models fetch`. Licenses are the upstream repository licenses; verify them for your use before shipping.
+
+| Name                                                                                                    | Used for                                           | License      | Source of the license                  | Size                       |
+| ------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ------------ | -------------------------------------- | -------------------------- |
+| u2net (`u2net.onnx`)                                                                                    | `image bgremove` (default)                         | Apache-2.0   | github.com/xuebinqin/U-2-Net LICENSE   | 176 MB                     |
+| u2netp (`u2netp.onnx`)                                                                                  | `image bgremove --model u2netp` (smaller, rougher) | Apache-2.0   | same                                   | 4.6 MB                     |
+| realesrgan-ncnn-vulkan 20220424 (with realesrgan-x4plus, realesrgan-x4plus-anime, realesr-animevideov3) | `image upscale`                                    | BSD-3-Clause | github.com/xinntao/Real-ESRGAN LICENSE | 47 MB zip, 56 MB installed |
+
+Not used on purpose: models with non-commercial licenses (for example BRIA RMBG-1.4).
+
+## System packages outside the repository
+
+`mesa-vulkan-drivers` 25.2.8 (Mesa, MIT; 96 MB installed) was installed with `apt` **in this container only** to give Real-ESRGAN a software Vulkan device (lavapipe). It is not part of the repository. A new session or machine needs a GPU driver or the same package, and `studio doctor` reports what it finds.
+
+## Test-only material (not committed)
+
+- A public-domain NASA portrait (the scikit-image `astronaut.png` sample) is downloaded into `tests/.fixtures/` for background-removal tests. The tests skip, and say so, if it cannot be fetched.
+- Inter (SIL OFL 1.1) is read from the system font path by the thumbnail tests; no font is bundled in the repository.
+
 ## External engines
 
 | Engine                                                            | Where                                  | License note                                                                                                                  | Status             |

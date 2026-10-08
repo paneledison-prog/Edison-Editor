@@ -6,9 +6,16 @@ export default defineConfig({
   resolve: {
     alias: {
       '@studio/core': src('./packages/core/src/index.ts'),
+      '@studio/engines/images': src('./packages/engines/src/images.ts'),
       '@studio/engines': src('./packages/engines/src/index.ts'),
       '@studio/inspect': src('./packages/inspect/src/index.ts'),
     },
   },
-  test: { include: ['tests/**/*.test.ts', 'packages/**/*.test.ts'] },
+  test: {
+    include: ['tests/**/*.test.ts', 'packages/**/*.test.ts'],
+    globalSetup: ['tests/global-setup.ts'],
+    // Several files run at once on 4 cores, so single tests get a generous default.
+    testTimeout: 60_000,
+    hookTimeout: 300_000,
+  },
 });

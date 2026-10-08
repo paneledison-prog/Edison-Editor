@@ -40,6 +40,25 @@ Fixture: 10 minutes, 640x360 at 30 fps, synthetic speech-like audio (harmonic to
 
 Methodology notes from this phase: a 2-pole band-pass is not enough to isolate a component of a mix for measuring ducking, because leakage from the louder component sets a floor (it hid the true reduction at -46 dB); the tests use cascaded low-pass and high-pass filters. FFmpeg's `silencedetect` restarts on any single sample above the threshold, so a pause in noisy audio shows up as fragments; the cut tools use 20 ms RMS windows instead.
 
+## Phase 3
+
+Machine as above (4 cores, no GPU). Image engine: sharp 0.35.5 on libvips 8.18.7.
+
+| Area                                                                         | Measured                                                                                                                                                                                                      |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Batch resize, 200 JPEGs of 2000x1500 (329 MB) to 1280 px WebP                | 13.6 to 14.6 s alone (about 14 images/s, 3 workers); 28.1 s when the whole test suite was running in parallel                                                                                                 |
+| Peak memory of that batch                                                    | 256 to 261 MB. For 50 images: 247 to 256 MB. Four times the images cost no extra memory                                                                                                                       |
+| Output                                                                       | 82 MB, 24.9% of the input                                                                                                                                                                                     |
+| Resume                                                                       | rerun reused all 200; after changing one input, exactly 1 was redone                                                                                                                                          |
+| Kill with SIGKILL after 12 of 80 finished                                    | all 12 finished outputs decode; the rerun reused 12 and made 68; a planted stale `.partial` was removed and reported                                                                                          |
+| Encode time for one 1600 px image from a 2000x1500 JPEG                      | PNG 0.11 s, WebP 0.31 s, JPEG 0.44 s, AVIF 15.9 s. AVIF was the smallest (346 KB against 545 KB JPEG and 720 KB WebP) and about 50 times slower, so a 200-image AVIF batch would take roughly 18 minutes here |
+| Background removal, 512x512 portrait, u2net on CPU                           | 300 to 370 ms for inference; 1.3 s end to end including Python start-up and loading the 176 MB model                                                                                                          |
+| Upscale 4x, 128x128 crop, Real-ESRGAN on a software Vulkan device (llvmpipe) | 16.5 s; the pre-flight estimate predicted 17.1 s (3% off). Fixed cost about 4.8 s, then about 750 s per input megapixel: a 1 megapixel image would take about 12 minutes here                                 |
+| Thumbnail with cutout from a 1280x720 frame                                  | about 1.1 s, 160 KB                                                                                                                                                                                           |
+| Startup, median of 7                                                         | `studio tools` 35 to 42 ms, `project show` 52 to 63 ms, `models list` 59 to 80 ms. Commands that do not use images do not load sharp                                                                          |
+
+Checks of the measurements themselves: the alpha statistics were first wrong in three ways and were caught by comparing with an independent numpy computation (sharp's `stats()` ignores chained operations, `trim` runs at the input stage, and `threshold` runs before `negate`). The tests now compare reported numbers with Python's.
+
 ## Not measured
 
 - UI memory with a 2-hour project open (budget < 300 MB).
@@ -48,3 +67,6 @@ Methodology notes from this phase: a 2-pole band-pass is not enough to isolate a
 - Hardware encoders: none usable on this machine (`studio doctor` test-encodes them).
 - Phase 2 on real speech, real room noise, or real music: every audio result above is from synthetic signals.
 - Denoise quality by ear. Only noise-floor numbers are measured.
+- Phase 3 on a GPU: Real-ESRGAN was only run on a software Vulkan device.
+- Background removal on hair, fur, glass, and other hard cases; only one portrait was inspected.
+- Batches larger than 200 images, or images above 12 megapixels.

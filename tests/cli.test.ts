@@ -7,9 +7,7 @@ import { tmpDir } from './helpers.js';
 
 const BIN = join(import.meta.dirname, '..', 'packages', 'cli', 'dist', 'studio.js');
 beforeAll(() => {
-  execFileSync('node', [join(import.meta.dirname, '..', 'scripts', 'build-cli.mjs')], {
-    stdio: 'pipe',
-  });
+  // the CLI bundle is built once by tests/global-setup.ts
   ensureFixtures();
 }, 120_000);
 
@@ -61,7 +59,7 @@ describe('output contract', () => {
     const names: string[] = r.json.data.commands.map((c: any) => c.name);
     expect(names).toContain('ingest');
     expect(names).toContain('tl add-clip');
-    for (const absent of ['captions transcribe', 'image resize', 'motion render', 'demo build']) {
+    for (const absent of ['captions transcribe', 'motion render', 'demo build']) {
       expect(names).not.toContain(absent);
     }
     expect(r.json.data.commands.every((c: any) => c.example && c.usage && c.summary)).toBe(true);

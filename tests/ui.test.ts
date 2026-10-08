@@ -209,7 +209,7 @@ const servers: ChildProcess[] = [];
 afterAll(() => servers.forEach((s) => s.kill('SIGKILL')));
 
 async function serve(dir: string): Promise<string> {
-  execFileSync('node', [join(ROOT, 'scripts', 'build-cli.mjs')], { stdio: 'pipe' });
+  // the CLI bundle is built once by tests/global-setup.ts
   const child = spawn('node', [BIN, 'ui', '--port', '0', '--project', dir], {
     stdio: ['ignore', 'pipe', 'ignore'],
   });

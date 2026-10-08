@@ -10,3 +10,4 @@ export * from './render.js';
 export * from './audiofx.js';
 export * from './library.js';
 export * from './cuts.js';
+export * from './models.js';

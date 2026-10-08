@@ -8,7 +8,7 @@ import { projectWith } from './helpers.js';
 const ROOT = join(import.meta.dirname, '..');
 const BIN = join(ROOT, 'packages', 'cli', 'dist', 'studio.js');
 beforeAll(() => {
-  execFileSync('node', [join(ROOT, 'scripts', 'build-cli.mjs')], { stdio: 'pipe' });
+  // the CLI bundle is built once by tests/global-setup.ts
   ensureFixtures();
 }, 120_000);
 
@@ -306,7 +306,7 @@ describe('tools registry', () => {
       'inspect qc',
     ])
       expect(names).toContain(n);
-    for (const absent of ['captions transcribe', 'image resize', 'motion render', 'demo build'])
+    for (const absent of ['captions transcribe', 'motion render', 'demo build'])
       expect(names).not.toContain(absent);
     expect(readFileSync(join(ROOT, 'packages/cli/src/registry.ts'), 'utf8')).not.toMatch(
       /not implemented|TODO/,

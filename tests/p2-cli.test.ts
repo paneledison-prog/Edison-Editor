@@ -9,7 +9,7 @@ const ROOT = join(import.meta.dirname, '..');
 const BIN = join(ROOT, 'packages', 'cli', 'dist', 'studio.js');
 let truth: Truth;
 beforeAll(async () => {
-  execFileSync('node', [join(ROOT, 'scripts', 'build-cli.mjs')], { stdio: 'pipe' });
+  // the CLI bundle is built once by tests/global-setup.ts
   ensureFixtures();
   ensureScenes();
   truth = await ensureTalk();
@@ -915,13 +915,7 @@ describe('tools registry after P2', () => {
       'audio sfx list',
     ])
       expect(names).toContain(n);
-    for (const absent of [
-      'video broll',
-      'captions transcribe',
-      'image resize',
-      'motion render',
-      'demo build',
-    ])
+    for (const absent of ['video broll', 'captions transcribe', 'motion render', 'demo build'])
       expect(names).not.toContain(absent);
   });
 });

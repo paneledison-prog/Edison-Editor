@@ -21,6 +21,8 @@ export interface DoctorReport {
   machine: { cpus: number; ramGb: number; platform: string; arch: string };
   disk: { path: string; freeGb: number };
   models: { manifest: boolean; files: number };
+  /** optional engines: absence is reported but is not a failure */
+  optional: { name: string; ok: boolean; detail: string; fix?: string }[];
   problems: { code: string; message: string; fix: string }[];
 }
 
@@ -59,6 +61,69 @@ async function tryEncoder(name: string): Promise<EncoderCheck> {
   } catch (e) {
     return { name, kind, usable: false, error: (e as Error).message };
   }
+}
+
+/** Image-side engines. Each is optional: a missing one is reported with the fix, and its command fails clearly if used. */
+async function optionalEngines(): Promise<DoctorReport['optional']> {
+  const out: DoctorReport['optional'] = [];
+  try {
+    const { default: sharp } = await import('sharp');
+    out.push({
+      name: 'sharp',
+      ok: true,
+      detail: `sharp ${sharp.versions.sharp}, libvips ${sharp.versions.vips}`,
+    });
+  } catch (e) {
+    out.push({
+      name: 'sharp',
+      ok: false,
+      detail: (e as Error).message.split('\n')[0]!,
+      fix: 'pnpm install',
+    });
+  }
+  const { pythonReady } = await import('./bgremove.js');
+  const py = await pythonReady();
+  out.push({
+    name: 'python-onnx',
+    ok: py.ok,
+    detail: py.ok ? `python3 with onnxruntime ${py.onnxruntime} (CPU provider)` : py.detail,
+    ...(py.ok ? {} : { fix: 'python3 -m pip install -r tools/requirements.txt' }),
+  });
+  const { modelStatus } = await import('./models.js');
+  for (const m of modelStatus()) {
+    out.push({
+      name: `model:${m.name}`,
+      ok: m.present,
+      detail: m.present
+        ? `${m.task}, license ${m.license}`
+        : `not installed (${m.task}, license ${m.license})`,
+      ...(m.present ? {} : { fix: `studio models fetch ${m.name}` }),
+    });
+  }
+  // Real-ESRGAN needs a Vulkan device. A software one works but is slow.
+  const vk = await run('vulkaninfo', ['--summary'], { timeoutMs: 15_000 }).catch(() => null);
+  if (!vk || vk.code !== 0) {
+    out.push({
+      name: 'vulkan',
+      ok: false,
+      detail: vk
+        ? 'vulkaninfo found no usable device'
+        : 'vulkaninfo is not installed, so the device cannot be listed',
+      fix: 'install a GPU driver, or mesa-vulkan-drivers for a slow software device (needed for `studio image upscale`)',
+    });
+  } else {
+    const names = [...vk.stdout.matchAll(/deviceName\s*=\s*(.+)/g)].map((m) => m[1]!.trim());
+    const cpu =
+      names.length > 0 && names.every((n) => /llvmpipe|lavapipe|swiftshader|software/i.test(n));
+    out.push({
+      name: 'vulkan',
+      ok: names.length > 0,
+      detail: names.length
+        ? `${names.join(', ')}${cpu ? ' (software: upscaling will be slow)' : ''}`
+        : 'no device listed',
+    });
+  }
+  return out;
 }
 
 export async function doctor(projectDir: string): Promise<DoctorReport> {
@@ -137,15 +202,8 @@ export async function doctor(projectDir: string): Promise<DoctorReport> {
       fix: 'free disk space or clear .studio/cache',
     });
 
-  const man = join(projectDir, 'models', 'manifest.json');
-  let files = 0;
-  if (existsSync(man)) {
-    try {
-      files = Object.keys(JSON.parse(readFileSync(man, 'utf8')).models ?? {}).length;
-    } catch {
-      /* ignore */
-    }
-  }
+  const optional = await optionalEngines();
+  const modelFiles = optional.filter((o) => o.name.startsWith('model:')).filter((o) => o.ok).length;
 
   return {
     node,
@@ -157,7 +215,8 @@ export async function doctor(projectDir: string): Promise<DoctorReport> {
       arch: os.arch(),
     },
     disk: { path: projectDir, freeGb },
-    models: { manifest: existsSync(man), files },
+    models: { manifest: true, files: modelFiles },
+    optional,
     problems,
   };
 }

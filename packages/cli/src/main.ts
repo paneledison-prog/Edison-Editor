@@ -28,6 +28,8 @@ const loaders: Record<CmdMeta['module'], () => Promise<Record<string, unknown>>>
   ui: () => import('./cmds/ui.js'),
   video: () => import('./cmds/video.js'),
   audio: () => import('./cmds/audio.js'),
+  image: () => import('./cmds/image.js'),
+  models: () => import('./cmds/models.js'),
 };
 
 function findCommand(argv: string[]): { meta: CmdMeta; rest: string[] } | undefined {
@@ -58,6 +60,8 @@ const EXIT: Record<string, 1 | 2 | 3 | 4 | 5> = {
   INVALID_INPUT: 2,
   QC_FAILED: 4,
   ENCODER_UNSUPPORTED: 3,
+  PARTIAL_FAILURE: 1,
+  NEEDS_CONFIRMATION: 2,
 };
 
 export async function main(argv: string[]): Promise<void> {

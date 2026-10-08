@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "note": "sha256 values were recorded on first download (trust on first use) and are checked on every later fetch. Licenses are the upstream repository licenses; verify them for your use before shipping.",
+  "models": {
+    "u2net": {
+      "kind": "onnx",
+      "task": "bgremove",
+      "file": "u2net.onnx",
+      "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx",
+      "sha256": "8d10d2f3bb75ae3b6d527c77944fc5e7dcd94b29809d47a739a7a728a912b491",
+      "bytes": 175997641,
+      "license": "Apache-2.0",
+      "licenseSource": "https://github.com/xuebinqin/U-2-Net/blob/master/LICENSE",
+      "notes": "U2-Net salient-object segmentation, 320x320 input. Weights as distributed by the rembg project (MIT)."
+    },
+    "u2netp": {
+      "kind": "onnx",
+      "task": "bgremove",
+      "file": "u2netp.onnx",
+      "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx",
+      "sha256": "309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8",
+      "bytes": 4574861,
+      "license": "Apache-2.0",
+      "licenseSource": "https://github.com/xuebinqin/U-2-Net/blob/master/LICENSE",
+      "notes": "Small U2-Net variant: faster, rougher edges."
+    },
+    "realesrgan-ncnn-vulkan": {
+      "kind": "binary-zip",
+      "task": "upscale",
+      "file": "realesrgan-ncnn-vulkan",
+      "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip",
+      "sha256": "e5aa6eb131234b87c0c51f82b89390f5e3e642b7b70f2b9bbe95b6a285a40c96",
+      "bytes": 46931474,
+      "license": "BSD-3-Clause",
+      "licenseSource": "https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE",
+      "notes": "Real-ESRGAN ncnn Vulkan build with the realesrgan-x4plus, realesrgan-x4plus-anime, and realesr-animevideov3 models. Needs a Vulkan device; a software one (Mesa lavapipe) works but is slow."
+    }
+  }
+}

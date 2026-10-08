@@ -1,0 +1,5 @@
+# Python environment for the background-removal adapter (tools/bgremove.py). Pinned to what was tested.
+# Install: python3 -m pip install -r tools/requirements.txt
+onnxruntime==1.29.0
+numpy==2.5.3
+pillow==12.3.0
