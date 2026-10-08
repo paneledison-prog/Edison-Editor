@@ -1,0 +1,87 @@
+{
+  "api": 1,
+  "id": "glow",
+  "name": "Glow",
+  "version": "1.0.0",
+  "license": "MIT",
+  "summary": "Soft glow, bloom, and film grain video effects (FFmpeg filters only).",
+  "effects": [
+    {
+      "id": "glow",
+      "summary": "Soft glow: a blurred copy of the picture screened over it.",
+      "params": {
+        "radius": {
+          "type": "number",
+          "default": 14,
+          "min": 1,
+          "max": 80,
+          "desc": "blur radius in pixels"
+        },
+        "amount": {
+          "type": "number",
+          "default": 0.5,
+          "min": 0,
+          "max": 1,
+          "desc": "strength of the glow"
+        }
+      },
+      "graph": "[in]format=gbrp,split=2[a][b];[a]gblur=sigma={radius}[g];[b][g]blend=all_mode=screen:all_opacity={amount},format=yuv420p[out]"
+    },
+    {
+      "id": "bloom",
+      "summary": "Bloom: only the bright parts glow.",
+      "params": {
+        "threshold": {
+          "type": "number",
+          "default": 0.6,
+          "min": 0.1,
+          "max": 0.95,
+          "desc": "brightness above which areas bloom"
+        },
+        "radius": {
+          "type": "number",
+          "default": 22,
+          "min": 2,
+          "max": 100,
+          "desc": "blur radius in pixels"
+        },
+        "amount": {
+          "type": "number",
+          "default": 0.7,
+          "min": 0,
+          "max": 1,
+          "desc": "strength"
+        }
+      },
+      "graph": "[in]format=gbrp,split=2[a][b];[a]lutrgb=r='if(gte(val/maxval,{threshold}),val,0)':g='if(gte(val/maxval,{threshold}),val,0)':b='if(gte(val/maxval,{threshold}),val,0)',gblur=sigma={radius}[g];[b][g]blend=all_mode=screen:all_opacity={amount},format=yuv420p[out]"
+    },
+    {
+      "id": "grain",
+      "summary": "Film grain.",
+      "params": {
+        "strength": {
+          "type": "number",
+          "default": 12,
+          "min": 1,
+          "max": 60,
+          "desc": "grain strength"
+        }
+      },
+      "graph": "[in]noise=alls={strength}:allf=t[out]"
+    },
+    {
+      "id": "vignette",
+      "summary": "Darkened corners.",
+      "params": {
+        "angle": {
+          "type": "number",
+          "default": 0.6,
+          "min": 0.1,
+          "max": 1.2,
+          "desc": "vignette angle in radians (smaller is darker)"
+        }
+      },
+      "graph": "[in]vignette=angle={angle}*PI/2[out]"
+    }
+  ]
+}

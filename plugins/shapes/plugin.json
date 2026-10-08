@@ -1,0 +1,129 @@
+{
+  "api": 1,
+  "id": "shapes",
+  "name": "Shape layers",
+  "version": "1.0.0",
+  "license": "MIT",
+  "summary": "Animated rectangle, ellipse, and line shape layers, with an optional formula for scale.",
+  "page": "page.js",
+  "templates": [
+    {
+      "id": "shape-layer",
+      "summary": "A rectangle, ellipse, or line that grows, slides, pops, or draws on; spin and a scale formula are optional.",
+      "kind": "overlay",
+      "defaultDurMs": 3000,
+      "props": {
+        "shape": {
+          "type": "enum",
+          "values": [
+            "rect",
+            "ellipse",
+            "line"
+          ],
+          "default": "rect",
+          "desc": "which shape"
+        },
+        "x": {
+          "type": "number",
+          "default": 0.35,
+          "min": 0,
+          "max": 1,
+          "desc": "left edge, fraction of the frame width (line: start x)"
+        },
+        "y": {
+          "type": "number",
+          "default": 0.4,
+          "min": 0,
+          "max": 1,
+          "desc": "top edge, fraction of the frame height (line: start y)"
+        },
+        "w": {
+          "type": "number",
+          "default": 0.3,
+          "min": 0.01,
+          "max": 1,
+          "desc": "width as a fraction of the frame width (line: end x)"
+        },
+        "h": {
+          "type": "number",
+          "default": 0.2,
+          "min": 0.01,
+          "max": 1,
+          "desc": "height as a fraction of the frame height (line: end y)"
+        },
+        "fill": {
+          "type": "color",
+          "default": "token:accent",
+          "desc": "fill color"
+        },
+        "stroke": {
+          "type": "color",
+          "default": "transparent",
+          "desc": "outline color"
+        },
+        "strokePx": {
+          "type": "number",
+          "default": 6,
+          "min": 0,
+          "max": 60,
+          "desc": "outline or line width at 1080 px"
+        },
+        "radius": {
+          "type": "number",
+          "default": 0.0,
+          "min": 0,
+          "max": 1,
+          "desc": "rectangle corner rounding, 0 square to 1 pill"
+        },
+        "motion": {
+          "type": "enum",
+          "values": [
+            "grow",
+            "slide",
+            "pop",
+            "draw"
+          ],
+          "default": "grow",
+          "desc": "entrance style"
+        },
+        "spin": {
+          "type": "number",
+          "default": 0,
+          "min": -720,
+          "max": 720,
+          "desc": "rotation in degrees per second"
+        },
+        "scaleExpr": {
+          "type": "string",
+          "default": "1",
+          "maxLen": 200,
+          "desc": "formula for scale over time, variables t (s) and p (0..1); e.g. 1 + 0.05 * sin(t * 6)"
+        },
+        "entranceMs": {
+          "type": "number",
+          "default": 400,
+          "min": 0,
+          "max": 2000,
+          "desc": "entrance duration in ms"
+        },
+        "exitMs": {
+          "type": "number",
+          "default": 250,
+          "min": 0,
+          "max": 2000,
+          "desc": "exit duration in ms"
+        },
+        "ease": {
+          "type": "ease",
+          "default": "expo.out",
+          "desc": "entrance easing"
+        },
+        "exitEase": {
+          "type": "ease",
+          "default": "cubic.in",
+          "desc": "exit easing"
+        }
+      }
+    }
+  ]
+}

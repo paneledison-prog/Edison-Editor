@@ -1,0 +1,288 @@
+{
+  "api": 1,
+  "id": "light-fx",
+  "name": "Light and particles",
+  "version": "1.0.0",
+  "license": "MIT",
+  "summary": "Deterministic particles, a glowing saber beam, and a lens flare, drawn on a 2D canvas.",
+  "page": "page.js",
+  "templates": [
+    {
+      "id": "particles",
+      "summary": "Seeded particle bursts or a steady stream, additive blending.",
+      "kind": "overlay",
+      "defaultDurMs": 3000,
+      "props": {
+        "x": {
+          "type": "number",
+          "default": 0.5,
+          "min": 0,
+          "max": 1,
+          "desc": "emitter x, fraction of frame width"
+        },
+        "y": {
+          "type": "number",
+          "default": 0.6,
+          "min": 0,
+          "max": 1,
+          "desc": "emitter y, fraction of frame height"
+        },
+        "count": {
+          "type": "number",
+          "default": 120,
+          "min": 1,
+          "max": 400,
+          "desc": "particles alive over the clip"
+        },
+        "speed": {
+          "type": "number",
+          "default": 420,
+          "min": 10,
+          "max": 2000,
+          "desc": "launch speed in px per second at 1080 p"
+        },
+        "spread": {
+          "type": "number",
+          "default": 360,
+          "min": 1,
+          "max": 360,
+          "desc": "emission cone in degrees"
+        },
+        "direction": {
+          "type": "number",
+          "default": -90,
+          "min": -180,
+          "max": 180,
+          "desc": "cone center in degrees (-90 is up)"
+        },
+        "gravity": {
+          "type": "number",
+          "default": 300,
+          "min": -1500,
+          "max": 1500,
+          "desc": "downward pull in px per second squared at 1080 p"
+        },
+        "size": {
+          "type": "number",
+          "default": 6,
+          "min": 1,
+          "max": 40,
+          "desc": "particle radius at 1080 p"
+        },
+        "lifeMs": {
+          "type": "number",
+          "default": 1400,
+          "min": 200,
+          "max": 6000,
+          "desc": "how long one particle lives"
+        },
+        "mode": {
+          "type": "enum",
+          "values": [
+            "burst",
+            "stream"
+          ],
+          "default": "stream",
+          "desc": "all at once, or continuously"
+        },
+        "color": {
+          "type": "color",
+          "default": "token:accent",
+          "desc": "particle color"
+        },
+        "seed": {
+          "type": "number",
+          "default": 1,
+          "min": 0,
+          "max": 9999,
+          "desc": "random seed"
+        },
+        "entranceMs": {
+          "type": "number",
+          "default": 400,
+          "min": 0,
+          "max": 2000,
+          "desc": "entrance duration in ms"
+        },
+        "exitMs": {
+          "type": "number",
+          "default": 250,
+          "min": 0,
+          "max": 2000,
+          "desc": "exit duration in ms"
+        },
+        "ease": {
+          "type": "ease",
+          "default": "expo.out",
+          "desc": "entrance easing"
+        },
+        "exitEase": {
+          "type": "ease",
+          "default": "cubic.in",
+          "desc": "exit easing"
+        }
+      }
+    },
+    {
+      "id": "saber",
+      "summary": "A glowing energy beam that draws on between two points.",
+      "kind": "overlay",
+      "defaultDurMs": 2500,
+      "props": {
+        "x1": {
+          "type": "number",
+          "default": 0.15,
+          "min": 0,
+          "max": 1,
+          "desc": "start x"
+        },
+        "y1": {
+          "type": "number",
+          "default": 0.7,
+          "min": 0,
+          "max": 1,
+          "desc": "start y"
+        },
+        "x2": {
+          "type": "number",
+          "default": 0.85,
+          "min": 0,
+          "max": 1,
+          "desc": "end x"
+        },
+        "y2": {
+          "type": "number",
+          "default": 0.3,
+          "min": 0,
+          "max": 1,
+          "desc": "end y"
+        },
+        "color": {
+          "type": "color",
+          "default": "token:accent",
+          "desc": "beam color"
+        },
+        "core": {
+          "type": "color",
+          "default": "#ffffff",
+          "desc": "bright core color"
+        },
+        "widthPx": {
+          "type": "number",
+          "default": 10,
+          "min": 2,
+          "max": 60,
+          "desc": "core width at 1080 p"
+        },
+        "glow": {
+          "type": "number",
+          "default": 40,
+          "min": 0,
+          "max": 200,
+          "desc": "glow radius at 1080 p"
+        },
+        "flicker": {
+          "type": "number",
+          "default": 0.15,
+          "min": 0,
+          "max": 0.6,
+          "desc": "brightness flicker amount"
+        },
+        "entranceMs": {
+          "type": "number",
+          "default": 400,
+          "min": 0,
+          "max": 2000,
+          "desc": "entrance duration in ms"
+        },
+        "exitMs": {
+          "type": "number",
+          "default": 250,
+          "min": 0,
+          "max": 2000,
+          "desc": "exit duration in ms"
+        },
+        "ease": {
+          "type": "ease",
+          "default": "expo.out",
+          "desc": "entrance easing"
+        },
+        "exitEase": {
+          "type": "ease",
+          "default": "cubic.in",
+          "desc": "exit easing"
+        }
+      }
+    },
+    {
+      "id": "lens-flare",
+      "summary": "A sun-like light with a streak and glowing ghosts along the line through the frame center.",
+      "kind": "overlay",
+      "defaultDurMs": 3000,
+      "props": {
+        "x": {
+          "type": "number",
+          "default": 0.8,
+          "min": 0,
+          "max": 1,
+          "desc": "light x"
+        },
+        "y": {
+          "type": "number",
+          "default": 0.2,
+          "min": 0,
+          "max": 1,
+          "desc": "light y"
+        },
+        "sweep": {
+          "type": "number",
+          "default": 0.1,
+          "min": 0,
+          "max": 0.6,
+          "desc": "how far the light drifts (fraction of the frame width)"
+        },
+        "color": {
+          "type": "color",
+          "default": "#ffd9a0",
+          "desc": "flare tint"
+        },
+        "intensity": {
+          "type": "number",
+          "default": 0.9,
+          "min": 0.1,
+          "max": 1,
+          "desc": "overall strength"
+        },
+        "streak": {
+          "type": "boolean",
+          "default": true,
+          "desc": "horizontal anamorphic streak"
+        },
+        "entranceMs": {
+          "type": "number",
+          "default": 400,
+          "min": 0,
+          "max": 2000,
+          "desc": "entrance duration in ms"
+        },
+        "exitMs": {
+          "type": "number",
+          "default": 250,
+          "min": 0,
+          "max": 2000,
+          "desc": "exit duration in ms"
+        },
+        "ease": {
+          "type": "ease",
+          "default": "expo.out",
+          "desc": "entrance easing"
+        },
+        "exitEase": {
+          "type": "ease",
+          "default": "cubic.in",
+          "desc": "exit easing"
+        }
+      }
+    }
+  ]
+}

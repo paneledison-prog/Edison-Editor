@@ -16,7 +16,11 @@ interface Pt {
 }
 
 /** Points (seconds, clip-local) of one property: keyframes, else the constant transform value, else the default. */
-export function propPoints(c: Clip, prop: 'scale' | 'x' | 'y', dflt: number): Pt[] {
+export function propPoints(
+  c: Clip,
+  prop: 'scale' | 'x' | 'y' | 'rot' | 'opacity',
+  dflt: number,
+): Pt[] {
   const kfs = c.keyframes?.[prop];
   const base = (c.transform as Record<string, number | undefined> | undefined)?.[prop] ?? dflt;
   if (!kfs?.length) return [{ t: 0, v: base }];
@@ -78,43 +82,63 @@ export function hasMotion(c: Clip): boolean {
 
 export const MAX_SCALE = 8;
 
-/** `scale=...,crop=...,` (trailing comma) for a clip, or '' when it has no motion. Output size stays width x height. */
+const identity = (c: Clip, prop: 'rot' | 'opacity', v: number) =>
+  !c.keyframes?.[prop]?.length && ((c.transform as Record<string, number> | undefined)?.[prop] ?? v) === v;
+
+/**
+ * The filters for a clip's keyframed motion, as a comma chain with a trailing comma, or '' when it has none.
+ * Zoom and pan (`scale`, `x`, `y`) are a `scale` + `crop`; `rot` (degrees, clockwise) is a `rotate` that leaves the
+ * uncovered corners transparent; `opacity` (0..1) multiplies the alpha plane. Output size stays width x height.
+ */
 export function zoomFilter(c: Clip, width: number, height: number): string {
   if (!hasMotion(c)) return '';
-  const unsupported = [
-    ...(c.keyframes && (c.keyframes['rot'] || c.keyframes['opacity'])
-      ? ['keyframes on rot/opacity']
-      : []),
-    ...(c.transform && (c.transform.rot !== undefined || c.transform.opacity !== undefined)
-      ? ['transform rot/opacity']
-      : []),
-  ];
-  const known = new Set(['scale', 'x', 'y']);
+  const known = new Set(['scale', 'x', 'y', 'rot', 'opacity']);
   for (const p of Object.keys(c.keyframes ?? {}))
-    if (!known.has(p) && !unsupported.length) unsupported.push(`keyframes on "${p}"`);
-  if (unsupported.length)
-    throw new EngineError(
-      'ENGINE_MISSING',
-      `${c.id}: ${unsupported.join(', ')} is not implemented for media clips; supported: scale, x, y`,
-      'remove it, or use scale/x/y (zoom and pan)',
-    );
-  const sc = propPoints(c, 'scale', 1);
-  for (const p of sc)
-    if (p.v < 1 || p.v > MAX_SCALE)
+    if (!known.has(p))
       throw new EngineError(
-        'INVALID_INPUT',
-        `${c.id}: scale ${p.v} is outside 1..${MAX_SCALE} (zooming out below 1 would show empty canvas)`,
+        'ENGINE_MISSING',
+        `${c.id}: keyframes on "${p}" are not implemented for media clips; supported: scale, x, y, rot, opacity`,
+        'remove it, or use one of the supported properties',
       );
-  const cx = expr(propPoints(c, 'x', 0.5));
-  const cy = expr(propPoints(c, 'y', 0.5));
-  const s = expr(sc);
-  // crop's iw/ih are the size configured at start, not the per-frame scaled size, so the scaled size is spelled out.
-  const sw = `(2*trunc(${width}*(${s})/2))`;
-  const sh = `(2*trunc(${height}*(${s})/2))`;
-  return (
-    `scale=w='${sw}':h='${sh}':eval=frame:flags=lanczos,` +
-    `crop=${width}:${height}:x='min(max((${cx})*${sw}-${width / 2},0),${sw}-${width})':y='min(max((${cy})*${sh}-${height / 2},0),${sh}-${height})',`
+  const geom = ['scale', 'x', 'y'].some(
+    (p) => c.keyframes?.[p]?.length || (c.transform as Record<string, number> | undefined)?.[p] !== undefined,
   );
+  let out = '';
+  if (geom) {
+    const sc = propPoints(c, 'scale', 1);
+    for (const p of sc)
+      if (p.v < 1 || p.v > MAX_SCALE)
+        throw new EngineError(
+          'INVALID_INPUT',
+          `${c.id}: scale ${p.v} is outside 1..${MAX_SCALE} (zooming out below 1 would show empty canvas)`,
+        );
+    const cx = expr(propPoints(c, 'x', 0.5));
+    const cy = expr(propPoints(c, 'y', 0.5));
+    const s = expr(sc);
+    // crop's iw/ih are the size configured at start, not the per-frame scaled size, so the scaled size is spelled out.
+    const sw = `(2*trunc(${width}*(${s})/2))`;
+    const sh = `(2*trunc(${height}*(${s})/2))`;
+    out +=
+      `scale=w='${sw}':h='${sh}':eval=frame:flags=lanczos,` +
+      `crop=${width}:${height}:x='min(max((${cx})*${sw}-${width / 2},0),${sw}-${width})':y='min(max((${cy})*${sh}-${height / 2},0),${sh}-${height})',`;
+  }
+  if (!identity(c, 'rot', 0)) {
+    const pts = propPoints(c, 'rot', 0);
+    for (const p of pts)
+      if (Math.abs(p.v) > 3600)
+        throw new EngineError('INVALID_INPUT', `${c.id}: rot ${p.v} is outside -3600..3600 degrees`);
+    out += `format=yuva420p,rotate=a='(${expr(pts)})*PI/180':ow=iw:oh=ih:c=black@0,`;
+  }
+  if (!identity(c, 'opacity', 1)) {
+    const pts = propPoints(c, 'opacity', 1);
+    for (const p of pts)
+      if (p.v < 0 || p.v > 1)
+        throw new EngineError('INVALID_INPUT', `${c.id}: opacity ${p.v} is outside 0..1`);
+    // geq names the time `T`; only the alpha plane is rewritten, the picture planes are passed through
+    const e = expr(pts).replace(/\bt\b/g, 'T');
+    out += `format=yuva420p,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='alpha(X,Y)*(${e})',`;
+  }
+  return out;
 }
 
 /**

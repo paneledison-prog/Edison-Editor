@@ -1,0 +1,82 @@
+{
+  "api": 1,
+  "id": "logo-reveal",
+  "name": "Logo reveal",
+  "version": "1.0.0",
+  "license": "MIT",
+  "summary": "Logo or wordmark reveal with a light sweep.",
+  "page": "page.js",
+  "templates": [
+    {
+      "id": "logo-reveal",
+      "summary": "A logo image or a wordmark scales in behind a wipe, with an accent line and a light sweep.",
+      "kind": "overlay",
+      "defaultDurMs": 3500,
+      "props": {
+        "text": {
+          "type": "string",
+          "default": "STUDIO",
+          "maxLen": 40,
+          "optional": true,
+          "desc": "wordmark, used when no logo image is given"
+        },
+        "tagline": {
+          "type": "string",
+          "maxLen": 80,
+          "optional": true,
+          "desc": "small line under the logo"
+        },
+        "logo": {
+          "type": "string",
+          "maxLen": 400000,
+          "optional": true,
+          "desc": "logo as a data:image/png;base64 URL"
+        },
+        "color": {
+          "type": "color",
+          "default": "token:fg",
+          "desc": "wordmark color"
+        },
+        "accent": {
+          "type": "color",
+          "default": "token:accent",
+          "desc": "line and sweep color"
+        },
+        "style": {
+          "type": "enum",
+          "values": [
+            "wipe",
+            "zoom",
+            "sweep"
+          ],
+          "default": "wipe",
+          "desc": "reveal style"
+        },
+        "entranceMs": {
+          "type": "number",
+          "default": 400,
+          "min": 0,
+          "max": 2000,
+          "desc": "entrance duration in ms"
+        },
+        "exitMs": {
+          "type": "number",
+          "default": 250,
+          "min": 0,
+          "max": 2000,
+          "desc": "exit duration in ms"
+        },
+        "ease": {
+          "type": "ease",
+          "default": "expo.out",
+          "desc": "entrance easing"
+        },
+        "exitEase": {
+          "type": "ease",
+          "default": "cubic.in",
+          "desc": "exit easing"
+        }
+      }
+    }
+  ]
+}

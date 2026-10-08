@@ -267,6 +267,46 @@ describe('P6: manual edits in the browser, all through ops', () => {
   );
 
   it_(
+    'graph editor: drawn from the keyframes, dragging a point is one undoable op, a bad prop tab does not break',
+    async () => {
+      const { dir, store } = seeded();
+      store.apply([
+        { type: 'kf.set', args: { clip: 'c_01', prop: 'scale', t: 500, v: 1, ease: 'linear' } },
+        { type: 'kf.set', args: { clip: 'c_01', prop: 'scale', t: 1500, v: 2 } },
+        { type: 'kf.set', args: { clip: 'c_01', prop: 'opacity', t: 0, v: 1 } },
+      ]);
+      const before = readFileSync(join(dir, 'project.studio.json'), 'utf8');
+      const page = await open(await serve(dir));
+      await page.locator('[data-clip-id=c_01]').click();
+      await page.getByTestId('graph-toggle').click();
+      await page.getByTestId('graph').waitFor();
+      expect(await page.getByTestId('graph-kf').count()).toBe(1); // properties are listed alphabetically: opacity first
+      await page.getByRole('tab', { name: 'scale' }).click();
+      expect(await page.getByTestId('graph-kf').count()).toBe(2);
+      const d0 = await page.getByTestId('graph-curve').getAttribute('d');
+      const h = page.locator('[data-testid=graph-kf]').nth(1);
+      await h.scrollIntoViewIfNeeded();
+      const box = (await h.boundingBox())!;
+      const r = await rev(page);
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width / 2 - 20, box.y + box.height / 2 + 30, { steps: 6 });
+      await page.mouse.up();
+      await waitRevChange(page, r);
+      const kf = clipOf(dir, 'c_01').keyframes.scale.find((k: any) => k.t < 1500 + 1 && k.v !== 1) ?? clipOf(dir, 'c_01').keyframes.scale[1];
+      expect(kf.t === 1500 && kf.v === 2).toBe(false); // it moved in time, in value, or both
+      expect(kf.v).toBeLessThan(2);
+      expect(await page.getByTestId('graph-curve').getAttribute('d')).not.toBe(d0);
+      expect(log(dir).filter((e) => e.actor === 'ui')).toHaveLength(1);
+      const r2 = await rev(page);
+      await page.getByRole('button', { name: /^Undo/ }).click();
+      await waitRevChange(page, r2);
+      expect(readFileSync(join(dir, 'project.studio.json'), 'utf8')).toBe(before);
+    },
+    90_000,
+  );
+
+  it_(
     'EXIT: manual and agent edits interleave, and undo walks back across both to the original bytes',
     async () => {
       const { dir } = seeded();

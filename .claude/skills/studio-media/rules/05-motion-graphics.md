@@ -6,7 +6,7 @@
 
 Motion graphics are **templates driven by props JSON**. The agent edits props, not React code, for 90% of tasks. Code changes are for new templates only.
 
-Templates (Phase 4): `title`, `lower-third`, `callout` (box + arrow + label), `kinetic-text`, `intro`, `outro`, `device-frame`, `cursor-highlight`, `speed-badge`, `chapter-card`.
+Templates (built in): `title`, `lower-third`, `callout` (box + arrow + label), `kinetic-text`, `intro`, `outro`, `cursor-highlight`, `speed-badge`, `captions`, `thumbnail-headline`. Plugins add more (`shape-layer`, `particles`, `saber`, `lens-flare`, `logo-reveal` ship with Studio); `studio motion templates` lists everything loaded. Not built: `device-frame`, `chapter-card`.
 
 A clip of type `comp` references a composition id and props:
 ```json

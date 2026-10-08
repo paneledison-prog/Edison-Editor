@@ -3,6 +3,7 @@
  * animations, no timers, no clock, no randomness. The renderer calls `studio.render(frame)` and then screenshots.
  */
 import { safeZoneFor } from '@studio/core/captions';
+import { compileExpr, noise } from '@studio/core/expr';
 import { easeFn, ramp } from './ease';
 
 interface FontIn {
@@ -12,6 +13,8 @@ interface FontIn {
 }
 interface InitArgs {
   comp: string;
+  /** drawing code of the plugin that owns `comp`, if any */
+  plugin?: { id: string; code: string } | null;
   props: Record<string, any>;
   width: number;
   height: number;
@@ -726,6 +729,38 @@ function card(c: Ctx, k1: string, k2: string, isOutro: boolean): Instance {
   };
 }
 
+/**
+ * What a plugin's drawing code may use. Everything here is a pure function of its arguments; there is no
+ * clock, no randomness (use `rand`), and no network access from this page.
+ */
+const lib = {
+  h,
+  px,
+  fit,
+  life,
+  ease: easeFn,
+  ramp,
+  noise,
+  expr: compileExpr,
+  /** seeded random in [0, 1): the same (seed, i) always gives the same number */
+  rand(seed: number, i = 0): number {
+    let x = (Math.imul(i | 0, 0x27d4eb2d) ^ Math.imul((seed | 0) + 0x165667b1, 0x85ebca6b)) >>> 0;
+    x = Math.imul(x ^ (x >>> 15), 0x2c1b3c6d) >>> 0;
+    x = Math.imul(x ^ (x >>> 12), 0x297a2d39) >>> 0;
+    return ((x ^ (x >>> 15)) >>> 0) / 4294967296;
+  },
+  /** a full-frame <canvas> (2D) appended to the root; draw into it from `update` */
+  canvas(c: Ctx): { el: HTMLCanvasElement; g: CanvasRenderingContext2D } {
+    const el = document.createElement('canvas');
+    el.width = c.W;
+    el.height = c.H;
+    Object.assign(el.style, { position: 'absolute', left: '0', top: '0', width: px(c.W), height: px(c.H) });
+    c.root.appendChild(el);
+    return { el, g: el.getContext('2d')! };
+  },
+};
+const pluginTemplates: Record<string, (c: Ctx, l: typeof lib) => Instance> = {};
+
 let inst: Instance | null = null;
 let ctxG: Ctx | null = null;
 let fpsG = 30;
@@ -749,7 +784,20 @@ const watched: { el: Element; label: string; within: 'frame' | 'safe' }[] = [];
     const root = document.createElement('div');
     root.style.cssText = `position:absolute;left:0;top:0;width:${a.width}px;height:${a.height}px;overflow:hidden`;
     document.body.appendChild(root);
-    const t = T[a.comp];
+    if (a.plugin) {
+      try {
+        new Function('register', 'lib', a.plugin.code)(
+          (id: string, fn: (c: Ctx, l: typeof lib) => Instance) => {
+            pluginTemplates[id] = fn;
+          },
+          lib,
+        );
+      } catch (e) {
+        throw new Error(`plugin ${a.plugin.id}: ${(e as Error).message}`);
+      }
+    }
+    const pt = pluginTemplates[a.comp];
+    const t = T[a.comp] ?? (pt ? (c: Ctx) => pt(c, lib) : undefined);
     if (!t) throw new Error(`no template "${a.comp}" in the page bundle`);
     const z = safeZoneFor(a.width, a.height);
     ctxG = {

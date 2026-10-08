@@ -14,8 +14,9 @@ Priorities, in order: **correctness → verifiability → lightweight → speed 
 project.studio.json  ◀─── ops (validated, logged, undoable) ◀─── CLI / UI / agent
         │
         ├──▶ router ──▶ ffmpeg backend    (cut, concat, crop, scale, overlay, audio chain, burn-in)
-        │          └──▶ motion renderer + FFmpeg ("hybrid": composition clips as alpha frames; keyframes and transforms are not implemented)
+        │          └──▶ motion renderer + FFmpeg ("hybrid": composition clips as alpha frames)
         │
+        ├──▶ plugins/ (templates, effects, scripts)  ·  expressions  ·  studio script run
         └──▶ UI (watches file)  ·  inspect (frames, sheets, loudness, QC)
 ```
 

@@ -22,6 +22,7 @@ Read in this order the first time in a session:
 | Motion graphics | `rules/05-motion-graphics.md` |
 | Captions or subtitles | `rules/06-captions.md` |
 | Verifying any output | `rules/09-verification.md` |
+| Plugins, expressions, scripts, new effects or templates | `rules/12-plugins-and-scripts.md` |
 | Speed, memory, bundle size | `rules/10-performance.md` |
 | UI work or tokens | `rules/11-ui-design-system.md` |
 

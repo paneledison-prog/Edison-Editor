@@ -93,3 +93,9 @@ Not used on purpose: models with non-commercial licenses (for example BRIA RMBG-
 ## Fonts and icons (UI)
 
 Lucide (ISC) is in use. Geist Sans / Geist Mono (OFL) are **not bundled yet**: `tokens.css` lists them first and falls back to the system stack, which is what renders today. Bundling latin subsets needs a size check against the 60 KB gzipped limit in rules/11.
+
+## Phase 9: plugins and scripts
+
+No new dependency. The plugin loader, the expression evaluator, and the four shipped plugins (`glow`, `shapes`, `light-fx`, `logo-reveal`) and the three shipped scripts are Studio's own code, MIT like the repository. The shipped plugins use only FFmpeg filters already in the build and the browser's own 2D canvas and SVG. Plugin names such as "glow" or "saber" describe an effect; they are not copies of any commercial product and use none of its code or assets.
+Test footage: the *Sintel* trailer (c) Blender Foundation, CC BY 3.0, was downloaded to a scratch directory to try the edit. It is not in the repository.
+

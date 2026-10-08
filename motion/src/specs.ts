@@ -280,6 +280,15 @@ export const TEMPLATES: Record<string, TemplateSpec> = {
   },
 };
 
+/** Names of the templates that ship with Studio; a plugin may add templates but never replace these. */
+export const BUILTIN_TEMPLATES = new Set(Object.keys(TEMPLATES));
+/** Adds a plugin's template to the catalogue. The same id twice, or a built-in id, is an error. */
+export function registerTemplate(spec: TemplateSpec): void {
+  if (BUILTIN_TEMPLATES.has(spec.id))
+    throw new Error(`template "${spec.id}" is built in and cannot be replaced by a plugin`);
+  TEMPLATES[spec.id] = spec;
+}
+
 export interface Palette {
   colors: Record<string, string>;
   fonts: Record<string, { family: string; files: Record<string, string> }>;

@@ -7,7 +7,8 @@
   "types": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./captions": "./src/captions.ts"
+    "./captions": "./src/captions.ts",
+    "./expr": "./src/expr.ts"
   },
   "dependencies": {
     "zod": "^3.25.0"

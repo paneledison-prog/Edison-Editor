@@ -683,3 +683,77 @@ code.block {
   display: block;
   user-select: none;
 }
+
+.graph-toggle {
+  margin: var(--space-1) 0;
+  padding: 0 var(--space-2);
+  height: var(--control-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-raised);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.graph-toggle:hover {
+  background: var(--color-bg-hover);
+}
+.props .graph,
+.props .graph-tabs {
+  grid-template-columns: none;
+}
+.props .graph-tabs {
+  display: flex;
+  gap: var(--space-1);
+  margin-bottom: var(--space-1);
+}
+.graph-tab {
+  height: var(--control-sm);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.graph-tab.on {
+  background: var(--color-accent-subtle);
+  color: var(--color-text-primary);
+  border-color: var(--color-accent);
+}
+.graph svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 264 / 150;
+  background: var(--color-bg-raised);
+  border-radius: var(--radius-md);
+  touch-action: none;
+}
+.graph-grid {
+  stroke: var(--color-border);
+  stroke-width: 1;
+}
+.graph-label {
+  fill: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+.graph-curve {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-width: 2;
+}
+.graph-kf {
+  fill: var(--color-bg-surface);
+  stroke: var(--color-accent);
+  stroke-width: 2;
+  cursor: grab;
+}
+.graph-kf.drag,
+.graph-kf:focus-visible {
+  fill: var(--color-accent);
+  outline: none;
+}

@@ -3,6 +3,7 @@ import { displaySize, speedOf, type Clip, type Fx, type Project } from '@studio/
 import { MAX_AUDIO_SPEED, clipAudioChain, dbToLin } from './audiofx.js';
 import { EngineError } from './run.js';
 import { blurRegionFilter, hasMotion, zoomFilter } from './zoom.js';
+import { effectLines } from './plugins.js';
 import type { Preset } from './presets.js';
 
 export interface Plan {
@@ -264,6 +265,19 @@ export function compile(inp: CompileInput): Plan {
         vLines.push(
           `[${k}:v]${head},scale=${width}:${height}:force_original_aspect_ratio=decrease:${cm},pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=${bg},setsar=1,format=yuv420p,${bf}${zf}setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
         );
+      }
+      // Plugin effects: each is a small filter graph that reads the clip's finished picture and writes a new one.
+      const pfx = (c.fx ?? []).filter((f): f is Extract<Fx, { type: 'plugin' }> => f.type === 'plugin');
+      if (pfx.length) {
+        const base = `v${nV}`;
+        const last = vLines.pop()!;
+        let cur = `${base}pre`;
+        vLines.push(last.replace(new RegExp(`\\[${base}\\]$`), `[${cur}]`));
+        pfx.forEach((f, i) => {
+          const out = i === pfx.length - 1 ? base : `${base}fx${i}`;
+          vLines.push(...effectLines(f, cur, out, `${base}f${i}`));
+          cur = out;
+        });
       }
       if (d.w && d.h && t.type === 'video') {
         const kFit = Math.min(width / d.w, height / d.h);

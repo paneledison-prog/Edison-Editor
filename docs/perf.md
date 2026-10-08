@@ -121,6 +121,33 @@ UI shell bundle: 18.4 KB to 18.8 KB gzipped (budget 250 KB).
 
 A modal with Appearance, Project and Connector tabs (9 tests in real Chromium plus the `project.set` op: focus trap and Escape, arrow-key tabs, theme persistence with storage blocked, saving the project settings as one `ui` op that Undo reverses byte for byte, the Connector tab's exact command and clipboard copy, and a real MCP handshake from the server). The Connector tab proves only that `studio mcp` starts; whether Claude Code is connected cannot be seen from the page, and the page never runs `claude`. UI shell bundle: 15.45 KB to 18.4 KB gzipped (budget 250 KB); the baseline was raised for the dialog.
 
+## Phase 9: plugins, expressions, scripts, rotation and opacity, graph editor
+
+Measured on this container (2 vCPU class, no GPU), single runs unless a count is given.
+
+| What | Measurement |
+|---|---|
+| Plugin source shipped | glow 2,369 B (4 effects), shapes 6,145 B, light-fx 11,884 B (3 templates), logo-reveal 4,668 B: 25,066 B in total, against a 65,536 B budget per plugin |
+| `plugins check` | glow (4 effects run on a test pattern) 0.56 s; shapes 2.6 s, light-fx 2.5 s (3 templates), logo-reveal 1.2 s, each including a headless Chromium start |
+| Render, 6 s of the 1280x720 Sintel edit with 4 overlays | plain 13.9 s; opacity keyframes 12.9 s; opacity + rotation keyframes 14.5 s. The differences are inside run-to-run noise, so no cost from either is claimed |
+| Demo with all five plugin templates and glow + vignette on the clip, 12 s at 1280x720 | 16.0 s render (plugin frames were already cached by an earlier failed render, which also shows the cache working) |
+| Plugin frames cache | keyed by the plugin's content hash, so editing a plugin invalidates only its own frames |
+| UI shell | 18.82 KB to 20.80 KB gzip (+10.5%, budget 250 KB). The graph editor itself is a separate lazy chunk of 1.34 KB gzip, fetched the first time "Show graph" is pressed. The shell grew by the toggle, the loader, and the graph styles; the baseline was updated for that reason only |
+
+Verified by test (`tests/p9.test.ts`, 15 tests; `tests/p6.test.ts` graph editor): the expression evaluator (precedence, determinism, refusal of property access, unknown names, nesting and length limits), plugin refusal cases (banned filter, missing `[in]`/`[out]`, undeclared parameter, bad character, escaping path, 70 KB plugin, extra manifest field), parameter ranges in the message, scaffold of each plugin kind then `check`, a broken filter graph and a throwing template both fail `check` with exit 4, a plugin template added as a clip and its props validated, a plugin cannot replace a built-in template, a plugin effect changes the rendered frame and is undone by `project undo`, `expr bake` writes keyframes in one undoable step and refuses out-of-range values, scripts run only through `studio` commands and unmarked files are never imported, the renderer refuses network loads (with a control run: with the block removed the same plugin loads from a local server and the test fails), opacity scales picture brightness over the canvas background, rotation keeps the frame size and clears the corners, and dragging a graph handle is one undoable UI op.
+
+Looked at by eye: frames of the demo (shape layer, saber, particles, lens flare, logo reveal, glow and vignette over real footage), and a rotation frame. These are the only evidence for how they look.
+
+Not verified in phase 9:
+- The shipped light effects are 2D canvas drawings, not simulations; none was compared with the commercial tools they are named after, and none should be expected to match them.
+- No 3D (Element 3D style) exists. Extruded or tilted text via CSS 3D is possible as a template; not built.
+- Layers: tracks stack and overlay in order, but there are no blend modes, groups, masks, or parenting. Plugin effects are per clip; none reads another clip or the audio.
+- Text animators beyond the existing `title` stagger and `kinetic-text`: not built.
+- Scripts and plugin page code are trusted local code, not sandboxed; the loader checks stop mistakes, not a hostile plugin.
+- `opacity` and `rot` keyframes on the audio of a clip, on composition clips, and with `--reframe blur`/`center-crop` combined with rotation were not tested.
+- The graph editor was tested with a mouse drag on one handle; keyboard use of handles, touch, and several handles at once were not. It has no add-keyframe or handle-curve (bezier) editing.
+- Windows: the shipped scripts and plugin paths were not run there.
+
 ## Not measured
 
 - UI memory with a 2-hour project open (budget < 300 MB).
@@ -136,7 +163,7 @@ A modal with Appearance, Project and Connector tabs (9 tests in real Chromium pl
 - Caption legibility against busy video; the tests use a black background.
 - Non-Latin scripts and right-to-left captions (Inter covers Latin, Greek, and Cyrillic; glyph coverage is not checked, so missing glyphs would fall back silently).
 - Motion rendering on a GPU, and templates at 4K.
-- Keyframes and transforms on media clips: not implemented in any backend.
+- Keyframes on media clips other than `scale`, `x`, `y`, `rot`, `opacity`; transforms other than those, and any keyframes on audio.
 - Translation: not implemented.
 - Phase 6: touch input, multi-select, dragging keyframes in the timeline (they are nudged from the inspector), and two browser tabs editing at once.
 

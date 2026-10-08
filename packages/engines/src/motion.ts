@@ -12,6 +12,7 @@ import {
 import { dirname, join, resolve } from 'node:path';
 import type { Clip, Cue } from '@studio/core';
 import { resolveProps, TEMPLATES, type Palette } from '@studio/motion';
+import { activatePlugins, pluginForTemplate } from './plugins.js';
 import { ffmpeg } from './run.js';
 import { EngineError } from './run.js';
 import { studioRoot } from './models.js';
@@ -149,9 +150,12 @@ export interface Prepared {
   palette: Palette;
   root: string;
   fontFile?: { path: string; family: string };
+  /** set when the template comes from a plugin: its id, drawing code, and content hash */
+  plugin?: { id: string; code: string; hash: string };
 }
 
 export function prepare(s: MotionSpec): Prepared {
+  activatePlugins(s.projectDir ?? studioRoot());
   if (!TEMPLATES[s.comp])
     throw new EngineError(
       'INVALID_INPUT',
@@ -171,10 +175,12 @@ export function prepare(s: MotionSpec): Prepared {
   if (!(s.durMs > 0)) throw new EngineError('INVALID_INPUT', 'duration must be positive');
   const frames = Math.max(1, Math.round((s.durMs * s.fps) / 1000));
   const cv = codeVersion(palette, root);
+  const pl = pluginForTemplate(s.comp);
   const key = createHash('sha256')
     .update(
       JSON.stringify([
         s.comp,
+        pl ? pl.hash : null,
         props,
         cv,
         s.fps,
@@ -199,6 +205,7 @@ export function prepare(s: MotionSpec): Prepared {
     palette,
     root,
     ...(s.fontFile ? { fontFile: s.fontFile } : {}),
+    ...(pl ? { plugin: { id: pl.manifest.id, code: pl.pageCode ?? '', hash: pl.hash } } : {}),
   };
 }
 
@@ -267,12 +274,15 @@ async function openPage(
     viewport: { width: p.width, height: p.height },
     deviceScaleFactor: 1,
   });
+  // The renderer is offline: templates, including plugins, draw from their props and the brand fonts only.
+  await page.route('**/*', (route) => route.abort());
   await page.setContent('<!doctype html><html><body></body></html>');
   await page.addScriptTag({ content: readFileSync(pageBundle(), 'utf8') });
   const fam = p.fontFile?.family ?? Object.values(p.palette.fonts)[0]!.family;
   const info = (await page
     .evaluate((a) => (window as any).studio.init(a), {
       comp: p.comp,
+      plugin: p.plugin ? { id: p.plugin.id, code: p.plugin.code } : null,
       props: p.props,
       width: p.width,
       height: p.height,

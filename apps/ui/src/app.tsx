@@ -48,11 +48,36 @@ function KeyframeEditor({
 }) {
   const clip = project.clips.find((c) => c.id === clipId);
   const [active, setActive] = useState<string | null>(null);
+  const [graph, setGraph] = useState<null | typeof import('./components/GraphEditor').default>(null);
+  const [showGraph, setShowGraph] = useState(false);
+  useEffect(() => {
+    // the graph editor is a separate chunk: it loads the first time it is opened
+    if (showGraph && !graph) import('./components/GraphEditor').then((m) => setGraph(() => m.default));
+  }, [showGraph, graph]);
   const fps = project.meta.fps;
   if (!clip?.keyframes || !Object.keys(clip.keyframes).length) return null;
+  const Graph = graph;
   return (
     <div data-testid="keyframes">
       <dt>Keyframes</dt>
+      <button
+        class="graph-toggle"
+        aria-expanded={showGraph}
+        onClick={() => setShowGraph((v) => !v)}
+        data-testid="graph-toggle"
+      >
+        {showGraph ? 'Hide graph' : 'Show graph'}
+      </button>
+      {showGraph && Graph && (
+        <Graph
+          clipId={clip.id}
+          dur={clip.dur}
+          fps={fps}
+          keyframes={clip.keyframes}
+          editable={editable}
+          onEdit={onEdit}
+        />
+      )}
       {Object.entries(clip.keyframes).map(([prop, kfs]) =>
         kfs.map((k) => (
           <div

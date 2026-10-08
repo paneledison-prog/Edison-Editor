@@ -165,13 +165,13 @@ describe('studio render', () => {
     );
   }, 60_000);
 
-  it('router: keyframes on rot (not implemented) fail loudly instead of being ignored', async () => {
+  it('router: keyframes on a property the renderer does not animate fail loudly instead of being ignored', async () => {
     const { dir, store } = await timeline();
-    store.apply([{ type: 'kf.set', args: { clip: 'c_01', prop: 'rot', t: 500, v: 10 } }]);
+    store.apply([{ type: 'kf.set', args: { clip: 'c_01', prop: 'skew', t: 500, v: 10 } }]);
     const r = await studio(['render', '--preview', '--project', dir]);
     expect(r.code).toBe(3);
     expect(r.json.error.message).toMatch(
-      /c_01: keyframes on rot\/opacity is not implemented for media clips/,
+      /c_01: keyframes on "skew" are not implemented for media clips; supported: scale, x, y, rot, opacity/,
     );
     expect(renders(dir)).toEqual([]);
   });

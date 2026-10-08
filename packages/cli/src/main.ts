@@ -33,6 +33,9 @@ const loaders: Record<CmdMeta['module'], () => Promise<Record<string, unknown>>>
   motion: () => import('./cmds/motion.js'),
   captions: () => import('./cmds/captions.js'),
   mcp: () => import('./cmds/mcp.js'),
+  plugins: () => import('./cmds/plugins.js'),
+  expr: () => import('./cmds/expr.js'),
+  script: () => import('./cmds/script.js'),
 };
 
 function findCommand(argv: string[]): { meta: CmdMeta; rest: string[] } | undefined {
@@ -65,6 +68,7 @@ const EXIT: Record<string, 1 | 2 | 3 | 4 | 5> = {
   ENCODER_UNSUPPORTED: 3,
   PARTIAL_FAILURE: 1,
   NEEDS_CONFIRMATION: 2,
+  PLUGIN_INVALID: 4,
 };
 
 export async function main(argv: string[]): Promise<void> {
@@ -104,6 +108,11 @@ export async function main(argv: string[]): Promise<void> {
       actor: (flags['actor'] as Invocation['actor']) ?? 'agent',
       log: (m) => process.stderr.write(m + '\n'),
     };
+    // Plugins add templates and effects; every module that renders or validates a composition must see them.
+    if (!['tools', 'project', 'ops', 'doctor', 'models', 'cache', 'ingest'].includes(meta.module)) {
+      const { activatePlugins } = await import('@studio/engines');
+      activatePlugins(inv.dir);
+    }
     const mod = await loaders[meta.module]();
     const fn = mod[meta.fn] as Handler | undefined;
     if (!fn)

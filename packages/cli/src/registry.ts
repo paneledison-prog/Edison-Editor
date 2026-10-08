@@ -26,7 +26,10 @@ export interface CmdMeta {
     | 'models'
     | 'motion'
     | 'captions'
-    | 'mcp';
+    | 'mcp'
+    | 'plugins'
+    | 'expr'
+    | 'script';
   fn: string;
 }
 
@@ -745,6 +748,86 @@ export const COMMANDS: CmdMeta[] = [
     example:
       'claude mcp add studio -- node packages/cli/dist/studio.js mcp --project /path/to/project',
     flags: [],
+  }),
+  cmd({
+    name: 'plugins.list',
+    module: 'plugins',
+    fn: 'list',
+    writes: false,
+    summary: 'List loaded plugins (shipped and in the project) with their templates, effects, scripts, and sizes.',
+    usage: 'studio plugins list [--id ID]',
+    example: 'studio plugins list',
+    flags: [s('id', 'show one plugin')],
+  }),
+  cmd({
+    name: 'plugins.new',
+    module: 'plugins',
+    fn: 'newPlugin',
+    writes: true,
+    summary: 'Scaffold a plugin in the project: a motion template, a video effect, or a script.',
+    usage: 'studio plugins new <id> [--kind template|effect|script]',
+    example: 'studio plugins new my-glow --kind effect',
+    flags: [s('kind', 'template (default), effect, or script')],
+  }),
+  cmd({
+    name: 'plugins.check',
+    module: 'plugins',
+    fn: 'check',
+    writes: true,
+    summary: 'Validate a plugin and exercise it: effects run on a test pattern, templates render a frame.',
+    usage: 'studio plugins check <id>',
+    example: 'studio plugins check my-glow',
+    flags: [],
+  }),
+  cmd({
+    name: 'plugins.apply',
+    module: 'plugins',
+    fn: 'apply',
+    writes: true,
+    summary: 'Add a plugin video effect to a clip (an op: validated, logged, undoable).',
+    usage: 'studio plugins apply --clip c_xx --effect ID [--params JSON]',
+    example: 'studio plugins apply --clip c_01 --effect glow --params \'{"amount":0.6}\'',
+    flags: [s('clip', 'clip id', true), s('effect', 'plugin effect id', true), s('params', 'parameters as JSON')],
+  }),
+  cmd({
+    name: 'expr.eval',
+    module: 'expr',
+    fn: 'evaluate',
+    writes: false,
+    summary: 'Evaluate an animation formula at times, to check it before baking it into keyframes.',
+    usage: 'studio expr eval --expr "1 + 0.2 * sin(t * 6)" [--at 0,0.5,1] [--dur S]',
+    example: 'studio expr eval --expr "1 + 0.2 * expo_out(p)" --at 0,0.5,1',
+    flags: [s('expr', 'formula', true), s('at', 'seconds, comma separated'), n('dur', 'clip length in seconds (for p)'), s('vars', 'extra variables as JSON')],
+  }),
+  cmd({
+    name: 'expr.bake',
+    module: 'expr',
+    fn: 'bake',
+    writes: true,
+    summary: 'Sample a formula over part of a clip and write it as keyframes (one undoable step).',
+    usage: 'studio expr bake --clip c_xx --prop scale --expr "1 + 0.1 * wiggle(2, 1)" [--from MS --to MS --step MS --ease linear]',
+    example: 'studio expr bake --clip c_01 --prop scale --expr "1 + 0.3 * expo_out(p)" --from 0 --to 1500',
+    flags: [s('clip', 'clip id', true), s('prop', 'scale, x, or y', true), s('expr', 'formula', true), n('from', 'start, ms into the clip'), n('to', 'end, ms into the clip'), n('step', 'sample spacing in ms (min 40)'), s('ease', 'easing between samples')],
+  }),
+  cmd({
+    name: 'script.list',
+    module: 'script',
+    fn: 'list',
+    writes: false,
+    summary: 'List scripts: the shipped library, the project scripts folder, and plugin scripts.',
+    usage: 'studio script list',
+    example: 'studio script list',
+    flags: [],
+  }),
+  cmd({
+    name: 'script.run',
+    module: 'script',
+    fn: 'run',
+    writes: true,
+    summary: 'Run a script. It changes the project only through studio commands, so every change is an op.',
+    usage: 'studio script run <name> [--args JSON]',
+    example: 'studio script run zoom-punch --args \'{"clip":"c_01","at":2000}\'',
+    flags: [s('args', 'script arguments as JSON')],
   }),
   cmd({
     name: 'motion.templates',
