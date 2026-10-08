@@ -12,6 +12,9 @@
     },
     {
       "path": "packages/inspect"
+    },
+    {
+      "path": "motion"
     }
   ]
 }

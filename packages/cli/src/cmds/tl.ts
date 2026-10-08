@@ -29,6 +29,10 @@ export const addClip: Handler = async (inv) => {
   if ((asset === undefined) === (comp === undefined))
     throw new CliError('INVALID_ARGS', 'give exactly one of --asset or --comp');
   const props = str(inv, 'props');
+  if (comp) {
+    const E = await import('@studio/engines');
+    E.validateComp(comp, props ? parseJson('--props', props) : undefined, inv.dir);
+  }
   return runSpecs(inv, [
     {
       type: 'clip.add',

@@ -15,7 +15,7 @@ const ACCEPTS: Record<Track['type'], ReadonlyArray<'video' | 'audio' | 'image'>>
 
 /**
  * Invariants from rules/01 that must hold after every op.
- * Not enforced yet (no registry exists before Phase 4): that `comp` ids and `token:` references exist.
+ * `comp` ids and props are checked against the template catalogue when a composition clip is added (`tl add-clip`) and at render time, not here: core does not depend on the motion package.
  */
 export function validateProject(p: unknown): Issue[] {
   const parsed = ProjectSchema.safeParse(p);

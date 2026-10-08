@@ -8,7 +8,7 @@
   },
   "packageManager": "pnpm@10.28.0",
   "scripts": {
-    "build": "node scripts/build-cli.mjs",
+    "build": "node scripts/build-motion.mjs && node scripts/build-cli.mjs",
     "typecheck": "tsc -b",
     "test": "vitest run",
     "format": "prettier --write .",

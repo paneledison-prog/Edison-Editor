@@ -10,7 +10,9 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { canonicalize, timelineDuration, type Project } from '@studio/core';
-import { compile, type Plan } from './compile.js';
+import { canvasFor, compile, type Plan } from './compile.js';
+import { clipSpec, motionFrames, prepare } from './motion.js';
+import { renderOverlayAlpha } from './overlay.js';
 import { licenseWarnings } from './library.js';
 import { PREVIEW, getPreset, type Preset } from './presets.js';
 import { probeFile } from './probe.js';
@@ -37,13 +39,15 @@ export interface RenderOptions {
   reframe?: 'fit' | 'blur' | 'center-crop';
   /** x264 preset override (ultrafast..veryslow); the preset's own default otherwise */
   x264Preset?: string;
+  /** overlay-alpha only: ProRes 4444 (default) or VP9 WebM with alpha */
+  alphaFormat?: 'prores4444' | 'webm';
   /** build and describe the plan, run nothing */
   explain?: boolean;
   log?: (m: string) => void;
 }
 
 export interface RenderReport {
-  backend: 'ffmpeg';
+  backend: 'ffmpeg' | 'hybrid';
   reason: string;
   preset: string;
   output?: string;
@@ -187,6 +191,7 @@ export function nextVersionName(
 
 export async function render(o: RenderOptions): Promise<RenderReport> {
   const log = o.log ?? (() => {});
+  if (o.preset === 'overlay-alpha' && !o.preview) return renderOverlayAlpha(o);
   const preset = o.preview ? PREVIEW : getPreset(o.preset);
   const encoder = o.encoder ?? 'libx264';
   const total = timelineDuration(o.project);
@@ -215,6 +220,35 @@ export async function render(o: RenderOptions): Promise<RenderReport> {
     );
   }
 
+  // Composition clips: render their alpha frames first (cached), then FFmpeg composites them in the same pass.
+  const overlays: Record<string, { dir: string; fps: number; frames: number }> = {};
+  const motionNotes: string[] = [];
+  const comps = o.project.clips.filter((c) => c.comp);
+  if (comps.length) {
+    const cv = canvasFor(o.project, preset, !!o.preview, o.width);
+    const fps = preset.fps ?? o.project.meta.fps;
+    const cacheRoot = join(o.projectDir, '.studio', 'cache');
+    for (const c of comps) {
+      if (o.project.tracks.find((t) => t.id === c.track)?.hidden) continue;
+      const prep = prepare(clipSpec(c, o.projectDir, { ...cv, fps }));
+      if (o.explain) {
+        overlays[c.id] = { dir: join(cacheRoot, 'motion', prep.key), fps, frames: prep.frames };
+        motionNotes.push(
+          `${c.id}: ${c.comp} ${prep.frames} frames at ${fps} fps (cache key ${prep.key}, rendered on demand)`,
+        );
+        continue;
+      }
+      log(`motion: ${c.id} ${c.comp}`);
+      const r = await motionFrames(prep, cacheRoot);
+      overlays[c.id] = { dir: r.dir, fps, frames: r.frames };
+      motionNotes.push(
+        r.cached
+          ? `${c.id}: ${c.comp} ${r.frames} frames from cache (${prep.key})`
+          : `${c.id}: ${c.comp} ${r.frames} frames rendered in ${r.ms} ms (${r.renderFps} fps, ${r.concurrency} pages)`,
+      );
+      for (const w of r.warnings) motionNotes.push(`${c.id}: ${w}`);
+    }
+  }
   const plan = compile({
     project: o.project,
     projectDir: o.projectDir,
@@ -223,6 +257,7 @@ export async function render(o: RenderOptions): Promise<RenderReport> {
     window,
     width: o.width,
     reframe: o.reframe,
+    overlays,
   });
   const ext = stillMode ? 'png' : preset.ext;
   const baseName =
@@ -250,7 +285,7 @@ export async function render(o: RenderOptions): Promise<RenderReport> {
     streamCopy: false,
     loudness: null,
     joinsMs: plan.joinsMs,
-    notes: [...plan.notes],
+    notes: [...plan.notes, ...motionNotes],
   };
   report.notes.push(
     ...licenseWarnings(

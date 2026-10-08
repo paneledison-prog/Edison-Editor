@@ -34,6 +34,117 @@
       "license": "BSD-3-Clause",
       "licenseSource": "https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE",
       "notes": "Real-ESRGAN ncnn Vulkan build with the realesrgan-x4plus, realesrgan-x4plus-anime, and realesr-animevideov3 models. Needs a Vulkan device; a software one (Mesa lavapipe) works but is slow."
+    },
+    "whisper-tiny.en": {
+      "kind": "whisper-dir",
+      "task": "transcribe",
+      "file": "whisper-tiny.en",
+      "files": [
+        {
+          "file": "config.json",
+          "url": "https://huggingface.co/Systran/faster-whisper-tiny.en/resolve/0d3d19a32d3338f10357c0889762bd8d64bbdeba/config.json",
+          "sha256": "14b1b421a90349bc551b881461426b561a874049cb9e4c4864f2ca384f6a7cc5",
+          "bytes": 2317
+        },
+        {
+          "file": "model.bin",
+          "url": "https://huggingface.co/Systran/faster-whisper-tiny.en/resolve/0d3d19a32d3338f10357c0889762bd8d64bbdeba/model.bin",
+          "sha256": "1a5afae06a4db91c975c9a9d78be5cc110ee4ea022ad57d55492e4550e936b2a",
+          "bytes": 75537502
+        },
+        {
+          "file": "tokenizer.json",
+          "url": "https://huggingface.co/Systran/faster-whisper-tiny.en/resolve/0d3d19a32d3338f10357c0889762bd8d64bbdeba/tokenizer.json",
+          "sha256": "929c5252409436dce1b38a75d1abbcb5e132d170d8e324e4e04ed915fa2d22df",
+          "bytes": 2128466
+        },
+        {
+          "file": "vocabulary.txt",
+          "url": "https://huggingface.co/Systran/faster-whisper-tiny.en/resolve/0d3d19a32d3338f10357c0889762bd8d64bbdeba/vocabulary.txt",
+          "sha256": "ff77588746d3a2595d32ab5b69ffd7b95ce2441ac57533cb66fc3eb575a115cf",
+          "bytes": 422309
+        }
+      ],
+      "url": "https://huggingface.co/Systran/faster-whisper-tiny.en",
+      "sha256": "",
+      "bytes": 78090594,
+      "license": "MIT",
+      "licenseSource": "https://huggingface.co/Systran/faster-whisper-tiny.en (model card: license mit; upstream openai/whisper is MIT)",
+      "notes": "CTranslate2 conversion of OpenAI Whisper tiny.en (fast draft, English only), pinned to revision 0d3d19a32d3338f10357c0889762bd8d64bbdeba."
+    },
+    "whisper-small": {
+      "kind": "whisper-dir",
+      "task": "transcribe",
+      "file": "whisper-small",
+      "files": [
+        {
+          "file": "config.json",
+          "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/config.json",
+          "sha256": "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828",
+          "bytes": 2370
+        },
+        {
+          "file": "model.bin",
+          "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/model.bin",
+          "sha256": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671",
+          "bytes": 483546902
+        },
+        {
+          "file": "tokenizer.json",
+          "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/tokenizer.json",
+          "sha256": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+          "bytes": 2203239
+        },
+        {
+          "file": "vocabulary.txt",
+          "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/vocabulary.txt",
+          "sha256": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
+          "bytes": 459861
+        }
+      ],
+      "url": "https://huggingface.co/Systran/faster-whisper-small",
+      "sha256": "",
+      "bytes": 486212372,
+      "license": "MIT",
+      "licenseSource": "https://huggingface.co/Systran/faster-whisper-small (model card: license mit; upstream openai/whisper is MIT)",
+      "notes": "CTranslate2 conversion of OpenAI Whisper small (balanced draft, multilingual), pinned to revision 536b0662742c02347bc0e980a01041f333bce120."
+    },
+    "whisper-medium": {
+      "kind": "whisper-dir",
+      "task": "transcribe",
+      "file": "whisper-medium",
+      "files": [
+        {
+          "file": "config.json",
+          "url": "https://huggingface.co/Systran/faster-whisper-medium/resolve/08e178d48790749d25932bbc082711ddcfdfbc4f/config.json",
+          "sha256": "3622a2ddc41ec0e0fd4e68c13c6830f03b90c38d89aaad184de02c8c642cf807",
+          "bytes": 2257
+        },
+        {
+          "file": "model.bin",
+          "url": "https://huggingface.co/Systran/faster-whisper-medium/resolve/08e178d48790749d25932bbc082711ddcfdfbc4f/model.bin",
+          "sha256": "9b45e1009dcc4ab601eff815b61d80e60ce3fd8c74c1a14f4a282258286b51ae",
+          "bytes": 1527906378
+        },
+        {
+          "file": "tokenizer.json",
+          "url": "https://huggingface.co/Systran/faster-whisper-medium/resolve/08e178d48790749d25932bbc082711ddcfdfbc4f/tokenizer.json",
+          "sha256": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+          "bytes": 2203239
+        },
+        {
+          "file": "vocabulary.txt",
+          "url": "https://huggingface.co/Systran/faster-whisper-medium/resolve/08e178d48790749d25932bbc082711ddcfdfbc4f/vocabulary.txt",
+          "sha256": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
+          "bytes": 459861
+        }
+      ],
+      "url": "https://huggingface.co/Systran/faster-whisper-medium",
+      "sha256": "",
+      "bytes": 1530571735,
+      "license": "MIT",
+      "licenseSource": "https://huggingface.co/Systran/faster-whisper-medium (model card: license mit; upstream openai/whisper is MIT)",
+      "notes": "CTranslate2 conversion of OpenAI Whisper medium (finals, multilingual; about 1.5 GB), pinned to revision 08e178d48790749d25932bbc082711ddcfdfbc4f."
     }
   }
 }

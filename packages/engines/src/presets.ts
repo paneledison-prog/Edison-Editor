@@ -12,7 +12,7 @@ export interface Preset {
   audioKbps: number | null;
   /** Integrated loudness target (LUFS) and true-peak ceiling (dBTP); null = no audio normalization */
   loudness: { I: number; TP: number } | null;
-  ext: 'mp4' | 'gif';
+  ext: 'mp4' | 'gif' | 'mov';
 }
 
 const v = (
@@ -41,6 +41,18 @@ export const PRESETS: Record<string, Preset> = {
   'vertical-1080x1920': v('vertical-1080x1920', 1080, 1920, 30, 20),
   'square-1080': v('square-1080', 1080, 1080, 30, 20),
   'portrait-4x5': v('portrait-4x5', 1080, 1350, 30, 20),
+  'overlay-alpha': {
+    id: 'overlay-alpha',
+    w: null,
+    h: null,
+    fps: null,
+    kind: 'video',
+    crf: 0,
+    x264Preset: '',
+    audioKbps: null,
+    loudness: null,
+    ext: 'mov',
+  },
   'gif-small': {
     id: 'gif-small',
     w: null,

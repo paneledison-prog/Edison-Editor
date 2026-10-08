@@ -8,6 +8,7 @@ export default defineConfig({
       '@studio/core': src('./packages/core/src/index.ts'),
       '@studio/engines/images': src('./packages/engines/src/images.ts'),
       '@studio/engines': src('./packages/engines/src/index.ts'),
+      '@studio/motion': src('./motion/src/specs.ts'),
       '@studio/inspect': src('./packages/inspect/src/index.ts'),
     },
   },

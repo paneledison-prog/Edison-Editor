@@ -142,7 +142,18 @@ export const qc: Handler = async (inv) => {
     plannedBlack: ranges(str(inv, 'planned-black')),
     maxSizeMb: num(inv, 'max-size-mb'),
   };
-  const res = await I.qc(f, opts);
+  let captions:
+    Awaited<ReturnType<(typeof import('@studio/engines'))['captionReports']>> | undefined;
+  const snap = join(dirname(f), `render-${basename(f, extname(f))}.project.json`);
+  if (existsSync(snap)) {
+    const E = await import('@studio/engines');
+    captions = await E.captionReports(
+      JSON.parse(readFileSync(snap, 'utf8')),
+      inv.dir,
+      opts.width && opts.height ? { width: opts.width, height: opts.height } : undefined,
+    );
+  }
+  const res = await I.qc(f, { ...opts, captions });
   const warnings = [
     rep
       ? `expectations read from ${basename(reportPath)}`

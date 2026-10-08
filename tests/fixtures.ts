@@ -288,3 +288,101 @@ export function ensureScenes(): void {
     ]),
   );
 }
+
+// ---------------------------------------------------------------------------------------------
+// P4 fixtures: speech with known word starts
+// ---------------------------------------------------------------------------------------------
+export interface SpeechWord {
+  w: string;
+  startMs: number;
+  endMs: number;
+}
+export interface SpeechTruth {
+  durationMs: number;
+  words: SpeechWord[];
+}
+
+const SENTENCES = [
+  'Studio edits real media',
+  'The captions follow every word',
+  'Whisper names matter most',
+];
+
+/**
+ * Synthetic speech from ffmpeg's flite voice. Each word is synthesized alone, its leading silence is removed, and it
+ * is placed at an exact offset, so a word's start in the mix is known to the millisecond (no recognizer involved).
+ */
+export function ensureSpeech(): SpeechTruth {
+  mkdirSync(FIX, { recursive: true });
+  const truthPath = fx('speech.truth.json');
+  if (existsSync(truthPath) && existsSync(fx('speech.wav')) && existsSync(fx('speech.mp4')))
+    return JSON.parse(readFileSync(truthPath, 'utf8'));
+  const words: SpeechWord[] = [];
+  const inputs: string[] = [];
+  const filters: string[] = [];
+  let t = 800;
+  let n = 0;
+  for (const s of SENTENCES) {
+    for (const w of s.split(' ')) {
+      const wav = fx(`word-${n}.wav`);
+      ff([
+        '-f',
+        'lavfi',
+        '-i',
+        `flite=text='${w}':voice=slt`,
+        '-af',
+        'silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0',
+        '-ar',
+        '16000',
+        '-ac',
+        '1',
+        wav,
+      ]);
+      const dur = Math.round(
+        Number(
+          execFileSync(
+            'ffprobe',
+            ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', wav],
+            { encoding: 'utf8' },
+          ).trim(),
+        ) * 1000,
+      );
+      words.push({ w, startMs: t, endMs: t + dur });
+      inputs.push('-i', wav);
+      filters.push(`[${n}:a]adelay=${t}:all=1[w${n}]`);
+      t += dur + 120;
+      n++;
+    }
+    t += 880; // sentence pause: 1 s between sentences in total
+  }
+  const total = t + 400;
+  const mix = filters.map((_, i) => `[w${i}]`).join('');
+  ff([
+    ...inputs,
+    '-filter_complex',
+    `${filters.join(';')};${mix}amix=inputs=${n}:normalize=0:dropout_transition=0,apad=whole_dur=${total / 1000}[o]`,
+    '-map',
+    '[o]',
+    '-t',
+    String(total / 1000),
+    '-ar',
+    '16000',
+    fx('speech.wav'),
+  ]);
+  ff([
+    '-f',
+    'lavfi',
+    '-i',
+    `color=c=black:s=960x540:r=30:d=${total / 1000}`,
+    '-i',
+    fx('speech.wav'),
+    ...H264,
+    '-c:a',
+    'aac',
+    '-shortest',
+    fx('speech.mp4'),
+  ]);
+  const truth = { durationMs: total, words };
+  writeFileSync(truthPath, JSON.stringify(truth, null, 2));
+  return truth;
+}

@@ -1,0 +1,15 @@
+{
+  "name": "@studio/motion",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/specs.ts",
+  "types": "src/specs.ts",
+  "exports": {
+    ".": "./src/specs.ts",
+    "./ease": "./src/ease.ts"
+  },
+  "dependencies": {
+    "@studio/core": "workspace:*"
+  }
+}

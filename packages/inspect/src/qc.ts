@@ -29,6 +29,13 @@ export interface QcOptions {
   plannedBlack?: [number, number][];
   maxSizeMb?: number;
   lufsTolerance?: number;
+  /** Caption clips of the rendered project, already checked against their cue files (cps, lines, characters, safe zone). */
+  captions?: {
+    clip: string;
+    cues: number;
+    measured: boolean;
+    violations: { cue: number; rule: string; detail: string }[];
+  }[];
 }
 
 export interface QcResult {
@@ -248,7 +255,31 @@ export async function qc(file: string, o: QcOptions): Promise<QcResult> {
     });
   } else add({ id: 'av-sync', status: 'skipped', detail: 'needs both video and audio' });
 
-  add({ id: 'captions', status: 'skipped', detail: 'no caption support before Phase 4' });
+  if (o.captions === undefined)
+    add({
+      id: 'captions',
+      status: 'skipped',
+      detail: 'no project snapshot beside the render, so caption clips are unknown',
+    });
+  else if (!o.captions.length)
+    add({ id: 'captions', status: 'skipped', detail: 'no caption clips in this render' });
+  else {
+    const bad = o.captions.flatMap((c) => c.violations.map((v) => ({ clip: c.clip, ...v })));
+    add({
+      id: 'captions',
+      status: bad.length ? 'fail' : 'pass',
+      value: {
+        clips: o.captions.map((c) => ({
+          clip: c.clip,
+          cues: c.cues,
+          violations: c.violations.length,
+        })),
+        violations: bad.slice(0, 20),
+      },
+      expected: '2 lines, 42 chars per line, 20 cps max, 1-7 s, 2-frame gaps, inside the safe zone',
+      detail: `checked by script on the cue files; safe-zone boxes ${o.captions.every((c) => c.measured) ? 'measured from the real layout' : 'not measured'}; glyph coverage (tofu) and legibility over busy frames are not checked`,
+    });
+  }
 
   // joins
   if (hasA && o.joinsMs?.length) {

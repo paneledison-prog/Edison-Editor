@@ -165,13 +165,13 @@ describe('studio render', () => {
     );
   }, 60_000);
 
-  it('router: keyframes need Remotion, so it fails loudly instead of ignoring them', async () => {
+  it('router: keyframes are not implemented in any backend, so it fails loudly instead of ignoring them', async () => {
     const { dir, store } = await timeline();
     store.apply([{ type: 'kf.set', args: { clip: 'c_01', prop: 'scale', t: 500, v: 1.5 } }]);
     const r = await studio(['render', '--preview', '--project', dir]);
     expect(r.code).toBe(3);
     expect(r.json.error.message).toMatch(/c_01: keyframes/);
-    expect(r.json.error.message).toMatch(/Remotion backend, which is not implemented yet/);
+    expect(r.json.error.message).toMatch(/not implemented in any backend yet/);
     expect(renders(dir)).toEqual([]);
   });
 

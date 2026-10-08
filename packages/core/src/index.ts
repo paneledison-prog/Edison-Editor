@@ -5,3 +5,4 @@ export * from './validate.js';
 export * from './ops.js';
 export * from './history.js';
 export * from './store.js';
+export * from './captions.js';

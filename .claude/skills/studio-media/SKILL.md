@@ -1,6 +1,6 @@
 ---
 name: studio-media
-description: Use whenever the task is to edit, build, render, or verify media in the Studio workspace: video (trim, captions, silence cuts, reframing), images (background removal, upscaling, batch resize, grading, thumbnails), audio (denoise, podcast cleanup, loudness, ducking, transcription), motion graphics (Remotion templates), or product demo videos. Also use when changing the Studio UI or its design tokens.
+description: Use whenever the task is to edit, build, render, or verify media in the Studio workspace: video (trim, captions, silence cuts, reframing), images (background removal, upscaling, batch resize, grading, thumbnails), audio (denoise, podcast cleanup, loudness, ducking, transcription), motion graphics (motion templates), or product demo videos. Also use when changing the Studio UI or its design tokens.
 ---
 
 # Studio media skill

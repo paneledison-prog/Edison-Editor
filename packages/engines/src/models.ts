@@ -13,7 +13,7 @@ import { hashFile } from './hash.js';
 import { EngineError, run } from './run.js';
 
 export interface ManifestEntry {
-  kind: 'onnx' | 'binary-zip';
+  kind: 'onnx' | 'binary-zip' | 'whisper-dir';
   task: string;
   file: string;
   url: string;
@@ -22,6 +22,8 @@ export interface ManifestEntry {
   license: string;
   licenseSource: string;
   notes: string;
+  /** whisper-dir: every file of the model directory, each checked by size and sha256. */
+  files?: { file: string; url: string; sha256: string; bytes: number }[];
 }
 export interface Manifest {
   schema: 1;
@@ -82,7 +84,12 @@ export function modelStatus(): ModelStatus[] {
   return Object.entries(loadManifest().models).map(([name, e]) => {
     const path = modelFile(name);
     const present =
-      existsSync(path) && (e.kind === 'binary-zip' || statSync(path).size === e.bytes);
+      e.kind === 'whisper-dir'
+        ? (e.files ?? []).every((f) => {
+            const fp = join(path, f.file);
+            return existsSync(fp) && statSync(fp).size === f.bytes;
+          })
+        : existsSync(path) && (e.kind === 'binary-zip' || statSync(path).size === e.bytes);
     return {
       name,
       kind: e.kind,
@@ -122,6 +129,7 @@ export async function fetchModel(
 ): Promise<FetchResult> {
   const e = entry(name);
   const log = o.log ?? (() => {});
+  if (e.kind === 'whisper-dir') return fetchDir(name, e, o);
   const dest = e.kind === 'binary-zip' ? join(modelsDir(), `${name}.zip`) : modelFile(name);
   mkdirSync(dirname(dest), { recursive: true });
   const ok = e.kind === 'binary-zip' ? existsSync(modelFile(name)) : existsSync(dest);
@@ -201,4 +209,53 @@ export async function fetchModel(
     downloaded: true,
     license: e.license,
   };
+}
+
+/** Multi-file models: each file is downloaded, size- and sha256-checked, and installed atomically. */
+async function fetchDir(
+  name: string,
+  e: ManifestEntry,
+  o: { force?: boolean; log?: (m: string) => void },
+): Promise<FetchResult> {
+  const log = o.log ?? (() => {});
+  const dir = modelFile(name);
+  mkdirSync(dir, { recursive: true });
+  let downloaded = false;
+  for (const f of e.files ?? []) {
+    const dest = join(dir, f.file);
+    if (existsSync(dest) && !o.force) {
+      const h = await hashFile(dest, Infinity);
+      if (h.hex === f.sha256 && h.size === f.bytes) continue;
+      log(`${name}/${f.file} does not match the manifest; downloading again`);
+    }
+    log(
+      `downloading ${name}/${f.file} (${(f.bytes / 1048576).toFixed(1)} MB, license ${e.license})`,
+    );
+    const tmp = dest + '.partial';
+    rmSync(tmp, { force: true });
+    const r = await run(
+      'curl',
+      ['-fsSL', '--retry', '3', '--connect-timeout', '20', '-o', tmp, f.url],
+      { timeoutMs: 1_800_000 },
+    ).catch(() => null);
+    if (!r || r.code !== 0) {
+      rmSync(tmp, { force: true });
+      throw new EngineError(
+        'ENGINE_FAILED',
+        `download of ${name}/${f.file} failed`,
+        'check network access to ' + new URL(f.url).host,
+      );
+    }
+    const h = await hashFile(tmp, Infinity);
+    if (h.size !== f.bytes || h.hex !== f.sha256) {
+      rmSync(tmp, { force: true });
+      throw new EngineError(
+        'ENGINE_FAILED',
+        `${name}/${f.file}: downloaded file does not match the manifest (size ${h.size} vs ${f.bytes}); nothing was installed`,
+      );
+    }
+    renameSync(tmp, dest);
+    downloaded = true;
+  }
+  return { name, path: dir, bytes: e.bytes, sha256: '', downloaded, license: e.license };
 }

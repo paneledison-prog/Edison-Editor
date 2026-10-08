@@ -89,6 +89,68 @@ async function optionalEngines(): Promise<DoctorReport['optional']> {
     detail: py.ok ? `python3 with onnxruntime ${py.onnxruntime} (CPU provider)` : py.detail,
     ...(py.ok ? {} : { fix: 'python3 -m pip install -r tools/requirements.txt' }),
   });
+  // Transcription: the venv, faster-whisper, and ctranslate2 must import.
+  {
+    const { studioRoot } = await import('./models.js');
+    const venv = `${studioRoot()}/tools/.venv/bin/python`;
+    const r = await run(
+      venv,
+      [
+        '-I',
+        '-c',
+        'import faster_whisper,ctranslate2,onnxruntime;print(faster_whisper.__version__,ctranslate2.__version__,onnxruntime.__version__)',
+      ],
+      { timeoutMs: 60_000 },
+    ).catch(() => null);
+    out.push({
+      name: 'whisper',
+      ok: !!r && r.code === 0,
+      detail:
+        r && r.code === 0
+          ? `faster-whisper / ctranslate2 / onnxruntime ${r.stdout.trim().replace(/ /g, ' / ')} (CPU, int8)`
+          : 'tools/.venv is missing or cannot import faster-whisper',
+      ...(r && r.code === 0
+        ? {}
+        : {
+            fix: 'python3 -m venv --system-site-packages tools/.venv && tools/.venv/bin/pip install -r tools/requirements-whisper.txt -r tools/requirements.txt',
+          }),
+    });
+  }
+  // Motion graphics and burned-in captions: Chromium, the page bundle, and the brand fonts.
+  {
+    const m = await import('./motion.js');
+    try {
+      const chrome = m.chromiumPath();
+      const v = await run(chrome, ['--version'], { timeoutMs: 15_000 }).catch(() => null);
+      out.push({
+        name: 'chromium',
+        ok: !!v && v.code === 0,
+        detail: `${v?.stdout.trim() || chrome}; motion renders use ${m.defaultConcurrency()} page(s) at once (half the cores)`,
+      });
+    } catch (e) {
+      out.push({
+        name: 'chromium',
+        ok: false,
+        detail: (e as Error).message,
+        fix: (e as { fix?: string }).fix,
+      });
+    }
+    try {
+      const { palette, root } = m.loadPalette();
+      out.push({
+        name: 'motion-fonts',
+        ok: true,
+        detail: `${m.codeVersion(palette, root)} (template code + fonts version)`,
+      });
+    } catch (e) {
+      out.push({
+        name: 'motion-fonts',
+        ok: false,
+        detail: (e as Error).message.split('\n')[0]!,
+        fix: (e as { fix?: string }).fix,
+      });
+    }
+  }
   const { modelStatus } = await import('./models.js');
   for (const m of modelStatus()) {
     out.push({

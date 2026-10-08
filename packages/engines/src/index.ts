@@ -11,3 +11,6 @@ export * from './audiofx.js';
 export * from './library.js';
 export * from './cuts.js';
 export * from './models.js';
+export * from './motion.js';
+export * from './transcribe.js';
+export * from './captions.js';

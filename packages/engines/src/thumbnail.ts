@@ -109,8 +109,8 @@ async function worstContrast(
 }
 
 /**
- * One thumbnail with the reasons for its layout. The headline is rendered with sharp's text engine until Phase 4's motion
- * engine (Remotion stills) takes over text, so fonts and tokens will then be shared with video.
+ * One thumbnail with the reasons for its layout. The headline is still rendered with sharp's text engine. Phase 4 built the
+ * motion renderer (`motion still`) but did not move thumbnail text onto it, so thumbnail fonts and tokens are not yet shared with video.
  */
 export async function makeThumbnail(out: string, o: ThumbnailOptions): Promise<ThumbnailReport> {
   const { w: W, h: H } = o.size ?? { w: 1280, h: 720 };

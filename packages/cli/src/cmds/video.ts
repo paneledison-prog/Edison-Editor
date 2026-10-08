@@ -226,7 +226,7 @@ export const speed: Handler = async (inv) => {
     warnings.push('below 0.5x there is no frame interpolation, so motion will judder');
   if (factor > 1)
     warnings.push(
-      'a speed badge on sped-up sections needs the Remotion backend, which is not built yet',
+      'a speed badge on sped-up sections is not built (the motion renderer has no speed-badge template yet)',
     );
   const res = runSpecs(
     inv,
@@ -280,7 +280,7 @@ export const reframe: Handler = async (inv) => {
       'center crop assumes the subject is centered: render a still and look before you rely on it',
     );
   warnings.push(
-    'tracked cropping needs detection data and keyframes (Remotion backend); not available, so only fit, blur, and center-crop exist',
+    'tracked cropping needs detection data and keyframes (keyframes are not implemented in any backend); not available, so only fit, blur, and center-crop exist',
   );
   const res = runSpecs(
     inv,

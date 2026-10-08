@@ -23,7 +23,9 @@ export interface CmdMeta {
     | 'video'
     | 'audio'
     | 'image'
-    | 'models';
+    | 'models'
+    | 'motion'
+    | 'captions';
   fn: string;
 }
 
@@ -112,14 +114,14 @@ export const COMMANDS: CmdMeta[] = [
     module: 'render',
     writes: true,
     summary:
-      'Render the timeline with the FFmpeg backend (two-pass loudness, safe write, versioned name).',
+      'Render the timeline: FFmpeg, or hybrid FFmpeg + motion renderer when composition clips exist (two-pass loudness, safe write, versioned name).',
     usage:
       'studio render [--preset ID] [--range A:B] [--preview] [--still MS] [--out NAME] [--explain]',
     example: 'studio render --preset youtube-1080p',
     flags: [
       s(
         'preset',
-        'youtube-1080p (default), youtube-4k, vertical-1080x1920, square-1080, portrait-4x5, gif-small',
+        'youtube-1080p (default), youtube-4k, vertical-1080x1920, square-1080, portrait-4x5, gif-small, overlay-alpha (composition clips only, transparent)',
       ),
       s('range', 'timeline range in ms, A:B'),
       b('preview', 'fast low-resolution render'),
@@ -135,6 +137,7 @@ export const COMMANDS: CmdMeta[] = [
         values: ['fit', 'blur', 'center-crop'],
       },
       s('x264-preset', 'x264 preset override, e.g. veryfast'),
+      s('alpha-format', 'overlay-alpha only: prores4444 (default) or webm'),
       s('export', 'use preset and reframe from a recorded export id'),
       b('explain', 'print the plan and ffmpeg arguments, run nothing'),
     ],
@@ -645,6 +648,156 @@ export const COMMANDS: CmdMeta[] = [
       },
       { name: 'format', type: 'string', desc: 'jpeg (default) or png', values: ['jpeg', 'png'] },
       s('out', 'output base name'),
+    ],
+  }),
+  cmd({
+    name: 'transcribe',
+    module: 'captions',
+    fn: 'transcribe',
+    writes: true,
+    summary:
+      'Transcribe speech with word timestamps (faster-whisper, VAD first). Raw output is cached read-only; an editable derived transcript is written.',
+    usage:
+      'studio transcribe <asset|file> [--model whisper-small] [--language en] [--out transcripts/x.json]',
+    example: 'studio transcribe a_1k3f --model whisper-small',
+    flags: [
+      s('model', 'whisper-tiny.en | whisper-small (default) | whisper-medium'),
+      s('language', 'language code; detected when omitted'),
+      s('out', 'derived transcript path'),
+    ],
+  }),
+  cmd({
+    name: 'captions.build',
+    module: 'captions',
+    fn: 'build',
+    writes: true,
+    summary:
+      'Build caption cues from a transcript (2 lines, 42 chars, 17 cps, 1-7 s, gaps) and check them by script.',
+    usage:
+      'studio captions build --transcript T [--clip c_xx] [--style clean|social|karaoke] [--clean]',
+    example:
+      'studio captions build --transcript transcripts/a_1k3f.whisper-small.json --style karaoke',
+    flags: [
+      s('transcript', 'derived transcript', true),
+      s('clip', 'media clip that places the transcript on the timeline'),
+      s('style', 'clean | social | karaoke'),
+      s('position', 'bottom | center | top'),
+      n('size-pct', 'font size as % of frame height'),
+      n('words-per-cue', 'social style: words per cue (relaxes cps and min duration)'),
+      n('max-chars', 'characters per line'),
+      n('max-cps', 'characters per second'),
+      b('clean', 'remove fillers (um, uh): clean-verbatim'),
+      n('fps', 'frame rate for timing'),
+      n('width', 'canvas width for the safe-zone check'),
+      n('height', 'canvas height'),
+      s('out', 'cue file'),
+    ],
+  }),
+  cmd({
+    name: 'captions.check',
+    module: 'captions',
+    fn: 'check',
+    writes: false,
+    summary:
+      'Check a cue file against the caption limits and the safe zone (layout measured in Chromium). Exit 4 on violations.',
+    usage: 'studio captions check --cues FILE [--width W --height H]',
+    example: 'studio captions check --cues captions/x.clean.cues.json',
+    flags: [s('cues', 'cue file', true), n('width', 'canvas width'), n('height', 'canvas height')],
+  }),
+  cmd({
+    name: 'captions.export',
+    module: 'captions',
+    fn: 'exportCmd',
+    writes: true,
+    summary: 'Write a sidecar caption file: SRT, WebVTT, or styled ASS.',
+    usage: 'studio captions export --cues FILE --format srt|vtt|ass [--out FILE]',
+    example: 'studio captions export --cues captions/x.clean.cues.json --format srt',
+    flags: [
+      s('cues', 'cue file', true),
+      s('format', 'srt (default) | vtt | ass'),
+      s('out', 'output file'),
+      n('width', 'ASS canvas width'),
+      n('height', 'ASS canvas height'),
+    ],
+  }),
+  cmd({
+    name: 'captions.add',
+    module: 'captions',
+    fn: 'add',
+    writes: true,
+    summary:
+      'Put the cues on the timeline as a burned-in caption clip (an op: validated, logged, undoable).',
+    usage: 'studio captions add --cues FILE [--track t_xx]',
+    example: 'studio captions add --cues captions/x.clean.cues.json',
+    flags: [s('cues', 'cue file', true), s('track', 'captions track (created when omitted)')],
+  }),
+  cmd({
+    name: 'motion.templates',
+    module: 'motion',
+    fn: 'templates',
+    writes: false,
+    summary: 'List motion templates and the props each accepts (type, default, limits).',
+    usage: 'studio motion templates [--comp NAME]',
+    example: 'studio motion templates --comp lower-third',
+    flags: [s('comp', 'show one template')],
+  }),
+  cmd({
+    name: 'motion.scaffold',
+    module: 'motion',
+    fn: 'scaffold',
+    writes: true,
+    summary: 'Write a starting props file for a template (edit the JSON, not code).',
+    usage: 'studio motion scaffold --comp NAME [--out motion/props/NAME.json]',
+    example: 'studio motion scaffold --comp lower-third',
+    flags: [s('comp', 'template id', true), s('out', 'props file to write')],
+  }),
+  cmd({
+    name: 'motion.still',
+    module: 'motion',
+    fn: 'still',
+    writes: true,
+    summary:
+      'Render one frame of a template or project composition clip to PNG (check before rendering video).',
+    usage:
+      'studio motion still (--comp NAME [--props FILE|JSON] | --clip c_xx) [--frame N | --at MS] [--checker]',
+    example:
+      'studio motion still --comp lower-third --props motion/props/lower-third.json --at 1500 --checker',
+    flags: [
+      s('comp', 'template id'),
+      s('clip', 'project composition clip'),
+      s('props', 'props file or JSON'),
+      n('frame', 'frame number'),
+      n('at', 'time in ms'),
+      n('dur', 'duration ms (default: template)'),
+      n('width', 'canvas width'),
+      n('height', 'canvas height'),
+      n('fps', 'frames per second'),
+      s('out', 'output PNG'),
+      b('checker', 'paint a checkerboard behind, to inspect alpha'),
+    ],
+  }),
+  cmd({
+    name: 'motion.render',
+    module: 'motion',
+    fn: 'render',
+    writes: true,
+    summary:
+      'Render a template or composition clip to an alpha overlay: ProRes 4444, VP9 WebM, or PNG sequence. Cached by hash.',
+    usage:
+      'studio motion render (--comp NAME [--props FILE|JSON] | --clip c_xx) [--format prores4444|webm|png] [--out FILE]',
+    example:
+      'studio motion render --comp lower-third --props motion/props/lower-third.json --dur 4000',
+    flags: [
+      s('comp', 'template id'),
+      s('clip', 'project composition clip'),
+      s('props', 'props file or JSON'),
+      n('dur', 'duration ms'),
+      n('width', 'canvas width'),
+      n('height', 'canvas height'),
+      n('fps', 'frames per second'),
+      s('format', 'prores4444 (default) | webm | png'),
+      s('out', 'output file'),
+      n('concurrency', 'browser pages (default: half the cores)'),
     ],
   }),
   cmd({

@@ -10,6 +10,7 @@
     "@studio/core": "workspace:*",
     "@studio/engines": "workspace:*",
     "@studio/inspect": "workspace:*",
-    "sharp": "^0.35.5"
+    "sharp": "^0.35.5",
+    "@studio/motion": "workspace:*"
   }
 }

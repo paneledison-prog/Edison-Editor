@@ -52,6 +52,7 @@ export const render: Handler = async (inv) => {
     width: num(inv, 'width'),
     reframe,
     x264Preset: str(inv, 'x264-preset'),
+    alphaFormat: str(inv, 'alpha-format') as 'prores4444' | 'webm' | undefined,
     explain,
     log: inv.log,
   });

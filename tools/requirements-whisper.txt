@@ -1,0 +1,8 @@
+# Python environment for transcription (tools/whisper.py). Pinned to what was tested.
+# Install: python3 -m venv --system-site-packages tools/.venv && tools/.venv/bin/pip install -r tools/requirements-whisper.txt
+# onnxruntime and numpy are reused from tools/requirements.txt (system site-packages).
+faster-whisper==1.2.1
+ctranslate2==4.8.2
+av==16.1.0
+tokenizers==0.23.2
+huggingface_hub==1.33.0

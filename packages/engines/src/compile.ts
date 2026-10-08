@@ -5,7 +5,7 @@ import { EngineError } from './run.js';
 import type { Preset } from './presets.js';
 
 export interface Plan {
-  backend: 'ffmpeg';
+  backend: 'ffmpeg' | 'hybrid';
   reason: string;
   /** ffmpeg input arguments, in order (each input is `-ss .. -t .. -i file`) */
   inputs: string[];
@@ -32,24 +32,32 @@ const sec = (ms: number) => (ms / 1000).toFixed(3);
 const hex = (c: string) => '0x' + c.replace('#', '').slice(0, 6);
 
 /**
- * Router. The FFmpeg backend handles cuts, concat, fit-scale, overlays, and the audio chain.
- * Keyframes, transforms, fx, and compositions need the Remotion backend, which does not exist yet:
- * fail with the reason instead of rendering something that ignores them.
+ * Router. FFmpeg handles cuts, concat, fit-scale, image overlays, and the audio chain. Composition clips
+ * (titles, lower thirds, callouts, captions) are rendered by the motion renderer as alpha frames and composited
+ * by FFmpeg in the same pass, so the source video is still encoded once ("hybrid").
+ * Keyframes and transforms on media clips are not implemented: fail with the reason instead of rendering
+ * something that ignores them.
  */
-export function routeBackend(p: Project): { backend: 'ffmpeg'; reason: string } {
+export function routeBackend(p: Project): { backend: 'ffmpeg' | 'hybrid'; reason: string } {
   const unsupported: string[] = [];
+  let comps = 0;
   for (const c of p.clips) {
-    if (c.comp) unsupported.push(`${c.id}: composition "${c.comp}"`);
+    if (c.comp) comps++;
     if (c.keyframes && Object.keys(c.keyframes).length) unsupported.push(`${c.id}: keyframes`);
     if (c.transform && Object.keys(c.transform).length) unsupported.push(`${c.id}: transform`);
   }
   if (unsupported.length) {
     throw new EngineError(
       'ENGINE_MISSING',
-      `these need the Remotion backend, which is not implemented yet: ${unsupported.slice(0, 6).join('; ')}${unsupported.length > 6 ? ` (+${unsupported.length - 6} more)` : ''}`,
-      'remove those clips/properties (undo them, or use `studio project undo`), or wait for Phase 4',
+      `keyframes and transforms are not implemented in any backend yet: ${unsupported.slice(0, 6).join('; ')}${unsupported.length > 6 ? ` (+${unsupported.length - 6} more)` : ''}`,
+      'remove those properties (`studio project undo`), or animate with a motion template instead',
     );
   }
+  if (comps)
+    return {
+      backend: 'hybrid',
+      reason: `${comps} composition clip${comps > 1 ? 's' : ''} rendered as alpha frames by the Chromium motion renderer, composited over the FFmpeg timeline in one encode`,
+    };
   return {
     backend: 'ffmpeg',
     reason:
@@ -68,7 +76,9 @@ export function windowClips(clips: Clip[], a: number, b: number): Clip[] {
       ...c,
       start: s - a,
       dur: e - s,
-      srcIn: c.asset ? (c.srcIn ?? 0) + Math.round((s - c.start) * speedOf(c)) : c.srcIn,
+      srcIn: c.asset
+        ? (c.srcIn ?? 0) + Math.round((s - c.start) * speedOf(c))
+        : (c.srcIn ?? 0) + (s - c.start),
     });
   }
   return out;
@@ -105,6 +115,8 @@ export interface CompileInput {
   width?: number;
   /** How a clip whose aspect differs from the canvas is fitted. Default: fit (letterbox on the project background). */
   reframe?: 'fit' | 'blur' | 'center-crop';
+  /** Pre-rendered alpha frame sequences for composition clips, keyed by clip id (frames are canvas-sized). */
+  overlays?: Record<string, { dir: string; fps: number; frames: number }>;
 }
 
 export function compile(inp: CompileInput): Plan {
@@ -160,6 +172,30 @@ export function compile(inp: CompileInput): Plan {
 
   for (const c of ordered) {
     const t = trackOf(c);
+    if (c.comp) {
+      if (t.hidden) continue;
+      const ov = inp.overlays?.[c.id];
+      if (!ov)
+        throw new EngineError(
+          'INVALID_INPUT',
+          `composition clip ${c.id} (${c.comp}) has no rendered frames; the render step must prepare overlays first`,
+        );
+      const k = nIn++;
+      const off = Math.round(((c.srcIn ?? 0) * ov.fps) / 1000);
+      inputs.push(
+        '-framerate',
+        String(ov.fps),
+        '-start_number',
+        String(off),
+        '-t',
+        sec(c.dur),
+        '-i',
+        join(ov.dir, '%06d.png'),
+      );
+      vLines.push(`[${k}:v]fps=${fps},format=rgba,setpts=PTS-STARTPTS+${sec(c.start)}/TB[v${nV}]`);
+      nV++;
+      continue;
+    }
     const a = c.asset ? p.assets[c.asset]! : undefined;
     if (!a) continue;
     const src = join(projectDir, a.workingCopy?.path ?? a.path);
@@ -255,6 +291,7 @@ export function compile(inp: CompileInput): Plan {
   // Overlay chain: base0 + each placed clip in layer order.
   const placed = ordered.filter((c) => {
     const t = trackOf(c);
+    if (c.comp) return !t.hidden;
     const a = c.asset ? p.assets[c.asset] : undefined;
     // exactly the clips that produced a video line above
     return !!a && (t.type === 'video' || t.type === 'graphics') && a.kind !== 'audio' && !t.hidden;
@@ -262,7 +299,7 @@ export function compile(inp: CompileInput): Plan {
   placed.forEach((c, i) => {
     const t = trackOf(c);
     const isGfx = t.type === 'graphics';
-    const pos = isGfx ? ':x=(W-w)/2:y=(H-h)/2' : '';
+    const pos = c.comp ? ':x=0:y=0' : isGfx ? ':x=(W-w)/2:y=(H-h)/2' : '';
     lines.push(
       `[base${i}][v${i}]overlay=eof_action=pass:repeatlast=0${pos}:enable='between(t,${sec(c.start)},${sec(c.start + c.dur)})'[base${i + 1}]`,
     );
