@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { displaySize, speedOf, type Clip, type Fx, type Project } from '@studio/core';
 import { MAX_AUDIO_SPEED, clipAudioChain, dbToLin } from './audiofx.js';
 import { EngineError } from './run.js';
+import { hasMotion, zoomFilter } from './zoom.js';
 import type { Preset } from './presets.js';
 
 export interface Plan {
@@ -35,22 +36,24 @@ const hex = (c: string) => '0x' + c.replace('#', '').slice(0, 6);
  * Router. FFmpeg handles cuts, concat, fit-scale, image overlays, and the audio chain. Composition clips
  * (titles, lower thirds, callouts, captions) are rendered by the motion renderer as alpha frames and composited
  * by FFmpeg in the same pass, so the source video is still encoded once ("hybrid").
- * Keyframes and transforms on media clips are not implemented: fail with the reason instead of rendering
- * something that ignores them.
+ * Keyframes and transforms on media clips (scale, x, y: zoom and pan) are one FFmpeg scale+crop per clip, see zoom.ts.
+ * Anything else (rot, opacity, motion on a composition clip) fails with the reason instead of being ignored.
  */
 export function routeBackend(p: Project): { backend: 'ffmpeg' | 'hybrid'; reason: string } {
   const unsupported: string[] = [];
   let comps = 0;
   for (const c of p.clips) {
     if (c.comp) comps++;
-    if (c.keyframes && Object.keys(c.keyframes).length) unsupported.push(`${c.id}: keyframes`);
-    if (c.transform && Object.keys(c.transform).length) unsupported.push(`${c.id}: transform`);
+    if (c.comp && hasMotion(c))
+      unsupported.push(
+        `${c.id}: keyframes/transform on a composition clip (animate it with its props)`,
+      );
   }
   if (unsupported.length) {
     throw new EngineError(
       'ENGINE_MISSING',
-      `keyframes and transforms are not implemented in any backend yet: ${unsupported.slice(0, 6).join('; ')}${unsupported.length > 6 ? ` (+${unsupported.length - 6} more)` : ''}`,
-      'remove those properties (`studio project undo`), or animate with a motion template instead',
+      `unsupported motion: ${unsupported.slice(0, 6).join('; ')}${unsupported.length > 6 ? ` (+${unsupported.length - 6} more)` : ''}`,
+      'remove those properties (`studio project undo`); composition clips animate through their props',
     );
   }
   if (comps)
@@ -79,6 +82,17 @@ export function windowClips(clips: Clip[], a: number, b: number): Clip[] {
       srcIn: c.asset
         ? (c.srcIn ?? 0) + Math.round((s - c.start) * speedOf(c))
         : (c.srcIn ?? 0) + (s - c.start),
+      // Keyframe times are clip-local: a window that starts inside the clip shifts them.
+      ...(c.keyframes && s > c.start
+        ? {
+            keyframes: Object.fromEntries(
+              Object.entries(c.keyframes).map(([k, v]) => [
+                k,
+                v.map((x) => ({ ...x, t: x.t - (s - c.start) })),
+              ]),
+            ),
+          }
+        : {}),
     });
   }
   return out;
@@ -229,24 +243,25 @@ export function compile(inp: CompileInput): Plan {
       const at = sec(c.start);
       const head = a.kind === 'image' ? `fps=${fps}` : `setpts=(PTS-STARTPTS)/${speed},fps=${fps}`;
       const cm = 'flags=lanczos:out_color_matrix=bt709:out_range=tv';
+      const zf = zoomFilter(c, width, height);
       if (t.type === 'graphics' && a.kind === 'image') {
         vLines.push(
-          `[${k}:v]${head},scale='min(iw,${width})':'min(ih,${height})':force_original_aspect_ratio=decrease,format=yuva420p,setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
+          `[${k}:v]${head},scale='min(iw,${width})':'min(ih,${height})':force_original_aspect_ratio=decrease,format=yuva420p,${zf}setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
         );
       } else if (reframe === 'blur') {
         vLines.push(
           `[${k}:v]${head},split=2[bs${nV}][fs${nV}]`,
           `[bs${nV}]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},boxblur=24:2[bb${nV}]`,
           `[fs${nV}]scale=${width}:${height}:force_original_aspect_ratio=decrease:${cm}[ff${nV}]`,
-          `[bb${nV}][ff${nV}]overlay=(W-w)/2:(H-h)/2,setsar=1,format=yuv420p,setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
+          `[bb${nV}][ff${nV}]overlay=(W-w)/2:(H-h)/2,setsar=1,format=yuv420p,${zf}setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
         );
       } else if (reframe === 'center-crop') {
         vLines.push(
-          `[${k}:v]${head},scale=${width}:${height}:force_original_aspect_ratio=increase:${cm},crop=${width}:${height},setsar=1,format=yuv420p,setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
+          `[${k}:v]${head},scale=${width}:${height}:force_original_aspect_ratio=increase:${cm},crop=${width}:${height},setsar=1,format=yuv420p,${zf}setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
         );
       } else {
         vLines.push(
-          `[${k}:v]${head},scale=${width}:${height}:force_original_aspect_ratio=decrease:${cm},pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=${bg},setsar=1,format=yuv420p,setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
+          `[${k}:v]${head},scale=${width}:${height}:force_original_aspect_ratio=decrease:${cm},pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=${bg},setsar=1,format=yuv420p,${zf}setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
         );
       }
       if (d.w && d.h && t.type === 'video') {

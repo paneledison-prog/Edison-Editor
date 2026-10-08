@@ -165,13 +165,14 @@ describe('studio render', () => {
     );
   }, 60_000);
 
-  it('router: keyframes are not implemented in any backend, so it fails loudly instead of ignoring them', async () => {
+  it('router: keyframes on rot (not implemented) fail loudly instead of being ignored', async () => {
     const { dir, store } = await timeline();
-    store.apply([{ type: 'kf.set', args: { clip: 'c_01', prop: 'scale', t: 500, v: 1.5 } }]);
+    store.apply([{ type: 'kf.set', args: { clip: 'c_01', prop: 'rot', t: 500, v: 10 } }]);
     const r = await studio(['render', '--preview', '--project', dir]);
     expect(r.code).toBe(3);
-    expect(r.json.error.message).toMatch(/c_01: keyframes/);
-    expect(r.json.error.message).toMatch(/not implemented in any backend yet/);
+    expect(r.json.error.message).toMatch(
+      /c_01: keyframes on rot\/opacity is not implemented for media clips/,
+    );
     expect(renders(dir)).toEqual([]);
   });
 
