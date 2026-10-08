@@ -511,7 +511,14 @@ describe('engines that are missing fail with a fix, never with placeholder outpu
     const dir = await proj();
     const r = await studio(['models', 'list', '--project', dir]);
     const rows = r.json.data.models;
-    expect(rows.map((x: any) => x.name)).toEqual(['u2net', 'u2netp', 'realesrgan-ncnn-vulkan']);
+    expect(rows.map((x: any) => x.name)).toEqual([
+      'u2net',
+      'u2netp',
+      'realesrgan-ncnn-vulkan',
+      'whisper-tiny.en',
+      'whisper-small',
+      'whisper-medium',
+    ]);
     expect(rows.every((x: any) => x.license && x.licenseSource.startsWith('https://'))).toBe(true);
     expect((await studio(['models', 'fetch', 'nope', '--project', dir])).code).toBe(2);
   });
@@ -794,7 +801,7 @@ describe('tools registry after P3', () => {
       'models fetch',
     ])
       expect(names).toContain(n);
-    for (const absent of ['captions transcribe', 'motion render', 'demo build', 'video broll'])
+    for (const absent of ['captions transcribe', 'demo build', 'video broll'])
       expect(names).not.toContain(absent);
   });
 });

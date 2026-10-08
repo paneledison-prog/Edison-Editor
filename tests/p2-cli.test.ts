@@ -915,7 +915,7 @@ describe('tools registry after P2', () => {
       'audio sfx list',
     ])
       expect(names).toContain(n);
-    for (const absent of ['video broll', 'captions transcribe', 'motion render', 'demo build'])
+    for (const absent of ['video broll', 'captions transcribe', 'demo build'])
       expect(names).not.toContain(absent);
   });
 });
