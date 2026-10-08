@@ -12,6 +12,8 @@ import {
   KeyframeId,
   MarkerId,
   AssetId,
+  Tracker,
+  TrackerId,
   TrackId,
   TrackType,
   PropName,
@@ -102,6 +104,44 @@ export const OPS = {
       if (!prev) throw new OpError('NOT_FOUND', `asset ${a.id} not found`);
       delete p.assets[a.id];
       return [{ type: 'asset.add', args: { id: a.id, asset: snap(prev) } }];
+    },
+  }),
+
+  'tracker.add': def({
+    args: z.object({ id: TrackerId.optional(), tracker: Tracker }),
+    resolve: (a, p, ctx) => ({ ...a, id: a.id ?? makeId('tk', new Set(Object.keys(p.trackers ?? {})), ctx.rng) }),
+    apply(p, a) {
+      if (p.trackers?.[a.id!]) throw new OpError('INVALID_ARGS', `tracker ${a.id} already exists`);
+      (p.trackers ??= {})[a.id!] = a.tracker;
+      return [{ type: 'tracker.remove', args: { id: a.id } }];
+    },
+  }),
+  'tracker.set': def({
+    args: z.object({ id: TrackerId, patch: z.record(z.unknown()) }),
+    apply(p, a) {
+      const prev = p.trackers?.[a.id];
+      if (!prev) throw new OpError('NOT_FOUND', `tracker ${a.id} not found`);
+      const next: Record<string, unknown> = { ...prev };
+      const was: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(a.patch)) {
+        was[k] = (prev as Record<string, unknown>)[k] ?? null;
+        if (v === null) delete next[k];
+        else next[k] = v;
+      }
+      const parsed = Tracker.safeParse(next);
+      if (!parsed.success) throw new OpError('INVALID_ARGS', `tracker ${a.id}: ${parsed.error.issues[0]!.path.join('.')} ${parsed.error.issues[0]!.message}`);
+      p.trackers![a.id] = parsed.data;
+      return [{ type: 'tracker.set', args: { id: a.id, patch: was } }];
+    },
+  }),
+  'tracker.remove': def({
+    args: z.object({ id: TrackerId }),
+    apply(p, a) {
+      const prev = p.trackers?.[a.id];
+      if (!prev) throw new OpError('NOT_FOUND', `tracker ${a.id} not found`);
+      delete p.trackers![a.id];
+      if (!Object.keys(p.trackers!).length) delete p.trackers;
+      return [{ type: 'tracker.add', args: { id: a.id, tracker: snap(prev) } }];
     },
   }),
 

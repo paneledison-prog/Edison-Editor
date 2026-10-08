@@ -127,6 +127,9 @@ importers:
       '@studio/motion':
         specifier: workspace:*
         version: link:../../motion
+      '@studio/vision':
+        specifier: workspace:*
+        version: link:../vision
       playwright-core:
         specifier: ^1.64.0
         version: 1.64.0

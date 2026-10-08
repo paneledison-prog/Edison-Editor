@@ -16,7 +16,8 @@ import { renderOverlayAlpha } from './overlay.js';
 import { licenseWarnings } from './library.js';
 import { PREVIEW, getPreset, type Preset } from './presets.js';
 import { probeFile } from './probe.js';
-import { EngineError, lastLine, run } from './run.js';
+import { EngineError, lastLine, run, withFilterScripts } from './run.js';
+import { ensureTracks } from './track.js';
 
 export interface RenderOptions {
   project: Project;
@@ -103,8 +104,9 @@ function hookSignals() {
 
 function runFfmpeg(args: string[], partial?: string): Promise<{ code: number; stderr: string }> {
   hookSignals();
+  const scripted = withFilterScripts(args);
   return new Promise((resolve, reject) => {
-    const child = spawn('ffmpeg', ['-hide_banner', '-nostdin', '-y', ...args], {
+    const child = spawn('ffmpeg', ['-hide_banner', '-nostdin', '-y', ...scripted.args], {
       stdio: ['ignore', 'ignore', 'pipe'],
     });
     const entry = { child, partial: partial ?? '' };
@@ -115,6 +117,7 @@ function runFfmpeg(args: string[], partial?: string): Promise<{ code: number; st
       .on('data', (d: string) => (stderr = (stderr + d).slice(-64 * 1024)));
     child.on('error', (e: NodeJS.ErrnoException) => {
       active.delete(entry);
+      scripted.cleanup();
       reject(
         e.code === 'ENOENT'
           ? new EngineError(
@@ -127,6 +130,7 @@ function runFfmpeg(args: string[], partial?: string): Promise<{ code: number; st
     });
     child.on('close', (code) => {
       active.delete(entry);
+      scripted.cleanup();
       resolve({ code: code ?? 1, stderr });
     });
   });
@@ -250,6 +254,15 @@ export async function render(o: RenderOptions): Promise<RenderReport> {
       for (const w of r.warnings) motionNotes.push(`${c.id}: ${w}`);
     }
   }
+  // Stabilize and pin need their tracker analysed: a render does that (cached), an explain run only reads what exists.
+  const inWindow = new Set(o.project.clips.filter((c) => !window || (c.start < window[1] && c.start + c.dur > window[0])).map((c) => c.id));
+  const trackNotes: string[] = [];
+  const tracks = await ensureTracks(o.project, o.projectDir, {
+    build: !o.explain,
+    log,
+    clipIds: inWindow,
+    placeholder: (id) => trackNotes.push(`tracker ${id} has not been analysed yet; this graph uses a placeholder for it (studio track build ${id})`),
+  });
   const plan = compile({
     project: o.project,
     projectDir: o.projectDir,
@@ -259,6 +272,7 @@ export async function render(o: RenderOptions): Promise<RenderReport> {
     width: o.width,
     reframe: o.reframe,
     overlays,
+    tracks,
   });
   const ext = stillMode ? 'png' : preset.ext;
   const baseName =
@@ -286,7 +300,7 @@ export async function render(o: RenderOptions): Promise<RenderReport> {
     streamCopy: false,
     loudness: null,
     joinsMs: plan.joinsMs,
-    notes: [...plan.notes, ...motionNotes],
+    notes: [...plan.notes, ...motionNotes, ...trackNotes],
   };
   report.notes.push(
     ...licenseWarnings(

@@ -62,6 +62,29 @@ export const Asset = z
   })
   .strict();
 
+/** A tracked region of an asset: where a flat patch of one frame goes in every other frame. The data is derived and cached. */
+export const TrackerId = z.string().regex(/^tk_[0-9a-hjkmnp-tv-z]{4,10}$/, 'a tracker id such as tk_k3f9');
+const Pt01 = z.tuple([z.number().min(-1).max(2), z.number().min(-1).max(2)]);
+export const Tracker = z
+  .object({
+    asset: AssetId,
+    /** the source range that was analysed, in ms of the asset */
+    from: z.number().int().min(0),
+    to: z.number().int().min(1),
+    /** the reference frame, in ms of the asset: the picture the region is drawn on */
+    at: z.number().int().min(0),
+    /** the region at the reference frame, four corners clockwise from the top left, as fractions of the displayed frame */
+    quad: z.tuple([Pt01, Pt01, Pt01, Pt01]),
+    model: z.enum(['translation', 'similarity', 'affine', 'homography']),
+    /** align the reference picture to every frame after the point fit (removes drift; needs a region that stays visible) */
+    refine: z.boolean().optional(),
+    /** analysis frame rate and width (defaults: the source rate up to 30, 480 px) */
+    fps: z.number().min(1).max(60).optional(),
+    width: z.number().int().min(160).max(1280).optional(),
+    label: z.string().max(80).optional(),
+  })
+  .strict();
+
 export const TrackType = z.enum(['video', 'audio', 'graphics', 'captions']);
 export const Track = z
   .object({
@@ -141,6 +164,34 @@ export const Fx = z.discriminatedUnion('type', [
       node: NodeId.optional(),
       /** how much of the effect shows, 0..1 (default 1) */
       mix: num(0, 1).optional(),
+    })
+    .strict(),
+  // Steadies the picture: the camera path of a tracker, smoothed, undone frame by frame, with a crop that hides the borders.
+  z
+    .object({
+      type: z.literal('stabilize'),
+      tracker: TrackerId,
+      /** seconds of camera motion that are kept (the path is smoothed over about this long); default 0.6 */
+      smooth: num(0.05, 30).optional(),
+      /** hold the frame completely still on the reference instead of smoothing */
+      lock: z.boolean().optional(),
+      /** the most the picture may be enlarged to hide the borders (1 = none); default 1.25 */
+      maxZoom: num(1, 2).optional(),
+      bypass: z.boolean().optional(),
+      node: NodeId.optional(),
+    })
+    .strict(),
+  // Fixes an image or video onto a tracked plane: it follows the plane's corners through every frame.
+  z
+    .object({
+      type: z.literal('pin'),
+      tracker: TrackerId,
+      asset: AssetId,
+      /** where on the plane, at the tracker's reference frame (default: the tracked region itself) */
+      quad: z.tuple([Pt01, Pt01, Pt01, Pt01]).optional(),
+      opacity: num(0, 1).optional(),
+      bypass: z.boolean().optional(),
+      node: NodeId.optional(),
     })
     .strict(),
   z.object({ type: z.literal('gain'), db: num(-60, 40), node: NodeId.optional() }).strict(),
@@ -259,10 +310,12 @@ export const ProjectSchema = z
     clips: z.array(Clip),
     markers: z.array(Marker),
     exports: z.array(Export),
+    trackers: z.record(TrackerId, Tracker).optional(),
   })
   .strict();
 
 export type Project = z.infer<typeof ProjectSchema>;
+export type Tracker = z.infer<typeof Tracker>;
 export type Asset = z.infer<typeof Asset>;
 export type Track = z.infer<typeof Track>;
 export type Clip = z.infer<typeof Clip>;

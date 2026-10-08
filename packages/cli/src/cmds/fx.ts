@@ -8,13 +8,13 @@ import { CliError } from '../args.js';
 import type { Handler, Invocation } from '../main.js';
 import { num, parseJson, runSpecs, store, str } from './shared.js';
 
-type Video = Extract<Fx, { type: 'plugin' | 'lut' | 'blur-region' }>;
-const isVideo = (f: Fx): f is Video => f.type === 'plugin' || f.type === 'lut' || f.type === 'blur-region';
-const nodeOf = (f: Fx): string | undefined => (f as { node?: string }).node;
+type Video = Extract<Fx, { type: 'plugin' | 'lut' | 'blur-region' | 'stabilize' | 'pin' }>;
+export const isVideo = (f: Fx): f is Video => f.type === 'plugin' || f.type === 'lut' || f.type === 'blur-region' || f.type === 'stabilize' || f.type === 'pin';
+export const nodeOf = (f: Fx): string | undefined => (f as { node?: string }).node;
 
 const engines = () => import('@studio/engines');
 
-function clipOf(inv: Invocation): { project: Project; clip: Clip } {
+export function clipOf(inv: Invocation): { project: Project; clip: Clip } {
   const id = str(inv, 'clip');
   if (!id) throw new CliError('INVALID_ARGS', '--clip is required', 2, 'studio project show lists clips');
   const { project } = store(inv).load();
@@ -25,10 +25,10 @@ function clipOf(inv: Invocation): { project: Project; clip: Clip } {
 }
 
 /** Every node id in the project, so a new one never repeats. */
-const takenNodes = (p: Project) => new Set(p.clips.flatMap((c) => (c.fx ?? []).map(nodeOf).filter(Boolean) as string[]));
+export const takenNodes = (p: Project) => new Set(p.clips.flatMap((c) => (c.fx ?? []).map(nodeOf).filter(Boolean) as string[]));
 
 /** The clip's effects with a node id on every video effect (legacy entries without one get theirs here). */
-function named(p: Project, c: Clip, extra: Fx[] = []): Fx[] {
+export function named(p: Project, c: Clip, extra: Fx[] = []): Fx[] {
   const taken = takenNodes(p);
   const rng = cryptoRng();
   const give = (f: Fx): Fx => {
@@ -56,12 +56,15 @@ function after(list: Fx[], index: number): Fx {
   return list[index]!;
 }
 
-function setFx(inv: Invocation, c: Clip, fx: Fx[], label: string, drop: string[] = []) {
+/** The ops that put `fx` on the clip; keyframes of dropped effects go in the same step, so one undo brings both back. */
+export function fxSpecs(c: Clip, fx: Fx[], drop: string[] = []) {
   const kfs = c.keyframes ?? {};
   const dead = Object.entries(kfs).flatMap(([prop, ks]) => (drop.some((n) => prop.startsWith(`fx.${n}.`)) ? ks.map((k) => k.id) : []));
-  // keyframes of a removed effect go in the same step, so one undo brings both back
   // an empty stack is no field at all, so adding and then removing an effect leaves the clip exactly as it was
-  return runSpecs(inv, [...dead.map((id) => ({ type: 'kf.delete', args: { clip: c.id, id } })), { type: 'clip.set', args: { id: c.id, patch: { fx: fx.length ? fx : null } } }], label);
+  return [...dead.map((id) => ({ type: 'kf.delete', args: { clip: c.id, id } })), { type: 'clip.set', args: { id: c.id, patch: { fx: fx.length ? fx : null } } }];
+}
+function setFx(inv: Invocation, c: Clip, fx: Fx[], label: string, drop: string[] = []) {
+  return runSpecs(inv, fxSpecs(c, fx, drop), label);
 }
 
 function paramsOf(inv: Invocation, flag = 'params'): Record<string, number | string | boolean> | undefined {
@@ -78,8 +81,8 @@ async function check(f: Fx) {
   E.effectLines({ id: f.id, ...(f.params ? { params: f.params } : {}) }, 'a', 'b', 'v');
 }
 
-const label = (f: Fx): string =>
-  f.type === 'gain' ? `gain ${f.db} dB` : f.type === 'plugin' ? f.id : f.type === 'lut' ? f.file : f.type === 'blur-region' ? `blur ${Math.round(f.x * 100)},${Math.round(f.y * 100)} ${Math.round(f.w * 100)}x${Math.round(f.h * 100)}%` : f.type;
+export const label = (f: Fx): string =>
+  f.type === 'stabilize' ? `stabilize ${f.tracker}${f.lock ? ' (locked)' : ''}` : f.type === 'pin' ? `pin ${f.asset} on ${f.tracker}` : f.type === 'gain' ? `gain ${f.db} dB` : f.type === 'plugin' ? f.id : f.type === 'lut' ? f.file : f.type === 'blur-region' ? `blur ${Math.round(f.x * 100)},${Math.round(f.y * 100)} ${Math.round(f.w * 100)}x${Math.round(f.h * 100)}%` : f.type;
 
 // ---------------------------------------------------------------------------------------------------------------
 
@@ -101,6 +104,10 @@ export const list: Handler = async (inv) => {
     }
     if (f.type === 'lut') return { ...base, enabled: !f.bypass, ...(f.mix !== undefined ? { mix: f.mix } : {}), ...(Object.keys(animated(node)).length ? { animated: animated(node) } : {}) };
     if (f.type === 'blur-region') return { ...base, enabled: true, region: { x: f.x, y: f.y, w: f.w, h: f.h }, strength: f.strength ?? 24 };
+    if (f.type === 'stabilize' || f.type === 'pin') {
+      const { type: _t, node: _n, bypass: _b, ...rest } = f as Record<string, unknown>;
+      return { ...base, enabled: !f.bypass, settings: rest, ...(project.trackers?.[f.tracker] ? {} : { problem: `tracker ${f.tracker} does not exist` }) };
+    }
     const { type: _t, node: _n, ...rest } = f as Record<string, unknown>;
     return { ...base, enabled: true, settings: rest, ...(Object.keys(animated(node)).length ? { animated: animated(node) } : {}) };
   });
@@ -184,8 +191,15 @@ export const set: Handler = async (inv) => {
   const f = { ...after(list, index) } as Record<string, unknown>;
   const patch = paramsOf(inv);
   if (patch !== undefined) {
-    if (cur.type !== 'plugin') throw new CliError('INVALID_ARGS', `a ${cur.type} effect has no parameters; use its own flags`, 2);
-    f['params'] = inv.flags['replace'] ? patch : { ...((f['params'] as object) ?? {}), ...patch };
+    if (cur.type === 'stabilize' || cur.type === 'pin') {
+      // their settings are fields of the effect itself (smooth, lock, maxZoom, opacity, quad ...); null clears one
+      for (const [k, v] of Object.entries(patch)) {
+        if (k === 'type' || k === 'node') throw new CliError('INVALID_ARGS', `${k} cannot be changed`, 2);
+        if (v === null) delete f[k];
+        else f[k] = v;
+      }
+    } else if (cur.type !== 'plugin') throw new CliError('INVALID_ARGS', `a ${cur.type} effect has no parameters; use its own flags`, 2);
+    else f['params'] = inv.flags['replace'] ? patch : { ...((f['params'] as object) ?? {}), ...patch };
   }
   if (cur.type === 'blur-region') {
     const reg = str(inv, 'region');
@@ -241,7 +255,7 @@ export const move: Handler = async (inv) => {
 export const bypass: Handler = async (inv) => {
   const { project, clip } = clipOf(inv);
   const { index, fx: cur } = pick(clip, str(inv, 'node'));
-  if (cur.type !== 'plugin' && cur.type !== 'lut') throw new CliError('INVALID_ARGS', `a ${cur.type} effect cannot be switched off; remove it`, 2);
+  if (cur.type !== 'plugin' && cur.type !== 'lut' && cur.type !== 'stabilize' && cur.type !== 'pin') throw new CliError('INVALID_ARGS', `a ${cur.type} effect cannot be switched off; remove it`, 2);
   const list = named(project, clip);
   const f = { ...after(list, index) } as Record<string, unknown>;
   if (inv.flags['off']) delete f['bypass'];

@@ -3,7 +3,7 @@ import {
   apply, buildPyr, denseFlow, detectCorners, fitHomography, fitSimilarity, inv3, mul3, newGray, nullVector, ransac, rng, solve, svd,
   trackChecked, trackPoints, warpHomography, type Gray, type Mat3, type Pt,
 } from '../packages/vision/src/index.js';
-import { noisy, texture } from './vision-helpers.js';
+import { cameraPath, noisy, renderPlane, texture } from './vision-helpers.js';
 
 const rms = (a: number[]) => Math.sqrt(a.reduce((s, v) => s + v * v, 0) / a.length);
 
@@ -328,4 +328,69 @@ describe('frames in and out of ffmpeg', () => {
     expect(n).toBe(10); // one second at 10 frames a second
     rmSync(dir, { recursive: true, force: true });
   });
+});
+
+describe('planar tracking against a known camera', () => {
+  const W = 480;
+  const H = 270;
+  const N = 100;
+  const world = texture(W + 200, H + 160, 31); // the plane, larger than the view
+  const toWorld: Mat3 = [1, 0, -100, 0, 1, -80, 0, 0, 1]; // frame 0 sees the middle of it
+  const quadPx: Quad = [[150, 80], [330, 80], [330, 190], [150, 190]];
+
+  async function run(frames: Gray[], gt: Mat3[], refine: boolean, model: 'similarity' | 'homography' = 'homography') {
+    const { trackPlane } = await import('../packages/vision/src/index.js');
+    const out: { H: Mat3 | null; ok: boolean; refined: boolean }[] = [];
+    for await (const f of trackPlane(frames[0]!, quadPx, frames.slice(1), { model, refine })) out.push(f);
+    // ground truth reference -> frame i: H_i * H_0^-1
+    const errs: number[] = [];
+    out.forEach((f, k) => {
+      const i = k + 1;
+      const Hgt = mul3(gt[i]!, inv3(gt[0]!)!);
+      if (!f.H) return;
+      for (const [x, y] of quadPx) {
+        const [a, b] = apply(Hgt, x, y);
+        const [c, d] = apply(f.H, x, y);
+        errs.push(Math.hypot(a - c, b - d));
+      }
+    });
+    return { errs, out, lastErr: errs.slice(-4), lost: out.filter((o) => !o.ok).length, refined: out.filter((o) => o.refined).length };
+  }
+  const stats = (e: number[]) => ({ rms: rms(e), max: Math.max(...e) });
+  const path = cameraPath(N, W, H, { amp: 28, rot: 3, zoom: 0.05, persp: 0.0003 }).map((p) => mul3(p, toWorld) as Mat3);
+
+  it('follows a plane through a smooth camera move to a fraction of a pixel, with no drift to the last frame', async () => {
+    const frames = renderPlane(world, path, W, H);
+    const r = await run(frames, path, true);
+    const s = stats(r.errs);
+    console.log(`PLANAR clean: ${N} frames, corner error rms ${s.rms.toFixed(3)} px, max ${s.max.toFixed(3)}, last frames ${r.lastErr.map((v) => v.toFixed(2)).join(' ')}, refined ${r.refined}/${N - 1}, lost ${r.lost}`);
+    expect(r.lost).toBe(0);
+    expect(s.rms).toBeLessThan(0.3);
+    expect(s.max).toBeLessThan(1);
+    expect(Math.max(...r.lastErr)).toBeLessThan(0.5);
+  }, 120_000);
+
+  it('keeps the plane while something moves across it, and when the light changes', async () => {
+    const occ = await run(renderPlane(world, path, W, H, { occluder: true }), path, true);
+    const so = stats(occ.errs);
+    console.log(`PLANAR occluded: rms ${so.rms.toFixed(3)} px, max ${so.max.toFixed(3)}, lost ${occ.lost}`);
+    expect(occ.lost).toBe(0);
+    expect(so.rms).toBeLessThan(0.8);
+    expect(so.max).toBeLessThan(3);
+    const lit = await run(renderPlane(world, path, W, H, { gain: (i) => 1 - 0.3 * Math.sin((i / N) * Math.PI) }), path, true);
+    const sl = stats(lit.errs);
+    console.log(`PLANAR lighting -30% and back: rms ${sl.rms.toFixed(3)} px, max ${sl.max.toFixed(3)}`);
+    expect(sl.rms).toBeLessThan(0.5);
+  }, 240_000);
+
+  it('the direct alignment is what removes drift: points alone drift, aligned to the reference they do not', async () => {
+    const frames = renderPlane(world, path, W, H, { noise: 0.02 });
+    const a = await run(frames, path, false);
+    const b = await run(frames, path, true);
+    const sa = stats(a.errs);
+    const sb = stats(b.errs);
+    console.log(`PLANAR with 2% noise: points only rms ${sa.rms.toFixed(3)} (end ${Math.max(...a.lastErr).toFixed(2)}) px; with alignment rms ${sb.rms.toFixed(3)} (end ${Math.max(...b.lastErr).toFixed(2)}) px`);
+    expect(sb.rms).toBeLessThanOrEqual(sa.rms + 0.05);
+    expect(sb.rms).toBeLessThan(0.4);
+  }, 240_000);
 });

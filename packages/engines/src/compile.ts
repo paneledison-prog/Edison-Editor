@@ -6,6 +6,8 @@ import { EngineError } from './run.js';
 import { blurRegionFilter, hasMotion, zoomFilter } from './zoom.js';
 import { effectLines, pluginEffectDecl, type FxContext } from './plugins.js';
 import { checkClipKeyframes, nodeLines } from './fxanim.js';
+import type { TrackData } from './track.js';
+import { PIN_MARGIN, correctionTable, pinQuads, pinWarpLines, stabilizeLines, stabilizePlan, type ClipTiming } from './trackfx.js';
 import type { Preset } from './presets.js';
 
 export interface Plan {
@@ -134,6 +136,8 @@ export interface CompileInput {
   reframe?: 'fit' | 'blur' | 'center-crop';
   /** Pre-rendered alpha frame sequences for composition clips, keyed by clip id (frames are canvas-sized). */
   overlays?: Record<string, { dir: string; fps: number; frames: number }>;
+  /** Analysed trackers by id, for the clips' stabilize and pin effects (see ensureTracks). */
+  tracks?: Record<string, TrackData>;
 }
 
 export function compile(inp: CompileInput): Plan {
@@ -245,29 +249,62 @@ export function compile(inp: CompileInput): Plan {
     if (wantsVideo) {
       const d = displaySize(a.probe);
       const at = sec(c.start);
-      const head = a.kind === 'image' ? `fps=${fps}` : `setpts=(PTS-STARTPTS)/${speed},fps=${fps}`;
+      const head0 = a.kind === 'image' ? `fps=${fps}` : `setpts=(PTS-STARTPTS)/${speed},fps=${fps}`;
       const cm = 'flags=lanczos:out_color_matrix=bt709:out_range=tv';
       const lineStart = vLines.length;
+      // Stabilize works on the source frames before anything else: the clip's frame grid is set first, then each frame is
+      // warped by its own correction, and the rest of the chain sees a steady picture.
+      const timing: ClipTiming = { srcIn: c.srcIn ?? 0, speed, fps, frames: Math.max(1, Math.round((c.dur * fps) / 1000)) };
+      const trackFor = (id: string): TrackData => {
+        const data = inp.tracks?.[id];
+        if (!data) throw new EngineError('INVALID_INPUT', `${c.id}: tracker ${id} has not been analysed`, `studio track build ${id}`);
+        const lastMs = data.fromMs + ((data.frames - 1) * 1000) / data.fps;
+        const a0 = timing.srcIn;
+        const b0 = timing.srcIn + c.dur * speed;
+        if (a0 < data.fromMs - 1000 / data.fps || b0 > lastMs + 1000 / data.fps) {
+          const msg = `${c.id}: tracker ${id} covers ${Math.round(data.fromMs)}–${Math.round(lastMs)} ms of the source but the clip plays ${Math.round(a0)}–${Math.round(b0)} ms; outside the tracked range the last tracked position is held`;
+          if (!notes.includes(msg)) notes.push(msg);
+        }
+        return data;
+      };
+      const stab = a.kind === 'video' ? (c.fx ?? []).find((f): f is Extract<Fx, { type: 'stabilize' }> => f.type === 'stabilize' && !f.bypass) : undefined;
+      let steady: ReturnType<typeof correctionTable> | null = null;
+      let inLabel = `${k}:v`;
+      let head = head0;
+      if (stab) {
+        if (!d.w || !d.h) throw new EngineError('INVALID_INPUT', `${c.id}: the size of ${c.asset} is not known, so it cannot be stabilized`, 'studio ingest it again');
+        const data = trackFor(stab.tracker);
+        const plan = stabilizePlan(data, stab);
+        steady = correctionTable(plan, data, timing);
+        vLines.push(`[${k}:v]${head0}[v${nV}h]`);
+        vLines.push(...stabilizeLines(`v${nV}h`, `v${nV}st`, `v${nV}t`, steady, { w: d.w, h: d.h }));
+        inLabel = `v${nV}st`;
+        head = 'null';
+        notes.push(
+          `${c.id}: stabilize ${stab.tracker}: ${stab.lock ? 'held on the reference frame' : `smoothed over ${stab.smooth ?? 0.6} s`}, picture enlarged ${plan.zoom.toFixed(3)}x to hide the borders${plan.alpha < 0.999 ? `; the zoom limit ${stab.maxZoom ?? 1.25}x allowed only ${Math.round(plan.alpha * 100)}% of the correction` : ''}; the tracked path moved ${(plan.removed * (d.w ?? 0)).toFixed(1)} px rms (source pixels) from its smoothed version`,
+        );
+        if (d.w * d.h > 1920 * 1080 * 1.5) notes.push(`${c.id}: stabilize warps the full ${d.w}x${d.h} source frames; use a proxy or a smaller working copy for faster previews`);
+      }
       const zf = zoomFilter(c, width, height);
       const bf = blurRegionFilter(c, width, height, nV);
       if (t.type === 'graphics' && a.kind === 'image') {
         vLines.push(
-          `[${k}:v]${head},scale='min(iw,${width})':'min(ih,${height})':force_original_aspect_ratio=decrease,format=yuva420p,${bf}${zf}setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
+          `[${inLabel}]${head},scale='min(iw,${width})':'min(ih,${height})':force_original_aspect_ratio=decrease,format=yuva420p,${bf}${zf}setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
         );
       } else if (reframe === 'blur') {
         vLines.push(
-          `[${k}:v]${head},split=2[bs${nV}][fs${nV}]`,
+          `[${inLabel}]${head},split=2[bs${nV}][fs${nV}]`,
           `[bs${nV}]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},boxblur=24:2[bb${nV}]`,
           `[fs${nV}]scale=${width}:${height}:force_original_aspect_ratio=decrease:${cm}[ff${nV}]`,
           `[bb${nV}][ff${nV}]overlay=(W-w)/2:(H-h)/2,setsar=1,format=yuv420p,${bf}${zf}setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
         );
       } else if (reframe === 'center-crop') {
         vLines.push(
-          `[${k}:v]${head},scale=${width}:${height}:force_original_aspect_ratio=increase:${cm},crop=${width}:${height},setsar=1,format=yuv420p,${bf}${zf}setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
+          `[${inLabel}]${head},scale=${width}:${height}:force_original_aspect_ratio=increase:${cm},crop=${width}:${height},setsar=1,format=yuv420p,${bf}${zf}setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
         );
       } else {
         vLines.push(
-          `[${k}:v]${head},scale=${width}:${height}:force_original_aspect_ratio=decrease:${cm},pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=${bg},setsar=1,format=yuv420p,${bf}${zf}setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
+          `[${inLabel}]${head},scale=${width}:${height}:force_original_aspect_ratio=decrease:${cm},pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=${bg},setsar=1,format=yuv420p,${bf}${zf}setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
         );
       }
       // LUTs run right after the clip's own scale and zoom, before plugin nodes: order of the fx array decides among nodes of
@@ -348,6 +385,36 @@ export function compile(inp: CompileInput): Plan {
             const msg = `${c.id}: effect "${f.id}" is animated: it is rendered twice per slice and blended, so it costs about twice as much; temporal filters inside it restart at each sample`;
             if (!notes.includes(msg)) notes.push(msg);
           }
+          cur = out;
+        });
+      }
+      // Pins sit on top of the finished clip picture and follow the tracked plane (through the steadied picture when the clip
+      // is stabilized). The pinned image is stretched over the canvas and warped so its corners land on the plane's.
+      const pins = (c.fx ?? []).filter((f): f is Extract<Fx, { type: 'pin' }> => f.type === 'pin' && !f.bypass);
+      if (pins.length) {
+        if (!d.w || !d.h) throw new EngineError('INVALID_INPUT', `${c.id}: the size of ${c.asset} is not known, so a pin cannot be placed`, 'studio ingest it again');
+        if (hasMotion(c)) throw new EngineError('ENGINE_MISSING', `${c.id}: a pin cannot be used on a clip with zoom or pan keyframes`, 'remove those keyframes, or put the pin on a clip without them');
+        const base = `v${nV}`;
+        const last = vLines.pop()!;
+        let cur = `${base}pin`;
+        vLines.push(last.replace(new RegExp(`\\[${base}\\]$`), `[${cur}]`));
+        const s = reframe === 'center-crop' ? Math.max(width / d.w, height / d.h) : Math.min(width / d.w, height / d.h);
+        const fit = { w: d.w * s, h: d.h * s, x: (width - d.w * s) / 2, y: (height - d.h * s) / 2 };
+        pins.forEach((f, i) => {
+          const data = trackFor(f.tracker);
+          const tk = p.trackers![f.tracker]!;
+          const pa = p.assets[f.asset]!;
+          const pk = nIn++;
+          const pfile = join(projectDir, pa.workingCopy?.path ?? pa.path);
+          if (pa.kind === 'image') inputs.push('-loop', '1', '-framerate', String(fps), '-t', sec(c.dur), '-i', pfile);
+          else inputs.push('-stream_loop', '-1', '-t', sec(c.dur), '-i', pfile);
+          const quads = pinQuads(data, (f.quad ?? tk.quad) as never, timing, steady, fit);
+          const op = f.opacity ?? 1;
+          vLines.push(`[${pk}:v]fps=${fps},setpts=PTS-STARTPTS,scale=${width - 2 * PIN_MARGIN}:${height - 2 * PIN_MARGIN}:flags=bicubic,format=rgba${op < 1 ? `,colorchannelmixer=aa=${op}` : ''},pad=${width}:${height}:${PIN_MARGIN}:${PIN_MARGIN}:color=black@0[${base}pl${i}]`);
+          vLines.push(...pinWarpLines(`${base}pl${i}`, `${base}pw${i}`, `${base}pq${i}`, quads, { w: width, h: height }));
+          const out = i === pins.length - 1 ? base : `${base}pn${i}`;
+          vLines.push(`[${base}pw${i}]setpts=PTS+${at}/TB[${base}pt${i}]`);
+          vLines.push(`[${cur}][${base}pt${i}]overlay=format=auto:eof_action=pass:repeatlast=0[${out}]`);
           cur = out;
         });
       }

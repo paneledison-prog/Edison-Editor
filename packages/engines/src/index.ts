@@ -19,3 +19,5 @@ export * from './preview.js';
 export * from './plugins.js';
 export * from './design.js';
 export * from './fxanim.js';
+export * from './track.js';
+export * from './trackfx.js';

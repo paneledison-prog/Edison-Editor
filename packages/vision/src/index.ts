@@ -4,3 +4,6 @@ export * from './image.js';
 export * from './features.js';
 export * from './flow.js';
 export * from './frames.js';
+export * from './planar.js';
+export * from './stabilize.js';
+export * from './draw.js';

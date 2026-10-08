@@ -1,4 +1,7 @@
 import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 export class EngineError extends Error {
   constructor(
@@ -16,6 +19,27 @@ export class EngineError extends Error {
   }
 }
 
+/**
+ * A filtergraph longer than this goes to FFmpeg as a script file: one command-line argument is limited to 128 KiB on Linux,
+ * and a clip with a table of per-frame corners (stabilize, pin) is larger than that.
+ */
+const INLINE_GRAPH_MAX = 60_000;
+
+/** Moves long `-filter_complex` graphs into script files. Call `cleanup` when FFmpeg has ended. */
+export function withFilterScripts(args: string[]): { args: string[]; cleanup: () => void } {
+  let dir: string | undefined;
+  const out = args.slice();
+  for (let i = 0; i + 1 < out.length; i++) {
+    if (out[i] !== '-filter_complex' || out[i + 1]!.length <= INLINE_GRAPH_MAX) continue;
+    dir ??= mkdtempSync(join(tmpdir(), 'studio-graph-'));
+    const file = join(dir, `graph-${i}.txt`);
+    writeFileSync(file, out[i + 1]!);
+    out[i] = '-filter_complex_script';
+    out[i + 1] = file;
+  }
+  return { args: out, cleanup: () => dir && rmSync(dir, { recursive: true, force: true }) };
+}
+
 export interface RunResult {
   code: number;
   stdout: string;
@@ -31,8 +55,9 @@ export function run(
   args: string[],
   opts: { timeoutMs?: number; stdoutCap?: number } = {},
 ): Promise<RunResult> {
+  const scripted = bin === 'ffmpeg' ? withFilterScripts(args) : { args, cleanup: () => undefined };
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(bin, scripted.args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     const cap = opts.stdoutCap ?? 64 * 1024 * 1024;
@@ -50,6 +75,7 @@ export function run(
       : undefined;
     child.on('error', (e: NodeJS.ErrnoException) => {
       clearTimeout(timer);
+      scripted.cleanup();
       reject(
         e.code === 'ENOENT'
           ? new EngineError('ENGINE_MISSING', `${bin} not found on PATH`, FFMPEG_FIX)
@@ -58,6 +84,7 @@ export function run(
     });
     child.on('close', (code) => {
       clearTimeout(timer);
+      scripted.cleanup();
       resolve({ code: code ?? 1, stdout, stderr });
     });
   });

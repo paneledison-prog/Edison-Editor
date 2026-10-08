@@ -115,6 +115,21 @@ export function validateProject(p: unknown): Issue[] {
             `clips.${c.id}.fx`,
           );
       }
+      if (f.type === 'stabilize' || f.type === 'pin') {
+        const tk = proj.trackers?.[f.tracker];
+        if (track.type !== 'video') add('FX_INVALID', `clip ${c.id}: ${f.type} needs a video track`, `clips.${c.id}.fx`);
+        if (!tk) add('MISSING_REF', `clip ${c.id}: ${f.type} uses tracker ${f.tracker}, which does not exist`, `clips.${c.id}.fx`);
+        else if (tk.asset !== c.asset)
+          add('FX_INVALID', `clip ${c.id}: tracker ${f.tracker} was made on ${tk.asset}, but this clip plays ${c.asset ?? 'a composition'}`, `clips.${c.id}.fx`);
+        if (f.type === 'pin') {
+          const pa = proj.assets[f.asset];
+          if (!pa) add('MISSING_REF', `clip ${c.id}: pin uses missing asset ${f.asset}`, `clips.${c.id}.fx`);
+          else if (pa.kind === 'audio') add('FX_INVALID', `clip ${c.id}: pin needs an image or video asset, ${f.asset} is audio`, `clips.${c.id}.fx`);
+        }
+        if (f.type === 'stabilize' && fxSeen.has('stabilize'))
+          add('FX_INVALID', `clip ${c.id}: more than one stabilize effect`, `clips.${c.id}.fx`);
+        if (f.type === 'stabilize') fxSeen.add('stabilize');
+      }
       if (f.type === 'lut' && track.type !== 'video' && track.type !== 'graphics')
         add('FX_INVALID', `clip ${c.id}: lut needs a video track`, `clips.${c.id}.fx`);
       if (f.type === 'plugin' && track.type !== 'video' && track.type !== 'graphics')
@@ -197,6 +212,12 @@ export function validateProject(p: unknown): Issue[] {
     }
   }
 
+  for (const [id, tk] of Object.entries(proj.trackers ?? {})) {
+    const a = proj.assets[tk.asset];
+    if (!a) add('MISSING_REF', `tracker ${id} was made on ${tk.asset}, which does not exist`, `trackers.${id}`);
+    else if (a.kind !== 'video') add('FX_INVALID', `tracker ${id}: ${tk.asset} is ${a.kind}, only video can be tracked`, `trackers.${id}`);
+    if (!(tk.from <= tk.at && tk.at <= tk.to)) add('FX_INVALID', `tracker ${id}: the reference time ${tk.at} ms is outside ${tk.from}..${tk.to} ms`, `trackers.${id}`);
+  }
   const ids = new Set<string>();
   for (const m of proj.markers) {
     if (ids.has(m.id)) add('DUP_ID', `duplicate marker id ${m.id}`, `markers.${m.id}`);
