@@ -84,6 +84,7 @@ const slug = (s: string) =>
     .replace(/^-|-$/g, '') || 'project';
 
 /** Active children, killed (and partials removed) if the CLI is interrupted. */
+const TP_HEADROOM_DB = 0.5;
 const active = new Set<{ child: ChildProcess; partial: string }>();
 let hooked = false;
 function hookSignals() {
@@ -388,7 +389,8 @@ export async function render(o: RenderOptions): Promise<RenderReport> {
         'the audio mix is silent; cannot normalize',
         'check the audio clips, or render with --no-normalize',
       );
-    aoutGraph = `[amix]loudnorm=I=${t.I}:TP=${t.TP}:LRA=${Math.min(50, Math.max(11, Math.ceil(Number(meas.input_lra)) + 1))}:measured_I=${meas.input_i}:measured_TP=${meas.input_tp}:measured_LRA=${meas.input_lra}:measured_thresh=${meas.input_thresh}:offset=${meas.target_offset}:linear=true,aresample=48000[aout]`;
+    // AAC encoding raises the true peak by about 0.2 dB after loudnorm, so aim lower than the target.
+    aoutGraph = `[amix]loudnorm=I=${t.I}:TP=${t.TP - TP_HEADROOM_DB}:LRA=${Math.min(50, Math.max(11, Math.ceil(Number(meas.input_lra)) + 1))}:measured_I=${meas.input_i}:measured_TP=${meas.input_tp}:measured_LRA=${meas.input_lra}:measured_thresh=${meas.input_thresh}:offset=${meas.target_offset}:linear=true,aresample=48000[aout]`;
     graph += `;${aoutGraph}`;
     common[1] = graph;
   }

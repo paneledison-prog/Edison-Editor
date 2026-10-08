@@ -15,3 +15,4 @@ export * from './motion.js';
 export * from './transcribe.js';
 export * from './captions.js';
 export * from './zoom.js';
+export * from './preview.js';

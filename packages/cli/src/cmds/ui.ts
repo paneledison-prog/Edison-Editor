@@ -85,6 +85,47 @@ export const ui: Handler = async (inv) => {
    * CLI uses. `baseRev` is the project the person was looking at: if an agent changed it since, nothing is applied
    * (409) and the page, which already received the new project, shows what happened.
    */
+  /**
+   * One frame of the timeline for the canvas. Requests are serialized (one ffmpeg and one browser at a time) and a
+   * request for an old time is cheap to drop: the page only keeps the newest answer.
+   */
+  let framing: Promise<unknown> = Promise.resolve();
+  const sendFrame = (res: ServerResponse, url: URL) => {
+    const t = Number(url.searchParams.get('t'));
+    const w = Number(url.searchParams.get('w') ?? 640);
+    if (!Number.isInteger(t) || t < 0 || !Number.isFinite(w))
+      return json(res, 400, {
+        code: 'INVALID_ARGS',
+        message: 't must be a whole number of milliseconds, w a width in px',
+      });
+    const run = async () => {
+      try {
+        const E = await import('@studio/engines');
+        const { project } = store.load();
+        const r = await E.previewFrame(project, inv.dir, t, w);
+        res.setHeader('content-type', 'image/png');
+        res.setHeader('cache-control', 'no-store');
+        res.setHeader('x-preview-ms', String(r.ms));
+        res.setHeader('x-preview-cached', String(r.cached));
+        res.end(readFileSync(r.file));
+      } catch (e) {
+        const code = (e as { code?: string }).code;
+        // "No preview for this frame" (missing media, an encoder failure) is an expected state, not a server error:
+        // 204 with the reason in a header keeps the browser console clean and lets the page say why.
+        if (code === 'ENGINE_MISSING' || code === 'ENGINE_FAILED') {
+          res.statusCode = 204;
+          res.setHeader('x-preview-error', encodeURIComponent((e as Error).message.slice(0, 300)));
+          return void res.end();
+        }
+        json(res, code === 'INVALID_INPUT' ? 422 : 500, {
+          code: code ?? 'ENGINE_FAILED',
+          message: (e as Error).message,
+          fix: (e as { fix?: string }).fix,
+        });
+      }
+    };
+    framing = framing.then(run, run);
+  };
   const sh = (v: string) => (/^[\w@%+=:,./-]+$/.test(v) ? v : `'${v.replace(/'/g, `'\\''`)}'`);
   /** What a person needs to connect Claude Code to this project: the exact command for this machine and folder. */
   const connectorInfo = async () => {
@@ -237,6 +278,9 @@ export const ui: Handler = async (inv) => {
       return res.end('forbidden host');
     }
     const url = new URL(req.url ?? '/', 'http://localhost');
+    if (req.method === 'GET' && url.pathname === '/api/frame') {
+      return void sendFrame(res, url);
+    }
     if (req.method === 'GET' && url.pathname === '/api/connector') {
       return void connectorInfo().then((d) => json(res, 200, d));
     }

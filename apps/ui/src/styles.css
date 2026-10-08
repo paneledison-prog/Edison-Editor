@@ -670,3 +670,16 @@ code.block {
 .field input[type='checkbox'] {
   width: auto;
 }
+.artboard {
+  position: relative;
+  overflow: hidden;
+}
+.artboard img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  user-select: none;
+}

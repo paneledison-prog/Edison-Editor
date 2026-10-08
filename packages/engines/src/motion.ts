@@ -75,6 +75,23 @@ interface FontFile {
   data: string;
   sha: string;
 }
+function fontSha(path: string): string {
+  if (!existsSync(path))
+    throw new EngineError(
+      'INVALID_INPUT',
+      `font file not found: ${path}`,
+      'pass --font <file.ttf|otf>, or put a font in brand/fonts/',
+    );
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
+}
+/** One font file used for every weight the templates ask for (a thumbnail's `--font`). */
+function loadFontFile(f: { path: string; family: string }): FontFile[] {
+  const buf = readFileSync(f.path);
+  const data = buf.toString('base64');
+  const sha = createHash('sha256').update(buf).digest('hex');
+  return ['400', '700', '800'].map((weight) => ({ family: f.family, weight, data, sha }));
+}
+
 function loadFonts(palette: Palette, root: string): FontFile[] {
   const out: FontFile[] = [];
   for (const f of Object.values(palette.fonts)) {
@@ -115,6 +132,8 @@ export interface MotionSpec {
   fps: number;
   durMs: number;
   projectDir?: string;
+  /** Use this font file instead of the palette's fonts (a thumbnail's `--font`). A missing file fails the render. */
+  fontFile?: { path: string; family: string };
 }
 
 export interface Prepared {
@@ -129,6 +148,7 @@ export interface Prepared {
   codeVersion: string;
   palette: Palette;
   root: string;
+  fontFile?: { path: string; family: string };
 }
 
 export function prepare(s: MotionSpec): Prepared {
@@ -152,7 +172,18 @@ export function prepare(s: MotionSpec): Prepared {
   const frames = Math.max(1, Math.round((s.durMs * s.fps) / 1000));
   const cv = codeVersion(palette, root);
   const key = createHash('sha256')
-    .update(JSON.stringify([s.comp, props, cv, s.fps, s.width, s.height, frames]))
+    .update(
+      JSON.stringify([
+        s.comp,
+        props,
+        cv,
+        s.fps,
+        s.width,
+        s.height,
+        frames,
+        s.fontFile ? [s.fontFile.family, fontSha(s.fontFile.path)] : null,
+      ]),
+    )
     .digest('hex')
     .slice(0, 16);
   return {
@@ -167,6 +198,7 @@ export function prepare(s: MotionSpec): Prepared {
     codeVersion: cv,
     palette,
     root,
+    ...(s.fontFile ? { fontFile: s.fontFile } : {}),
   };
 }
 
@@ -237,7 +269,7 @@ async function openPage(
   });
   await page.setContent('<!doctype html><html><body></body></html>');
   await page.addScriptTag({ content: readFileSync(pageBundle(), 'utf8') });
-  const fam = Object.values(p.palette.fonts)[0]!.family;
+  const fam = p.fontFile?.family ?? Object.values(p.palette.fonts)[0]!.family;
   const info = (await page
     .evaluate((a) => (window as any).studio.init(a), {
       comp: p.comp,
@@ -246,11 +278,13 @@ async function openPage(
       height: p.height,
       fps: p.fps,
       durMs: p.durMs,
-      fonts: loadFonts(p.palette, p.root).map(({ family, weight, data }) => ({
-        family,
-        weight,
-        data,
-      })),
+      fonts: (p.fontFile ? loadFontFile(p.fontFile) : loadFonts(p.palette, p.root)).map(
+        ({ family, weight, data }) => ({
+          family,
+          weight,
+          data,
+        }),
+      ),
       family: fam,
       checker: checker
         ? [p.palette.colors['checkerLight'] ?? '', p.palette.colors['checkerDark'] ?? '']
@@ -264,6 +298,7 @@ async function openPage(
     })) as {
     warnings: string[];
     captionBoxes: { cue: number; x: number; y: number; w: number; h: number }[] | null;
+    extra: Record<string, number> | null;
   };
   return { page, info };
 }
@@ -530,5 +565,77 @@ export function validateComp(
       (e as Error).message,
       `run \`studio motion templates --comp ${comp}\` for the props`,
     );
+  }
+}
+
+export interface HeadlineResult {
+  /** transparent PNG of the fitted text, cropped to the text */
+  png: Buffer;
+  sizePx: number;
+  lines: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * A headline set by the motion renderer's `thumbnail-headline` template: the same Chromium, fonts, and tokens as the
+ * video templates. Fits the largest font that stays inside the box and line limit, then screenshots just the text.
+ */
+export async function motionHeadline(o: {
+  text: string;
+  color: string;
+  align: 'left' | 'right';
+  boxW: number;
+  boxH: number;
+  maxLines?: number;
+  startPx?: number;
+  fontFile?: { path: string; family: string };
+  projectDir?: string;
+}): Promise<HeadlineResult> {
+  const prep = prepare({
+    comp: 'thumbnail-headline',
+    props: {
+      text: o.text,
+      color: o.color,
+      align: o.align,
+      boxW: o.boxW,
+      boxH: o.boxH,
+      maxLines: o.maxLines ?? 3,
+      startPx: o.startPx ?? 160,
+    },
+    width: o.boxW,
+    height: o.boxH,
+    fps: 30,
+    durMs: 1000,
+    projectDir: o.projectDir,
+    fontFile: o.fontFile,
+  });
+  const browser = await launch();
+  try {
+    const { page, info } = await openPage(browser, prep, false);
+    if (!info.extra)
+      throw new EngineError('ENGINE_FAILED', 'the headline template reported no size');
+    await page.evaluate(() => (window as any).studio.render(0));
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setDefaultBackgroundColorOverride', {
+      color: { r: 0, g: 0, b: 0, a: 0 },
+    });
+    const w = Math.min(o.boxW, Math.max(1, info.extra['w']!));
+    const h = Math.min(o.boxH, Math.max(1, info.extra['h']!));
+    const x = o.align === 'right' ? o.boxW - w : 0;
+    const r = await cdp.send('Page.captureScreenshot', {
+      format: 'png',
+      fromSurface: true,
+      clip: { x, y: 0, width: w, height: h, scale: 1 },
+    });
+    return {
+      png: Buffer.from(r.data, 'base64'),
+      sizePx: info.extra['size']!,
+      lines: info.extra['lines']!,
+      width: w,
+      height: h,
+    };
+  } finally {
+    await browser.close();
   }
 }

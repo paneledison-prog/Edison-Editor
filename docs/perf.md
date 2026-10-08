@@ -96,6 +96,27 @@ UI shell bundle: 11.2 KB to 15.8 KB gzipped (budget 250 KB); the baseline was ra
 
 Per-call cost is one process start (about 50 ms) plus the command itself.
 
+## Phase 8: caption timing on real speech
+
+Clip: `tests/jfk.flac` from the OpenAI Whisper repository (11 s, a short excerpt of a 1961 US presidential speech); downloaded by the test into the git-ignored fixtures, never committed. There is **no ground truth** for word starts on real speech, so these are proxies, not accuracy: how far three models disagree with each other, and how far the largest model's start is from the nearest loudness onset (10 ms log-RMS rise within 250 ms, which is a weak proxy: words that begin with soft consonants have late onsets).
+
+| Measure (22 words found by all three models)                       | Result                                                       |
+| ------------------------------------------------------------------ | ------------------------------------------------------------ |
+| Disagreement between tiny.en, small and medium on one word's start | median 200 ms, max 1090 ms; 1 of 22 within one frame (34 ms) |
+| whisper-medium start vs nearest loudness onset                     | median 90 ms, max 240 ms; 4 of 22 within one frame           |
+
+Reading: on real speech the three models place the same word start up to a second apart, and typically 200 ms. The earlier result on synthetic speech (whisper-small median 40 ms) does not carry over. Caption cue starts and the karaoke highlight on real speech should be treated as accurate to about a quarter of a second, not a frame. Nothing in the code was changed from this, since there is no truth to tune against; use medium for finals and view frames at cue starts.
+
+## Phase 8: thumbnail text
+
+The thumbnail headline is now set by the motion renderer (`thumbnail-headline` template, largest font that fits the box and 3 lines, fitted in one browser page), not sharp's text engine; sharp still composites. The existing thumbnail tests pass unchanged, and a new one checks the longest allowed headline (5 long words) stays on at most 3 lines inside the margins at 1280x720 and 1080x1920. A thumbnail now starts a headless Chromium (about 1.5 s) where sharp text did not.
+
+## Phase 8: canvas preview
+
+`GET /api/frame?t=MS&w=PX` on `studio ui` returns one PNG of the timeline at that time (preview size, 160 to 960 px wide) through the same compiler as a render, so cuts, speed, zoom, blur and overlays are all in it; composition clips are drawn from a motion still for that instant. It uses the original media (not a proxy) and has no audio. Frames are cached by project revision, time and width; requests are served one at a time. Measured: the first frame of a project with a title card took 2.9 s (browser start for the overlay plus ffmpeg), a cached one is a file read. The page debounces 180 ms, keeps the old image until the new one is ready, and drops answers to superseded requests. Tested in real Chromium: the title card is in the frame at 4 s and absent at 8 s, the preview follows 12 quick key presses to exactly the final position, and a CLI edit refreshes it. There is no playback, no play button, and no audio.
+
+UI shell bundle: 18.4 KB to 18.8 KB gzipped (budget 250 KB).
+
 ## Settings window
 
 A modal with Appearance, Project and Connector tabs (9 tests in real Chromium plus the `project.set` op: focus trap and Escape, arrow-key tabs, theme persistence with storage blocked, saving the project settings as one `ui` op that Undo reverses byte for byte, the Connector tab's exact command and clipboard copy, and a real MCP handshake from the server). The Connector tab proves only that `studio mcp` starts; whether Claude Code is connected cannot be seen from the page, and the page never runs `claude`. UI shell bundle: 15.45 KB to 18.4 KB gzipped (budget 250 KB); the baseline was raised for the dialog.

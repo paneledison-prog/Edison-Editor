@@ -76,6 +76,7 @@ Not used on purpose: models with non-commercial licenses (for example BRIA RMBG-
 
 ## Test-only material (not committed)
 
+- `jfk.flac` (11 s speech excerpt) is downloaded from the OpenAI Whisper repository (`tests/jfk.flac`, repository license MIT) into `tests/.fixtures/real/` by `tests/real-speech.test.ts` to measure caption timing on real speech. The recording is an excerpt of a 1961 US presidential address, which I believe is a US government work in the public domain; that was **not independently verified**. The test skips, and says so, without network access or models.
 - A public-domain NASA portrait (the scikit-image `astronaut.png` sample) is downloaded into `tests/.fixtures/` for background-removal tests. The tests skip, and say so, if it cannot be fetched.
 - Inter (SIL OFL 1.1) is read from the system font path by the thumbnail tests. Phase 4 bundles Inter Regular and Bold under `brand/fonts` for the motion renderer (see above).
 - Speech fixtures for the caption tests are synthesized by FFmpeg's built-in `flite` voice (slt); no recording is used.
