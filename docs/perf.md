@@ -96,6 +96,17 @@ UI shell bundle: 11.2 KB to 15.8 KB gzipped (budget 250 KB); the baseline was ra
 
 Per-call cost is one process start (about 50 ms) plus the command itself.
 
+## Phase 8: caption timing on real speech
+
+Clip: `tests/jfk.flac` from the OpenAI Whisper repository (11 s, a short excerpt of a 1961 US presidential speech); downloaded by the test into the git-ignored fixtures, never committed. There is **no ground truth** for word starts on real speech, so these are proxies, not accuracy: how far three models disagree with each other, and how far the largest model's start is from the nearest loudness onset (10 ms log-RMS rise within 250 ms, which is a weak proxy: words that begin with soft consonants have late onsets).
+
+| Measure (22 words found by all three models)                       | Result                                                       |
+| ------------------------------------------------------------------ | ------------------------------------------------------------ |
+| Disagreement between tiny.en, small and medium on one word's start | median 200 ms, max 1090 ms; 1 of 22 within one frame (34 ms) |
+| whisper-medium start vs nearest loudness onset                     | median 90 ms, max 240 ms; 4 of 22 within one frame           |
+
+Reading: on real speech the three models place the same word start up to a second apart, and typically 200 ms. The earlier result on synthetic speech (whisper-small median 40 ms) does not carry over. Caption cue starts and the karaoke highlight on real speech should be treated as accurate to about a quarter of a second, not a frame. Nothing in the code was changed from this, since there is no truth to tune against; use medium for finals and view frames at cue starts.
+
 ## Settings window
 
 A modal with Appearance, Project and Connector tabs (9 tests in real Chromium plus the `project.set` op: focus trap and Escape, arrow-key tabs, theme persistence with storage blocked, saving the project settings as one `ui` op that Undo reverses byte for byte, the Connector tab's exact command and clipboard copy, and a real MCP handshake from the server). The Connector tab proves only that `studio mcp` starts; whether Claude Code is connected cannot be seen from the page, and the page never runs `claude`. UI shell bundle: 15.45 KB to 18.4 KB gzipped (budget 250 KB); the baseline was raised for the dialog.
