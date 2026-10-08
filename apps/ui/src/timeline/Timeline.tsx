@@ -1,5 +1,16 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
-import type { ProjectView } from '../api';
+import type { OpSpec, ProjectView } from '../api';
+import {
+  canSplit,
+  frameMs,
+  moveClip,
+  moveSpec,
+  snapPoints,
+  snapTime,
+  splitSpec,
+  trimClip,
+  trimSpec,
+} from './edit';
 import { snapToFrame, tickLabel, tickStep } from './format';
 
 export const HEADER_W = 148;
@@ -27,6 +38,22 @@ interface Props {
   onSeek: (ms: number) => void;
   onSelect: (id: string | null) => void;
   onZoom: (next: number) => void;
+  /** the tool in the rail: select (drag, trim) or split (click a clip) */
+  tool: 'select' | 'split';
+  editable: boolean;
+  onEdit: (specs: OpSpec[], label: string) => void;
+}
+
+interface Drag {
+  id: string;
+  mode: 'move' | 'trim-left' | 'trim-right';
+  x0: number;
+  moved: boolean;
+  /** transient values while the pointer is down; one op is sent on release */
+  start: number;
+  dur: number;
+  srcIn?: number;
+  track: string;
 }
 
 /**
@@ -42,7 +69,13 @@ export function Timeline({
   onSeek,
   onSelect,
   onZoom,
+  tool,
+  editable,
+  onEdit,
 }: Props) {
+  const [drag, setDrag] = useState<Drag | null>(null);
+  const dragRef = useRef<Drag | null>(null);
+  const fps = project.meta.fps;
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const [scrollLeft, setScrollLeft] = useState(0);
@@ -88,6 +121,98 @@ export function Timeline({
     pendingAnchor.current = { ms: (scroller.current.scrollLeft + px) / pxPerMs, px };
     onZoom(pxPerMs * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
   };
+
+  // ---- editing: pointer drags on clips. Nothing is written until release; Escape cancels. ----
+  const setD = (d: Drag | null) => {
+    dragRef.current = d;
+    setDrag(d);
+  };
+  const beginDrag = (e: PointerEvent, c: Clip, mode: Drag['mode']) => {
+    if (!editable || tool === 'split' || e.button !== 0) return;
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    onSelect(c.id);
+    setD({
+      id: c.id,
+      mode,
+      x0: e.clientX,
+      moved: false,
+      start: c.start,
+      dur: c.dur,
+      srcIn: c.srcIn,
+      track: c.track,
+    });
+    dragOwner.current = e.currentTarget as HTMLElement;
+  };
+  const dragOwner = useRef<HTMLElement | null>(null);
+  const moveDrag = (e: PointerEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const c = project.clips.find((x) => x.id === d.id);
+    if (!c) return;
+    const dx = e.clientX - d.x0;
+    if (!d.moved && Math.abs(dx) < 3 && Math.abs(e.movementY) < 3 && d.mode === 'move') {
+      // a click, not yet a drag; vertical movement is judged from the row below
+    }
+    const pts = snapPoints(project, c.id, playheadMs);
+    const delta = dx / pxPerMs;
+    if (d.mode === 'move') {
+      // The track under the pointer, if it is the same kind as the clip's own.
+      let track = d.track;
+      const row = (
+        document
+          .elementsFromPoint(e.clientX, e.clientY)
+          .find((el) => (el as HTMLElement).dataset?.track) as HTMLElement | undefined
+      )?.dataset.track;
+      const rowTrack = row ? project.tracks.find((t) => t.id === row) : undefined;
+      const own = project.tracks.find((t) => t.id === c.track);
+      if (rowTrack && own && rowTrack.type === own.type) track = rowTrack.id;
+      // snap the clip's start or its end, whichever is closer to a snap point
+      const sStart = snapTime(c.start + delta, pts, pxPerMs, fps);
+      const sEnd = snapTime(c.start + c.dur + delta, pts, pxPerMs, fps) - c.dur;
+      const wantStart =
+        Math.abs(sStart - (c.start + delta)) <= Math.abs(sEnd - (c.start + delta)) ? sStart : sEnd;
+      const m = moveClip(project, c, wantStart, track);
+      setD({
+        ...d,
+        moved: d.moved || Math.abs(dx) >= 3 || m.track !== c.track,
+        start: m.start,
+        track: m.track,
+      });
+    } else {
+      const edgeT = d.mode === 'trim-left' ? c.start + delta : c.start + c.dur + delta;
+      const to = snapTime(edgeT, pts, pxPerMs, fps);
+      const r = trimClip(project, c, d.mode === 'trim-left' ? 'left' : 'right', to, fps);
+      setD({
+        ...d,
+        moved: d.moved || Math.abs(dx) >= 3,
+        start: r.start,
+        dur: r.dur,
+        srcIn: r.srcIn,
+      });
+    }
+  };
+  const endDrag = (e: PointerEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
+    (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+    setD(null);
+    const c = project.clips.find((x) => x.id === d.id);
+    if (!c || !d.moved) return;
+    if (d.mode === 'move') {
+      if (d.start !== c.start || d.track !== c.track)
+        onEdit([moveSpec(c, d.start, d.track)], `move ${c.id}`);
+    } else if (d.start !== c.start || d.dur !== c.dur)
+      onEdit([trimSpec(c, { start: d.start, dur: d.dur, srcIn: d.srcIn })], `trim ${c.id}`);
+  };
+  const cancelDrag = () => setD(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && dragRef.current) setD(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const seekFromEvent = (e: MouseEvent) => {
     const rect = content.current!.getBoundingClientRect();
@@ -163,24 +288,68 @@ export function Timeline({
                 .filter((c) => c.start + c.dur >= visFrom && c.start <= visTo)
                 .map((c) => {
                   rendered++;
+                  const d = drag?.id === c.id ? drag : null;
+                  const st = d ? d.start : c.start;
+                  const du = d ? d.dur : c.dur;
+                  const kfs = Object.values(c.keyframes ?? {}).flat();
                   return (
-                    <button
-                      type="button"
+                    <div
                       key={c.id}
                       data-clip-id={c.id}
-                      class={`clip ${colorClass(c, t, project)} ${selectedId === c.id ? 'selected' : ''}`}
+                      role="button"
+                      tabIndex={0}
+                      class={`clip ${colorClass(c, t, project)} ${selectedId === c.id ? 'selected' : ''} ${d ? 'dragging' : ''} ${editable && tool === 'split' ? 'tool-split' : ''}`}
                       style={{
-                        transform: `translateX(${c.start * pxPerMs}px)`,
-                        width: `${Math.max(2, c.dur * pxPerMs)}px`,
+                        transform: `translateX(${st * pxPerMs}px)`,
+                        width: `${Math.max(2, du * pxPerMs)}px`,
                       }}
-                      title={`${clipLabel(c, project)} · ${c.start}–${c.start + c.dur} ms`}
+                      title={`${clipLabel(c, project)} · ${st}–${st + du} ms`}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          onSelect(c.id);
+                        }
+                      }}
                       onClick={(e) => {
                         e.stopPropagation();
+                        if (editable && tool === 'split') {
+                          const rect = content.current!.getBoundingClientRect();
+                          const at = frameMs((e.clientX - rect.left - HEADER_W) / pxPerMs, fps);
+                          if (canSplit(c, at)) onEdit([splitSpec(c, at)], `split ${c.id}`);
+                          return;
+                        }
                         onSelect(c.id);
                       }}
+                      onPointerDown={(e) => beginDrag(e, c, 'move')}
+                      onPointerMove={moveDrag}
+                      onPointerUp={endDrag}
+                      onPointerCancel={cancelDrag}
                     >
+                      {editable && (
+                        <span
+                          class="handle handle-l"
+                          data-handle="left"
+                          onPointerDown={(e) => beginDrag(e, c, 'trim-left')}
+                        />
+                      )}
                       <span class="clip-label">{clipLabel(c, project)}</span>
-                    </button>
+                      {kfs.map((k) => (
+                        <span
+                          key={k.id}
+                          class="kf"
+                          data-kf={k.id}
+                          style={{ left: `${Math.min(du, Math.max(0, k.t)) * pxPerMs}px` }}
+                          aria-hidden="true"
+                        />
+                      ))}
+                      {editable && (
+                        <span
+                          class="handle handle-r"
+                          data-handle="right"
+                          onPointerDown={(e) => beginDrag(e, c, 'trim-right')}
+                        />
+                      )}
+                    </div>
                   );
                 })}
             </div>

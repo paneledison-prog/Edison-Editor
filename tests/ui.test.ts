@@ -31,12 +31,7 @@ let browser: Browser;
 
 beforeAll(async () => {
   if (!chromePath) return;
-  // vitest sets NODE_ENV=test, which would build a non-production bundle.
-  execFileSync('pnpm', ['-C', 'apps/ui', 'build'], {
-    cwd: ROOT,
-    stdio: 'pipe',
-    env: { ...process.env, NODE_ENV: 'production' },
-  });
+  // apps/ui/dist is built once by tests/global-setup.ts (with NODE_ENV=production)
   server = createServer((req, res) => {
     const p = join(
       DIST,
@@ -468,7 +463,7 @@ describe('live timeline in a real browser', () => {
   );
 
   it_(
-    'server is read-only, localhost-only, and does not serve files outside the UI build',
+    'server is localhost-only, refuses edits without the UI header, and does not serve files outside the UI build',
     async () => {
       const { dir } = seeded(1);
       const url = await serve(dir);
@@ -496,7 +491,7 @@ describe('live timeline in a real browser', () => {
         });
       expect((await req('/api/project')).status).toBe(200);
       expect((await req('/api/project', { host: 'evil.example' })).status).toBe(403);
-      expect((await req('/api/project', { method: 'POST' })).status).toBe(405);
+      expect((await req('/api/ops', { method: 'POST' })).status).toBe(403); // no x-studio-ui header
       expect((await req('/api/project', { method: 'DELETE' })).status).toBe(405);
       expect((await req('/../../../../etc/passwd')).status).toBe(404);
       expect((await req('/%2e%2e/%2e%2e/etc/passwd')).status).toBe(404);

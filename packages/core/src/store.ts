@@ -4,9 +4,11 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
+  rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { canonicalize, projectHash } from './canonical.js';
 import {
   stepApply,
@@ -125,28 +127,66 @@ export class ProjectStore {
     return new Set(log.map((e) => e.id));
   }
 
+  /**
+   * Two writers (the agent's CLI and the UI server) can act at once. A lock directory serializes the
+   * read-modify-write; a lock older than 30 s is from a killed process and is taken over.
+   */
+  private locked<T>(fn: () => T): T {
+    const lock = join(this.dir, '.studio', 'lock');
+    mkdirSync(dirname(lock), { recursive: true });
+    const until = Date.now() + 10_000;
+    for (;;) {
+      try {
+        mkdirSync(lock);
+        break;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+        try {
+          if (Date.now() - statSync(lock).mtimeMs > 30_000)
+            rmSync(lock, { recursive: true, force: true });
+        } catch {
+          /* released between the two calls: retry */
+        }
+        if (Date.now() > until)
+          throw new OpError('INVALID_ARGS', `project is locked by another writer (${lock})`);
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+      }
+    }
+    try {
+      return fn();
+    } finally {
+      rmSync(lock, { recursive: true, force: true });
+    }
+  }
+
   apply(
     specs: OpSpec[],
     opts: { actor?: Actor; label?: string; dryRun?: boolean; ctx?: Ctx } = {},
   ): Step {
-    const { project, log } = this.load();
-    const ctx = opts.ctx ?? defaultCtx(opts.actor ?? 'agent');
-    return this.commit(
-      stepApply(project, specs, ctx, projectHash, this.taken(log), opts.label),
-      !!opts.dryRun,
-    );
+    return this.locked(() => {
+      const { project, log } = this.load();
+      const ctx = opts.ctx ?? defaultCtx(opts.actor ?? 'agent');
+      return this.commit(
+        stepApply(project, specs, ctx, projectHash, this.taken(log), opts.label),
+        !!opts.dryRun,
+      );
+    });
   }
 
   undo(opts: { actor?: Actor; dryRun?: boolean; ctx?: Ctx } = {}): Step {
-    const { project, log } = this.load();
-    const ctx = opts.ctx ?? defaultCtx(opts.actor ?? 'agent');
-    return this.commit(stepUndo(project, log, ctx, projectHash, this.taken(log)), !!opts.dryRun);
+    return this.locked(() => {
+      const { project, log } = this.load();
+      const ctx = opts.ctx ?? defaultCtx(opts.actor ?? 'agent');
+      return this.commit(stepUndo(project, log, ctx, projectHash, this.taken(log)), !!opts.dryRun);
+    });
   }
 
   redo(opts: { actor?: Actor; dryRun?: boolean; ctx?: Ctx } = {}): Step {
-    const { project, log } = this.load();
-    const ctx = opts.ctx ?? defaultCtx(opts.actor ?? 'agent');
-    return this.commit(stepRedo(project, log, ctx, projectHash, this.taken(log)), !!opts.dryRun);
+    return this.locked(() => {
+      const { project, log } = this.load();
+      const ctx = opts.ctx ?? defaultCtx(opts.actor ?? 'agent');
+      return this.commit(stepRedo(project, log, ctx, projectHash, this.taken(log)), !!opts.dryRun);
+    });
   }
 
   stacks() {

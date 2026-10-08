@@ -27,10 +27,22 @@ export interface ProjectView {
     dur: number;
     srcIn?: number;
     props?: Record<string, unknown>;
-    keyframes?: Record<string, unknown[]>;
+    keyframes?: Record<string, Keyframe[]>;
+    fx?: { type: string; factor?: number }[];
     label?: string;
   }[];
   markers: { id: string; t: number; label: string }[];
+}
+export interface Keyframe {
+  id: string;
+  t: number;
+  v: number;
+  ease?: string;
+}
+/** One edit for the server: an op as the CLI would send it. */
+export interface OpSpec {
+  type: string;
+  args: Record<string, unknown>;
 }
 export type Status = 'connecting' | 'live' | 'offline' | 'no-server';
 
@@ -43,11 +55,16 @@ export function useLiveProject(): {
   timelineMs: number;
   status: Status;
   problem: string | null;
+  rev: string;
+  canUndo: boolean;
+  canRedo: boolean;
+  readOnly: boolean;
 } {
   const [project, setProject] = useState<ProjectView | null>(null);
   const [timelineMs, setTimelineMs] = useState(0);
   const [status, setStatus] = useState<Status>('connecting');
   const [problem, setProblem] = useState<string | null>(null);
+  const [meta, setMeta] = useState({ rev: '', canUndo: false, canRedo: false, readOnly: false });
 
   useEffect(() => {
     let es: EventSource | undefined;
@@ -69,6 +86,7 @@ export function useLiveProject(): {
         setProject(d.project);
         setTimelineMs(d.timelineMs);
         setProblem(null);
+        setMeta({ rev: d.rev, canUndo: !!d.canUndo, canRedo: !!d.canRedo, readOnly: !!d.readOnly });
         document.documentElement.setAttribute('data-rev', d.rev); // observable by tests and tooling
       });
       es.addEventListener('problem', (e) =>
@@ -80,5 +98,36 @@ export function useLiveProject(): {
       es?.close();
     };
   }, []);
-  return { project, timelineMs, status, problem };
+  return { project, timelineMs, status, problem, ...meta };
 }
+
+export interface WriteResult {
+  ok: boolean;
+  /** what to tell the person when it did not apply */
+  message?: string;
+  stale?: boolean;
+}
+
+/** POST an edit. The server answers 409 when an agent changed the project after `baseRev`; nothing is applied then. */
+async function post(path: string, body: unknown): Promise<WriteResult> {
+  try {
+    const r = await fetch(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-studio-ui': '1' },
+      body: JSON.stringify(body),
+    });
+    if (r.ok) return { ok: true };
+    const e = await r.json().catch(() => ({}));
+    return {
+      ok: false,
+      stale: r.status === 409,
+      message: e.message ?? `edit failed (${r.status})`,
+    };
+  } catch {
+    return { ok: false, message: 'could not reach the Studio server' };
+  }
+}
+export const sendOps = (baseRev: string, specs: OpSpec[], label: string) =>
+  post('/api/ops', { baseRev, specs, label });
+export const sendUndo = (baseRev: string) => post('/api/undo', { baseRev });
+export const sendRedo = (baseRev: string) => post('/api/redo', { baseRev });

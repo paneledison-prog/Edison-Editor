@@ -229,12 +229,15 @@ export const COMMANDS: CmdMeta[] = [
   cmd({
     name: 'ui',
     module: 'ui',
-    writes: false,
+    writes: true,
     summary:
-      'Serve the UI on localhost and push project changes to it. Read-only; stop with Ctrl+C.',
-    usage: 'studio ui [--port N]',
+      'Serve the UI on localhost, push project changes to it, and accept its edits as ops (actor ui). Stop with Ctrl+C.',
+    usage: 'studio ui [--port N] [--read-only]',
     example: 'studio ui --port 4173',
-    flags: [n('port', 'port (default 4173, 0 = any free port)')],
+    flags: [
+      n('port', 'port (default 4173, 0 = any free port)'),
+      b('read-only', 'refuse edits from the page'),
+    ],
   }),
   cmd({
     name: 'video.cut-silence',

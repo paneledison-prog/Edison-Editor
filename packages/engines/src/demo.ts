@@ -48,6 +48,9 @@ export function activitySpans(
   const stillBelow = o.stillBelow ?? 0.05;
   const lowBelow = o.lowBelow ?? 1.0;
   const minMs = o.minMs ?? 1000;
+  // A blinking spinner is 0 on every other sample: judge each second by its busiest sample, not by single samples.
+  const sm = p.act.map((_, i) => Math.max(...p.act.slice(Math.max(0, i - 2), i + 3)));
+  p = { ...p, act: sm };
   const runs = (pred: (v: number) => boolean): Interval[] => {
     const out: Interval[] = [];
     let a = -1;

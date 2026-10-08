@@ -14,10 +14,12 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-preact';
-import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
-import { useLiveProject, type ProjectView } from './api';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { sendOps, sendRedo, sendUndo, useLiveProject, type OpSpec, type ProjectView } from './api';
 import { Button, IconButton } from './components/Button';
+import { EaseEditor } from './components/EaseEditor';
 import { EmptyState, PanelHeader } from './components/PanelHeader';
+import { KF_STEP, frameMs, kfSetSpecs } from './timeline/edit';
 import { currentTheme, setTheme, type Theme } from './theme';
 import { snapToFrame, timecode } from './timeline/format';
 import { Timeline } from './timeline/Timeline';
@@ -30,14 +32,86 @@ const MAX_ZOOM = 2;
 
 const baseName = (p: string) => p.split('/').pop() ?? p;
 
+function KeyframeEditor({
+  project,
+  clipId,
+  editable,
+  onEdit,
+}: {
+  project: ProjectView;
+  clipId: string;
+  editable: boolean;
+  onEdit: (specs: OpSpec[], label: string) => void;
+}) {
+  const clip = project.clips.find((c) => c.id === clipId);
+  const [active, setActive] = useState<string | null>(null);
+  const fps = project.meta.fps;
+  if (!clip?.keyframes || !Object.keys(clip.keyframes).length) return null;
+  return (
+    <div data-testid="keyframes">
+      <dt>Keyframes</dt>
+      {Object.entries(clip.keyframes).map(([prop, kfs]) =>
+        kfs.map((k) => (
+          <div
+            key={k.id}
+            class={`kf-row ${active === k.id ? 'active' : ''}`}
+            data-kf-row={k.id}
+            tabIndex={0}
+            onFocus={() => setActive(k.id)}
+            onKeyDown={(e) => {
+              if (!editable) return;
+              const frame = Math.round(1000 / fps);
+              const step = KF_STEP[prop] ?? 0.05;
+              let next: { t?: number; v?: number } | null = null;
+              if (e.key === 'ArrowLeft')
+                next = { t: Math.max(0, k.t - frame * (e.shiftKey ? 10 : 1)) };
+              else if (e.key === 'ArrowRight')
+                next = { t: Math.min(clip.dur, k.t + frame * (e.shiftKey ? 10 : 1)) };
+              else if (e.key === 'ArrowUp')
+                next = { v: Math.round((k.v + step * (e.shiftKey ? 10 : 1)) * 1e4) / 1e4 };
+              else if (e.key === 'ArrowDown')
+                next = { v: Math.round((k.v - step * (e.shiftKey ? 10 : 1)) * 1e4) / 1e4 };
+              if (!next) return;
+              e.preventDefault();
+              e.stopPropagation();
+              if (next.t !== undefined) next.t = frameMs(next.t, fps);
+              if (next.t === k.t) return;
+              onEdit(kfSetSpecs(clip.id, prop, k, next), `nudge ${prop} keyframe`);
+            }}
+          >
+            <span>
+              {prop} <code>{k.t} ms</code> = <code>{k.v}</code>
+            </span>
+            <EaseEditor
+              value={k.ease ?? 'linear'}
+              disabled={!editable}
+              onChange={(ease) =>
+                onEdit(kfSetSpecs(clip.id, prop, k, { ease }), `ease ${prop} keyframe`)
+              }
+            />
+          </div>
+        )),
+      )}
+      <p class="muted">
+        Focus a row, then arrows: left and right move it a frame (Shift: ten), up and down change
+        the value.
+      </p>
+    </div>
+  );
+}
+
 function Inspector({
   project,
   selectedId,
   timelineMs,
+  editable,
+  onEdit,
 }: {
   project: ProjectView | null;
   selectedId: string | null;
   timelineMs: number;
+  editable: boolean;
+  onEdit: (specs: OpSpec[], label: string) => void;
 }) {
   const clip = project?.clips.find((c) => c.id === selectedId);
   if (!project)
@@ -80,6 +154,9 @@ function Inspector({
           <dd>{v}</dd>
         </div>
       ))}
+      {clip && (
+        <KeyframeEditor project={project} clipId={clip.id} editable={editable} onEdit={onEdit} />
+      )}
       {clip?.props && (
         <div>
           <dt>Props</dt>
@@ -94,7 +171,23 @@ function Inspector({
 
 export function App() {
   const [theme, setT] = useState<Theme>(currentTheme());
-  const { project, timelineMs, status, problem } = useLiveProject();
+  const { project, timelineMs, status, problem, rev, canUndo, canRedo, readOnly } =
+    useLiveProject();
+  const [tool, setTool] = useState<'select' | 'split'>('select');
+  const [notice, setNotice] = useState<string | null>(null);
+  const revRef = useRef(rev);
+  revRef.current = rev;
+  const editable = !!project && !readOnly && status === 'live';
+  const report = useCallback((r: { ok: boolean; message?: string }) => {
+    setNotice(r.ok ? null : (r.message ?? 'edit failed'));
+  }, []);
+  // Every edit names the revision it was made against; the server refuses it if an agent changed the project since.
+  const edit = useCallback(
+    async (specs: OpSpec[], label: string) => report(await sendOps(revRef.current, specs, label)),
+    [report],
+  );
+  const undo = useCallback(async () => report(await sendUndo(revRef.current)), [report]);
+  const redo = useCallback(async () => report(await sendRedo(revRef.current)), [report]);
   const [playheadMs, setPlayhead] = useState(0);
   const [selectedId, setSelected] = useState<string | null>(null);
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
@@ -111,38 +204,78 @@ export function App() {
   }, [project, selectedId]);
 
   const fps = project?.meta.fps ?? 30;
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement | null;
-      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable))
+  // The handler is read through a ref and subscribed once: re-subscribing after every state change leaves a gap
+  // in which fast key presses are lost.
+  const keyHandler = useRef<(e: KeyboardEvent) => void>(() => {});
+  keyHandler.current = (e: KeyboardEvent) => {
+    const el = e.target as HTMLElement | null;
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && editable) {
+      const k = e.key.toLowerCase();
+      if (k === 'z') {
+        e.preventDefault();
+        void (e.shiftKey ? redo() : undo());
+      } else if (k === 'y') {
+        e.preventDefault();
+        void redo();
+      }
+      return;
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (editable && project) {
+      if (e.key === 'v' || e.key === 'V') return void setTool('select');
+      if (e.key === 's' || e.key === 'S') {
+        e.preventDefault();
+        // split the selected clip at the playhead, else every clip under the playhead on the first track that has one
+        const t = playheadMs;
+        const target =
+          project.clips.find((c) => c.id === selectedId && t > c.start && t < c.start + c.dur) ??
+          project.clips.find((c) => t > c.start && t < c.start + c.dur);
+        if (target)
+          void edit(
+            [{ type: 'clip.split', args: { id: target.id, at: Math.round(t) } }],
+            `split ${target.id}`,
+          );
+        else setNotice('Move the playhead inside a clip to split it');
         return;
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-      const frame = 1000 / fps;
-      // Functional updates: two quick key presses must compose even if this effect has not re-run in between.
-      const clamp = (ms: number) => Math.min(Math.max(0, snapToFrame(ms, fps)), timelineMs);
-      const step = (d: number) => {
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
         e.preventDefault();
-        setPlayhead((p) => clamp(p + d));
-      };
-      const jump = (ms: number) => {
-        e.preventDefault();
-        setPlayhead(clamp(ms));
-      };
-      if (e.key === 'ArrowRight') step(frame * (e.shiftKey ? 10 : 1));
-      else if (e.key === 'ArrowLeft') step(-frame * (e.shiftKey ? 10 : 1));
-      else if (e.key === 'Home') jump(0);
-      else if (e.key === 'End') jump(timelineMs);
-      else if (e.key === '=' || e.key === '+') {
-        e.preventDefault();
-        setZoom((z) => clampZoom(z * 1.25));
-      } else if (e.key === '-') {
-        e.preventDefault();
-        setZoom((z) => clampZoom(z / 1.25));
-      } else if (e.key === 'Escape') setSelected(null);
+        void edit(
+          [{ type: e.shiftKey ? 'clip.ripple-delete' : 'clip.delete', args: { id: selectedId } }],
+          `${e.shiftKey ? 'ripple ' : ''}delete ${selectedId}`,
+        );
+        return;
+      }
+    }
+    const frame = 1000 / fps;
+    // Functional updates: two quick key presses must compose even if this effect has not re-run in between.
+    const clamp = (ms: number) => Math.min(Math.max(0, snapToFrame(ms, fps)), timelineMs);
+    const step = (d: number) => {
+      e.preventDefault();
+      setPlayhead((p) => clamp(p + d));
     };
+    const jump = (ms: number) => {
+      e.preventDefault();
+      setPlayhead(clamp(ms));
+    };
+    if (e.key === 'ArrowRight') step(frame * (e.shiftKey ? 10 : 1));
+    else if (e.key === 'ArrowLeft') step(-frame * (e.shiftKey ? 10 : 1));
+    else if (e.key === 'Home') jump(0);
+    else if (e.key === 'End') jump(timelineMs);
+    else if (e.key === '=' || e.key === '+') {
+      e.preventDefault();
+      setZoom((z) => clampZoom(z * 1.25));
+    } else if (e.key === '-') {
+      e.preventDefault();
+      setZoom((z) => clampZoom(z / 1.25));
+    } else if (e.key === 'Escape') setSelected(null);
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => keyHandler.current(e);
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [fps, timelineMs, clampZoom]);
+  }, []);
 
   const assets = useMemo(() => (project ? Object.entries(project.assets) : []), [project]);
   const aspect = project ? `${project.meta.width} / ${project.meta.height}` : '16 / 9';
@@ -166,10 +299,25 @@ export function App() {
           </span>
         )}
         <span class="spacer" />
-        <IconButton label="Undo" shortcut="Ctrl+Z" disabled>
+        {notice && (
+          <span class="notice" role="status" data-testid="notice">
+            {notice}
+          </span>
+        )}
+        <IconButton
+          label="Undo"
+          shortcut="Ctrl+Z"
+          disabled={!editable || !canUndo}
+          onClick={() => void undo()}
+        >
           <Undo2 {...ic} />
         </IconButton>
-        <IconButton label="Redo" shortcut="Ctrl+Shift+Z" disabled>
+        <IconButton
+          label="Redo"
+          shortcut="Ctrl+Shift+Z"
+          disabled={!editable || !canRedo}
+          onClick={() => void redo()}
+        >
           <Redo2 {...ic} />
         </IconButton>
         <IconButton
@@ -184,10 +332,21 @@ export function App() {
       </header>
 
       <nav class="rail" aria-label="Tools">
-        <IconButton label="Select" shortcut="V" pressed>
+        <IconButton
+          label="Select: drag clips to move, drag edges to trim"
+          shortcut="V"
+          pressed={tool === 'select'}
+          onClick={() => setTool('select')}
+        >
           <MousePointer2 {...ic} />
         </IconButton>
-        <IconButton label={`Split. ${LATER}`} shortcut="S" disabled>
+        <IconButton
+          label="Split: click a clip, or press S at the playhead"
+          shortcut="S"
+          pressed={tool === 'split'}
+          disabled={!editable}
+          onClick={() => setTool('split')}
+        >
           <Scissors {...ic} />
         </IconButton>
         <IconButton label={`Pan. ${LATER}`} shortcut="H" disabled>
@@ -239,7 +398,13 @@ export function App() {
 
       <aside class="panel inspector" aria-label="Inspector">
         <PanelHeader title={selectedId ? 'Clip' : 'Project'} />
-        <Inspector project={project} selectedId={selectedId} timelineMs={timelineMs} />
+        <Inspector
+          project={project}
+          selectedId={selectedId}
+          timelineMs={timelineMs}
+          editable={editable}
+          onEdit={edit}
+        />
       </aside>
 
       <section class="timeline" aria-label="Timeline">
@@ -300,6 +465,9 @@ export function App() {
             onSeek={setPlayhead}
             onSelect={setSelected}
             onZoom={(z) => setZoom(clampZoom(z))}
+            tool={tool}
+            editable={editable}
+            onEdit={edit}
           />
         ) : (
           <>
