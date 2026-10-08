@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { describe, expect, it } from 'vitest';
-import { argvFor, listTools, toolName } from '../packages/cli/src/cmds/mcp.js';
+import { argvFor, EXCLUDED, listTools, toolName } from '../packages/cli/src/cmds/mcp.js';
 import { COMMANDS } from '../packages/cli/src/registry.js';
 import { tmpDir } from './helpers.js';
 
@@ -43,9 +43,9 @@ function client(dir: string) {
 }
 
 describe('P7: MCP server over the CLI', () => {
-  it('every command except ui and mcp is a tool with a valid schema, and names are unique', () => {
+  it('every command except the long-running servers and mcp is a tool with a valid schema, and names are unique', () => {
     const tools = listTools();
-    expect(tools.length).toBe(COMMANDS.length - 2);
+    expect(tools.length).toBe(COMMANDS.length - EXCLUDED.size);
     expect(new Set(tools.map((t) => t.name)).size).toBe(tools.length);
     for (const t of tools) {
       expect(t.name).toMatch(/^studio_[a-z0-9_]+$/);
@@ -111,7 +111,7 @@ describe('P7: MCP server over the CLI', () => {
     c.notify('notifications/initialized');
     expect((await c.call('ping')).result).toEqual({});
     const list = await c.call('tools/list');
-    expect(list.result.tools.length).toBe(COMMANDS.length - 2);
+    expect(list.result.tools.length).toBe(COMMANDS.length - EXCLUDED.size);
     // init is an op-less command; then every state change below is an op the CLI logs
     const init2 = await c.tool('studio_init', { args: ['mcp-demo'], width: 640, height: 360 });
     expect(init2.isError).toBe(false);

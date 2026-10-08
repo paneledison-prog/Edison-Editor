@@ -534,6 +534,8 @@ describe.skipIf(!haveVulkanBin)('upscale', () => {
       expect(e.json.error.fix).toMatch(/Vulkan|mesa/);
       return;
     } // no usable device: the failure is itself the correct behaviour
+    // A 32 px image is smaller than both estimate crops: the prediction must still be a finite number, not null.
+    expect(Number.isFinite(e.json.data.predictedMs), JSON.stringify(e.json.data)).toBe(true);
     expect(e.json.data.predictedMs).toBeGreaterThan(0);
     const r = await studio(['image', 'upscale', img, '--scale', '4', '--project', dir]);
     expect(r.json.ok, r.stdout).toBe(true);

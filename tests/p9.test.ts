@@ -98,9 +98,10 @@ describe('plugin loading', () => {
     expect(r.json.ok).toBe(true);
     expect(r.json.data.problems).toEqual([]);
     const ids = r.json.data.plugins.map((p: any) => p.id).sort();
-    expect(ids).toEqual(['glow', 'light-fx', 'logo-reveal', 'shapes']);
-    for (const p of r.json.data.plugins) expect(p.bytes).toBeLessThan(16 * 1024);
-    expect(r.json.data.totalBytes).toBeLessThan(40 * 1024);
+    expect(ids).toEqual(['color', 'glow', 'light-fx', 'logo-reveal', 'shapes']);
+    // The built-in colour plugin is 28 effects in one manifest: it gets its own, still small, budget.
+    for (const p of r.json.data.plugins) expect(p.bytes).toBeLessThan(p.id === 'color' ? 40 * 1024 : 16 * 1024);
+    expect(r.json.data.totalBytes).toBeLessThan(64 * 1024);
   });
 });
 

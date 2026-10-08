@@ -266,8 +266,12 @@ export async function estimateUpscale(
     };
     const ts = await t(small);
     const tb = await t(big);
-    const perMp = Math.max(0, (tb - ts) / (big.mp - small.mp));
-    const fixed = Math.max(0, ts - perMp * small.mp);
+    // An image no larger than the small crop yields two crops of one size: there is no slope to fit (it was 0/0 or x/0,
+    // which JSON turns into null), and the whole image costs about what either crop did.
+    const dMp = big.mp - small.mp;
+    const sloped = dMp > 1e-5;
+    const perMp = sloped ? Math.max(0, (tb - ts) / dMp) : 0;
+    const fixed = sloped ? Math.max(0, ts - perMp * small.mp) : (ts + tb) / 2;
     return {
       fixedMs: Math.round(fixed),
       msPerInputMegapixel: Math.round(perMp),
