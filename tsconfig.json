@@ -21,6 +21,9 @@
     },
     {
       "path": "packages/workspace"
+    },
+    {
+      "path": "packages/vision"
     }
   ]
 }

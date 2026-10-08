@@ -143,6 +143,8 @@ importers:
         specifier: workspace:*
         version: link:../engines
 
+  packages/vision: {}
+
   packages/workspace: {}
 
 packages:
