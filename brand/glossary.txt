@@ -1,0 +1,4 @@
+# Words that must be spelled exactly this way in transcripts (one per line, # comments allowed).
+Studio
+FFmpeg
+Whisper

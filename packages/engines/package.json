@@ -1,1 +1,17 @@
-{ "name": "@studio/engines", "version": "0.0.0", "private": true, "type": "module", "main": "src/index.ts", "exports": { ".": "./src/index.ts" }, "dependencies": { "@studio/core": "workspace:*" } }
+{
+  "name": "@studio/engines",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./images": "./src/images.ts"
+  },
+  "dependencies": {
+    "@studio/core": "workspace:*",
+    "sharp": "^0.35.5",
+    "@studio/motion": "workspace:*",
+    "playwright-core": "^1.64.0"
+  }
+}

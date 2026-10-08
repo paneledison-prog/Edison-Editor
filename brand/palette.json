@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "note": "Brand tokens for motion graphics and captions. Templates reference these as \"token:<name>\"; no template holds a color literal.",
+  "colors": {
+    "bg": "#0e0e12",
+    "fg": "#f6f6f8",
+    "muted": "#b9b9c4",
+    "accent": "#ffd23f",
+    "onAccent": "#0e0e12",
+    "panel": "#15151cf2",
+    "captionText": "#ffffff",
+    "captionBox": "#000000b8",
+    "captionOutline": "#000000",
+    "captionHighlight": "#ff3d71",
+    "checkerLight": "#bdbdbd",
+    "checkerDark": "#8a8a8a"
+  },
+  "fonts": {
+    "sans": {
+      "family": "Inter",
+      "files": { "400": "brand/fonts/Inter-Regular.otf", "700": "brand/fonts/Inter-Bold.otf" }
+    }
+  }
+}

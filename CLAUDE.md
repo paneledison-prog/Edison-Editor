@@ -16,4 +16,4 @@ Core rules:
 - New dependency: add size + license to `docs/licenses.md` in the same commit.
 - `helper/skill` and `.claude/skills/studio-media` must stay identical (`pnpm skill:check`).
 
-Commands: `pnpm build`, `pnpm test`, `pnpm typecheck`, `pnpm tokens:check`.
+Commands: `pnpm build`, `pnpm test`, `pnpm typecheck`, `pnpm tokens:check`, `pnpm ui:build`, `pnpm bundle:check`, `pnpm studio <cmd>`.

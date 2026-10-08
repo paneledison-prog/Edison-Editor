@@ -18,8 +18,8 @@
 ## Backends
 
 - **FFmpeg path:** build one filtergraph for the whole export where possible. Avoid chaining many intermediate files; each one costs a generation of quality and time.
-- **Remotion path:** render overlays or the whole piece. When mixing, render only the animated layers as alpha overlays and composite them in FFmpeg so the source video is encoded once.
-- The router prints `backend: ffmpeg|remotion|hybrid` and the reason.
+- **Motion path:** render composition clips as alpha frames (PNG sequence, cached) and let FFmpeg composite them. The `overlay-alpha` preset exports the composition clips alone as ProRes 4444 (or `--alpha-format webm`). When mixing, render only the animated layers as alpha overlays and composite them in FFmpeg so the source video is encoded once.
+- The router prints `backend: ffmpeg|hybrid` and the reason.
 
 ## Safe writes
 

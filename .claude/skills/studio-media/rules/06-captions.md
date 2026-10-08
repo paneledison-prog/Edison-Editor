@@ -34,7 +34,7 @@ Timing: cue starts at the first word start minus 0 to 2 frames and ends at the l
 
 | Need | Format |
 |---|---|
-| Social, silent autoplay | **burned in** (Remotion captions comp or FFmpeg `subtitles`/ASS) |
+| Social, silent autoplay | **burned in** (`captions` motion template, via `studio captions add`) |
 | Web player, YouTube upload | **sidecar** `.srt` or `.vtt`, plus optionally burned-in variant |
 | Styled sidecar | `.ass` |
 

@@ -14,7 +14,7 @@ Priorities, in order: **correctness → verifiability → lightweight → speed 
 project.studio.json  ◀─── ops (validated, logged, undoable) ◀─── CLI / UI / agent
         │
         ├──▶ router ──▶ ffmpeg backend    (cut, concat, crop, scale, overlay, audio chain, burn-in)
-        │          └──▶ remotion backend  (animated text/shapes, keyframes, custom easing, templates)
+        │          └──▶ motion renderer + FFmpeg ("hybrid": composition clips as alpha frames; keyframes and transforms are not implemented)
         │
         └──▶ UI (watches file)  ·  inspect (frames, sheets, loudness, QC)
 ```
@@ -91,7 +91,7 @@ Verify each license against your use before shipping. Record the verified result
 | rembg (ONNX) | background removal | **Models vary in license.** Some are non-commercial. Record which model is used. |
 | Real-ESRGAN ncnn-vulkan | 2x/4x upscaling | Needs a Vulkan-capable GPU or falls back to slow CPU; `doctor` reports which. |
 | RNNoise (`arnndn`) or DeepFilterNet | speech denoise | `afftdn` is built into FFmpeg and needs no model. |
-| Remotion | code-driven motion graphics | **Remotion has its own license**: free for individuals and small companies, paid for larger ones. Confirm before commercial use and record the result. |
+| Chromium via playwright-core | motion templates and burned-in captions | Replaces Remotion, whose license tiers were rejected. Apache-2.0 driver plus a system Chromium; see `docs/licenses.md`. |
 | Vite + Preact + TS | UI | ~4 KB framework core. No UI kit. Components are ours, styled only with tokens. |
 
 ## 6. CLI output contract
@@ -131,4 +131,4 @@ Vertical safe zone default (conservative, keep text and key UI inside): leave ab
 
 ## 8. Glossary
 
-**Op:** one validated, reversible change to the project. **Proxy:** low-res, short-GOP copy for scrubbing. **Peaks:** cached waveform min/max pairs. **QC:** automated checks run on a render. **Backend router:** picks FFmpeg or Remotion for a render.
+**Op:** one validated, reversible change to the project. **Proxy:** low-res, short-GOP copy for scrubbing. **Peaks:** cached waveform min/max pairs. **QC:** automated checks run on a render. **Backend router:** picks FFmpeg alone, or the hybrid FFmpeg + motion renderer path, for a render.

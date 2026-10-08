@@ -9,3 +9,4 @@ renders/
 .DS_Store
 coverage/
 tests/.fixtures/
+tools/.venv/

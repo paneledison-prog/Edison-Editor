@@ -8,17 +8,22 @@
   },
   "packageManager": "pnpm@10.28.0",
   "scripts": {
-    "build": "node scripts/build-cli.mjs",
+    "build": "node scripts/build-motion.mjs && node scripts/build-cli.mjs",
     "typecheck": "tsc -b",
     "test": "vitest run",
     "format": "prettier --write .",
     "skill:check": "node scripts/skill-sync-check.mjs",
-    "tokens:check": "node scripts/tokens-check.mjs"
+    "tokens:check": "node scripts/tokens-check.mjs",
+    "ui:build": "pnpm -C apps/ui build",
+    "bundle:check": "node scripts/bundle-size.mjs",
+    "studio": "node packages/cli/dist/studio.js"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "esbuild": "^0.25.0",
+    "playwright-core": "^1.64.0",
     "prettier": "^3.3.0",
+    "sharp": "^0.35.5",
     "typescript": "^5.6.0",
     "vitest": "^3.0.0"
   },

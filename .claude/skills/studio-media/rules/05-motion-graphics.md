@@ -1,4 +1,6 @@
-# 05 Motion graphics (Remotion)
+# 05 Motion graphics (in-house Chromium renderer)
+
+> Remotion was rejected for licensing (see `docs/licenses.md`). Templates are HTML/CSS/TS in `motion/src/`, rendered frame by frame through headless Chromium (`packages/engines/src/motion.ts`). The model, the determinism rules, and the verification below are unchanged; only the API names differ.
 
 ## Model
 
@@ -14,9 +16,9 @@ A clip of type `comp` references a composition id and props:
 
 ## Determinism rules (a render must be repeatable)
 
-- Drive everything by `useCurrentFrame()`. No CSS transitions, CSS animations, `setTimeout`, `Date.now()`, or unseeded `Math.random()`.
-- Use `interpolate(frame, [..], [..], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' })` and `spring()` with explicit config. Map the project's easing names to one shared function module used by both Remotion and the UI.
-- Load fonts before rendering (`@remotion/google-fonts` or local files via `staticFile`) and block the render until loaded. Missing fonts must fail the render, not substitute silently.
+- Drive everything by the frame number passed to `studio.render(frame)` (time = frame x 1000 / fps). No CSS transitions, CSS animations, `setTimeout`, `Date.now()`, or unseeded `Math.random()`.
+- Use `ramp(t, start, dur, ease)` from `motion/src/ease.ts` (clamped, eased progress); it is the one easing module and accepts the project's easing names (`expo.out`, `bezier(...)`, `hold`). The UI does not use it yet.
+- Fonts come from `brand/palette.json` (`fonts`), are loaded with `FontFace` before the first frame, and a missing or corrupt file fails the render (exit 3), not a silent substitute. Glyph coverage is not checked.
 - Video inside compositions uses `<OffthreadVideo>`. Images via `<Img>`. Reference assets with `staticFile` or absolute local paths, not URLs.
 - Duration and size come from props through `calculateMetadata`, so changing text length can change duration deliberately.
 
@@ -45,4 +47,4 @@ A clip of type `comp` references a composition id and props:
 
 ## Licensing
 
-Remotion's license depends on who is using it and how. Confirm and note it in `docs/licenses.md` before any commercial use. If it does not fit, the fallback is a Chromium frame-capture renderer built in-house on the same templates; do not build it unless asked.
+Remotion's license did not fit, so the in-house renderer above is used. It depends on `playwright-core` (Apache-2.0) and a system Chromium; see `docs/licenses.md`.

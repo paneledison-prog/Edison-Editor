@@ -2,3 +2,5 @@ helper/
 .claude/
 docs/kit/
 pnpm-lock.yaml
+apps/ui/src/tokens.css
+apps/ui/dist/
