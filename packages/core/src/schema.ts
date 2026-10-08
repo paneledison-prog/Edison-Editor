@@ -99,6 +99,17 @@ const num = (lo: number, hi: number) => z.number().min(lo).max(hi);
  */
 export const Fx = z.discriminatedUnion('type', [
   z.object({ type: z.literal('speed'), factor: num(0.1, 16) }).strict(),
+  // Blurs a rectangle (fractions of the clip's frame) for the whole clip: a privacy fix for a visible secret.
+  z
+    .object({
+      type: z.literal('blur-region'),
+      x: num(0, 1),
+      y: num(0, 1),
+      w: num(0.005, 1),
+      h: num(0.005, 1),
+      strength: num(2, 80).optional(),
+    })
+    .strict(),
   z.object({ type: z.literal('gain'), db: num(-60, 40) }).strict(),
   z.object({ type: z.literal('highpass'), hz: num(20, 500) }).strict(),
   z

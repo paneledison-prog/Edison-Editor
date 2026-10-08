@@ -489,6 +489,16 @@ export function clipSpec(
       words: c.words.map((w) => ({ ...w, start: w.start - clip.start, end: w.end - clip.start })),
     }));
   }
+  // A logo is a project-relative PNG; the page gets it as a data URL, so the file content is part of the cache key.
+  if (typeof props['logo'] === 'string') {
+    const f = resolve(projectDir, props['logo'] as string);
+    if (!existsSync(f))
+      throw new EngineError(
+        'INVALID_INPUT',
+        `${clip.id}: logo file ${props['logo']} does not exist`,
+      );
+    props['logo'] = `data:image/png;base64,${readFileSync(f).toString('base64')}`;
+  }
   return { comp: clip.comp!, props, ...canvas, durMs: clip.dur, projectDir };
 }
 

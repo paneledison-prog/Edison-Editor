@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { displaySize, speedOf, type Clip, type Fx, type Project } from '@studio/core';
 import { MAX_AUDIO_SPEED, clipAudioChain, dbToLin } from './audiofx.js';
 import { EngineError } from './run.js';
-import { hasMotion, zoomFilter } from './zoom.js';
+import { blurRegionFilter, hasMotion, zoomFilter } from './zoom.js';
 import type { Preset } from './presets.js';
 
 export interface Plan {
@@ -244,24 +244,25 @@ export function compile(inp: CompileInput): Plan {
       const head = a.kind === 'image' ? `fps=${fps}` : `setpts=(PTS-STARTPTS)/${speed},fps=${fps}`;
       const cm = 'flags=lanczos:out_color_matrix=bt709:out_range=tv';
       const zf = zoomFilter(c, width, height);
+      const bf = blurRegionFilter(c, width, height, nV);
       if (t.type === 'graphics' && a.kind === 'image') {
         vLines.push(
-          `[${k}:v]${head},scale='min(iw,${width})':'min(ih,${height})':force_original_aspect_ratio=decrease,format=yuva420p,${zf}setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
+          `[${k}:v]${head},scale='min(iw,${width})':'min(ih,${height})':force_original_aspect_ratio=decrease,format=yuva420p,${bf}${zf}setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
         );
       } else if (reframe === 'blur') {
         vLines.push(
           `[${k}:v]${head},split=2[bs${nV}][fs${nV}]`,
           `[bs${nV}]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},boxblur=24:2[bb${nV}]`,
           `[fs${nV}]scale=${width}:${height}:force_original_aspect_ratio=decrease:${cm}[ff${nV}]`,
-          `[bb${nV}][ff${nV}]overlay=(W-w)/2:(H-h)/2,setsar=1,format=yuv420p,${zf}setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
+          `[bb${nV}][ff${nV}]overlay=(W-w)/2:(H-h)/2,setsar=1,format=yuv420p,${bf}${zf}setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
         );
       } else if (reframe === 'center-crop') {
         vLines.push(
-          `[${k}:v]${head},scale=${width}:${height}:force_original_aspect_ratio=increase:${cm},crop=${width}:${height},setsar=1,format=yuv420p,${zf}setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
+          `[${k}:v]${head},scale=${width}:${height}:force_original_aspect_ratio=increase:${cm},crop=${width}:${height},setsar=1,format=yuv420p,${bf}${zf}setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
         );
       } else {
         vLines.push(
-          `[${k}:v]${head},scale=${width}:${height}:force_original_aspect_ratio=decrease:${cm},pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=${bg},setsar=1,format=yuv420p,${zf}setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
+          `[${k}:v]${head},scale=${width}:${height}:force_original_aspect_ratio=decrease:${cm},pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=${bg},setsar=1,format=yuv420p,${bf}${zf}setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
         );
       }
       if (d.w && d.h && t.type === 'video') {

@@ -105,3 +105,52 @@ export function clipContext(inv: Invocation, clipId: string | undefined): ClipCt
     srcToMs: srcFromMs + Math.round(clip.dur * speed),
   };
 }
+
+export interface SelfResult {
+  code: number;
+  json: any;
+  stderr: string;
+}
+/** Runs another `studio` command in a project directory (same bundle) and returns its JSON, without throwing on failure. */
+export function selfRun(
+  dir: string,
+  args: string[],
+  log?: (m: string) => void,
+): Promise<SelfResult> {
+  return new Promise((resolveP) => {
+    import('node:child_process').then(({ execFile }) => {
+      execFile(
+        process.execPath,
+        [process.argv[1]!, ...args, '--project', dir],
+        { maxBuffer: 512 * 1024 * 1024, timeout: 3 * 3600_000 },
+        (err, stdout, stderr) => {
+          let json: any;
+          try {
+            json = JSON.parse(stdout);
+          } catch {
+            json = undefined;
+          }
+          if (log && stderr)
+            for (const l of stderr.split('\n').filter(Boolean).slice(-3)) log(`  ${l}`);
+          resolveP({ code: err ? ((err as any).code as number) || 1 : 0, json, stderr });
+        },
+      );
+    });
+  });
+}
+
+/** Like selfRun, but a failure becomes a CliError carrying the child's message, so a build stops at the failing step. */
+export async function must(dir: string, args: string[], log?: (m: string) => void): Promise<any> {
+  const r = await selfRun(dir, args, log);
+  if (r.code !== 0 || !r.json?.ok) {
+    const e = r.json?.error;
+    const err = new Error(
+      `step "studio ${args.slice(0, 2).join(' ')}" failed: ${e?.message ?? (r.stderr.trim().split('\n').pop() || 'exit ' + r.code)}`,
+    );
+    (err as any).code = e?.code ?? 'ENGINE_FAILED';
+    (err as any).fix = e?.fix;
+    (err as any).exit = r.code === 2 || r.code === 3 || r.code === 4 || r.code === 5 ? r.code : 1;
+    throw err;
+  }
+  return r.json;
+}

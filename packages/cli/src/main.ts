@@ -32,6 +32,7 @@ const loaders: Record<CmdMeta['module'], () => Promise<Record<string, unknown>>>
   models: () => import('./cmds/models.js'),
   motion: () => import('./cmds/motion.js'),
   captions: () => import('./cmds/captions.js'),
+  demo: () => import('./cmds/demo.js'),
 };
 
 function findCommand(argv: string[]): { meta: CmdMeta; rest: string[] } | undefined {

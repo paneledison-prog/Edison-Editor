@@ -109,6 +109,16 @@ export function validateProject(p: unknown): Issue[] {
             `clips.${c.id}.fx`,
           );
       }
+      if (f.type === 'blur-region') {
+        if (track.type !== 'video' && track.type !== 'graphics')
+          add('FX_INVALID', `clip ${c.id}: blur-region needs a video track`, `clips.${c.id}.fx`);
+        else if (f.x + f.w > 1.0001 || f.y + f.h > 1.0001)
+          add(
+            'FX_INVALID',
+            `clip ${c.id}: blur-region extends outside the frame`,
+            `clips.${c.id}.fx`,
+          );
+      }
       if (
         [
           'speed',

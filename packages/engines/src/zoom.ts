@@ -116,3 +116,25 @@ export function zoomFilter(c: Clip, width: number, height: number): string {
     `crop=${width}:${height}:x='min(max((${cx})*${sw}-${width / 2},0),${sw}-${width})':y='min(max((${cy})*${sh}-${height / 2},0),${sh}-${height})',`
   );
 }
+
+/**
+ * `blur-region`: blurs a rectangle for the whole clip, inside the fitted canvas frame. Written as a comma chain that
+ * ends with a trailing comma, like zoomFilter. The region is in fractions of the canvas, which equals the clip frame
+ * for a clip that fills the canvas; for letterboxed clips it is a canvas fraction.
+ */
+export function blurRegionFilter(c: Clip, width: number, height: number, n: number): string {
+  const fx = (c.fx ?? []).filter((f) => f.type === 'blur-region');
+  if (!fx.length) return '';
+  let out = '';
+  fx.forEach((f, i) => {
+    if (f.type !== 'blur-region') return;
+    const x = 2 * Math.floor((f.x * width) / 2);
+    const y = 2 * Math.floor((f.y * height) / 2);
+    const w = Math.max(2, 2 * Math.ceil((f.w * width) / 2));
+    const h = Math.max(2, 2 * Math.ceil((f.h * height) / 2));
+    const k = `br${n}_${i}`;
+    const r = Math.max(2, Math.round(f.strength ?? 24));
+    out += `split=2[${k}a][${k}b];[${k}b]crop=${w}:${h}:${x}:${y},boxblur=${r}:3[${k}c];[${k}a][${k}c]overlay=${x}:${y},`;
+  });
+  return out;
+}

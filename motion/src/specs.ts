@@ -4,7 +4,8 @@
  */
 import { EASE_RE } from '@studio/core';
 
-export type PropType = 'string' | 'number' | 'color' | 'ease' | 'boolean' | 'enum' | 'box' | 'cues';
+export type PropType =
+  'string' | 'number' | 'color' | 'ease' | 'boolean' | 'enum' | 'box' | 'cues' | 'list';
 export interface PropSpec {
   type: PropType;
   default?: unknown;
@@ -122,6 +123,12 @@ export const TEMPLATES: Record<string, TemplateSpec> = {
       },
       color: colorProp('token:accent', 'box and arrow color'),
       labelColor: colorProp('token:onAccent', 'label text color'),
+      layout: {
+        type: 'enum',
+        values: ['horizontal', 'vertical'],
+        default: 'horizontal',
+        desc: 'vertical enlarges the label for phone-sized canvases',
+      },
       strokePx: {
         type: 'number',
         default: 6,
@@ -160,6 +167,7 @@ export const TEMPLATES: Record<string, TemplateSpec> = {
     props: {
       title: str('title', 80, false, 'Episode title'),
       subtitle: str('subtitle', 120, true),
+      logo: str('logo image path (PNG), relative to the project', 300, true),
       background: colorProp('token:bg', 'background color, or "transparent"'),
       color: colorProp('token:fg', 'title color'),
       subtitleColor: colorProp('token:muted', 'subtitle color'),
@@ -175,9 +183,43 @@ export const TEMPLATES: Record<string, TemplateSpec> = {
     props: {
       title: str('message', 80, false, 'Thanks for watching'),
       cta: str('call to action', 80, true),
+      logo: str('logo image path (PNG), relative to the project', 300, true),
       background: colorProp('token:bg', 'background color, or "transparent"'),
       color: colorProp('token:fg', 'message color'),
       accent: colorProp('token:accent', 'call-to-action color'),
+      ...COMMON,
+    },
+  },
+  'cursor-highlight': {
+    id: 'cursor-highlight',
+    summary:
+      'Expanding click rings at given moments and positions (positions are fractions of the canvas).',
+    kind: 'overlay',
+    defaultDurMs: 5000,
+    props: {
+      clicks: { type: 'list', desc: 'list of {t (ms from clip start), x, y (0..1 of the canvas)}' },
+      ringMs: { type: 'number', default: 600, min: 200, max: 2000, desc: 'ring duration in ms' },
+      sizePct: {
+        type: 'number',
+        default: 5,
+        min: 1,
+        max: 15,
+        desc: 'final ring diameter as % of the short side',
+      },
+      color: colorProp('token:accent', 'ring color'),
+      ease: ease('cubic.out', 'ring growth easing'),
+    },
+  },
+  'speed-badge': {
+    id: 'speed-badge',
+    summary:
+      'Small pill (for example "6x") that marks a sped-up section, top right inside the safe area.',
+    kind: 'overlay',
+    defaultDurMs: 2000,
+    props: {
+      label: str('badge text', 12, false, '4x'),
+      color: colorProp('token:onAccent', 'text color'),
+      background: colorProp('token:accent', 'pill color'),
       ...COMMON,
     },
   },
@@ -313,6 +355,10 @@ export function resolveProps(
       }
       case 'cues':
         if (!Array.isArray(v) || !v.length) bad('expected a non-empty cue list');
+        else out[k] = v;
+        break;
+      case 'list':
+        if (!Array.isArray(v) || !v.length) bad('expected a non-empty list');
         else out[k] = v;
         break;
     }

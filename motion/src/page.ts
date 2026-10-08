@@ -263,12 +263,13 @@ const T: Record<string, (c: Ctx) => Instance> = {
     const perim = 2 * (b.w + b.h);
     rect.setAttribute('stroke-dasharray', String(perim));
     svg.appendChild(rect);
+    const vk = p['layout'] === 'vertical' ? 1.35 : 1;
     const pill = h(
       'div',
       {
         background: p['color'],
         color: p['labelColor'],
-        font: `700 ${34 * u}px/1 "${c.family}"`,
+        font: `700 ${34 * u * vk}px/1 "${c.family}"`,
         padding: `${14 * u}px ${24 * u}px`,
         borderRadius: px(10 * u),
         whiteSpace: 'nowrap',
@@ -384,6 +385,71 @@ const T: Record<string, (c: Ctx) => Instance> = {
   },
   outro(c) {
     return card(c, 'title', 'cta', true);
+  },
+
+  'cursor-highlight'(c) {
+    const { W, H, p } = c;
+    const d = (p['sizePct'] / 100) * Math.min(W, H);
+    const clicks: { t: number; x: number; y: number }[] = p['clicks'];
+    const rings = clicks.map((k) =>
+      h(
+        'div',
+        {
+          display: 'none',
+          left: px(k.x * W - d / 2),
+          top: px(k.y * H - d / 2),
+          width: px(d),
+          height: px(d),
+          borderRadius: '50%',
+          border: `${Math.max(3, d / 12)}px solid ${p['color']}`,
+        },
+        undefined,
+        c.root,
+      ),
+    );
+    return {
+      update(t) {
+        clicks.forEach((k, i) => {
+          const u = (t - k.t) / p['ringMs'];
+          const el = rings[i]!;
+          if (u < 0 || u >= 1) {
+            el.style.display = 'none';
+            return;
+          }
+          const g = easeFn(p['ease'])(u);
+          el.style.display = 'block';
+          el.style.transform = `scale(${0.35 + 0.65 * g})`;
+          el.style.opacity = String(1 - u * u);
+        });
+      },
+    };
+  },
+
+  'speed-badge'(c) {
+    const { u, W, p } = c;
+    const pill = h(
+      'div',
+      {
+        background: p['background'],
+        color: p['color'],
+        font: `800 ${40 * u}px/1 "${c.family}"`,
+        padding: `${12 * u}px ${24 * u}px`,
+        borderRadius: px(999),
+        whiteSpace: 'nowrap',
+      },
+      p['label'],
+      c.root,
+    );
+    c.watch(pill, 'speed badge', 'safe');
+    const x = W - c.safe.r - pill.offsetWidth;
+    Object.assign(pill.style, { left: px(x), top: px(c.safe.t + 12 * u) });
+    return {
+      update(t) {
+        const { a } = life(c, t);
+        pill.style.opacity = String(a);
+        pill.style.transform = `scale(${0.8 + 0.2 * a})`;
+      },
+    };
   },
 
   captions(c) {
@@ -532,6 +598,17 @@ function card(c: Ctx, k1: string, k2: string, isOutro: boolean): Instance {
     undefined,
     c.root,
   );
+  if (p['logo']) {
+    const img = document.createElement('img');
+    img.src = p['logo'];
+    Object.assign(img.style, {
+      position: 'relative',
+      height: px(110 * u),
+      marginBottom: px(36 * u),
+      objectFit: 'contain',
+    });
+    col.appendChild(img);
+  }
   const t1 = h(
     'div',
     { position: 'relative', font: `800 ${96 * u}px/1.08 "${c.family}"`, color: p['color'] },
@@ -650,6 +727,8 @@ const watched: { el: Element; label: string; within: 'frame' | 'safe' }[] = [];
     };
     fpsG = a.fps;
     inst = t(ctxG);
+    // Images (a logo) must be decoded before the first frame; a broken one fails the render.
+    await Promise.all(Array.from(document.images).map((im) => im.decode()));
     // Overflow check at the hold point: every watched element must lie inside the frame (or the safe area).
     inst.update(Math.max(0, a.durMs - a.props['exitMs'] - 1));
     for (const w of watched) {

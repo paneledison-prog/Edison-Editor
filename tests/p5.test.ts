@@ -217,3 +217,128 @@ describe('zoom render (frame-exact crop)', () => {
     expect(mad(zoomed, grab(out, 'null', 0.5))).toBeGreaterThan(15);
   }, 120_000);
 });
+
+import { clusterClicks, parseEvents, planZoom, type DemoEvent } from '@studio/core';
+
+describe('events.jsonl', () => {
+  const frame = { w: 1920, h: 1080 };
+  it('parses valid lines and reports each bad one by line number', () => {
+    const txt = [
+      '{"t":100,"type":"move","x":10,"y":10}',
+      '{"t":900,"type":"click","x":500,"y":300,"button":"left","target":"Save"}',
+      'not json',
+      '{"t":-5,"type":"click","x":1,"y":1}',
+      '{"t":1000,"type":"tap","x":1,"y":1}',
+      '{"t":1100,"type":"click","x":5000,"y":1}',
+      '{"t":1200,"type":"key"}',
+    ].join('\n');
+    const r = parseEvents(txt, frame, 60_000);
+    expect(r.events.map((e) => e.type)).toEqual(['move', 'click', 'key']);
+    expect(r.problems).toHaveLength(4);
+    expect(r.problems[0]).toMatch(/line 3/);
+    expect(r.problems.join('|')).toMatch(/outside the 1920x1080 recording/);
+    expect(r.outOfRange).toBe(1);
+  });
+});
+
+describe('autozoom planner', () => {
+  const click = (t: number, x: number, y: number): DemoEvent => ({ t, type: 'click', x, y });
+  const opts = { frame: { w: 3840, h: 2160 }, clipDurMs: 60_000, outWidth: 1920 };
+
+  it('merges nearby clicks into one cluster and splits distant ones', () => {
+    const c = clusterClicks(
+      [click(1000, 500, 500), click(1800, 600, 520), click(4000, 600, 520), click(4500, 2400, 500)],
+      2560,
+    );
+    expect(c.map((x) => x.n)).toEqual([2, 1, 1]);
+  });
+
+  it('starts zooming before the click, eases expo.inOut, holds, and every keyframe is valid', () => {
+    const p = planZoom([click(5000, 800, 600), click(5600, 840, 620)], opts);
+    expect(p.steps.map((s) => s.kind)).toEqual(['zoom-in', 'zoom-out']);
+    const zin = p.steps[0]!;
+    expect(5000 - zin.startMs).toBeGreaterThanOrEqual(400);
+    expect(5000 - zin.startMs).toBeLessThanOrEqual(600);
+    expect(zin.endMs - zin.startMs).toBeGreaterThanOrEqual(450);
+    expect(zin.endMs - zin.startMs).toBeLessThanOrEqual(600);
+    expect(p.steps[1]!.startMs).toBeGreaterThanOrEqual(5600 + 800);
+    expect(zin.scale).toBeGreaterThanOrEqual(1.7);
+    expect(zin.scale).toBeLessThanOrEqual(2.5);
+    for (const prop of ['scale', 'x', 'y'] as const) {
+      const ts = p.keyframes.filter((k) => k.prop === prop).map((k) => k.t);
+      expect(ts).toEqual([...ts].sort((a, b) => a - b));
+      expect(new Set(ts).size).toBe(ts.length);
+    }
+    expect(p.keyframes.find((k) => k.prop === 'scale' && k.t === zin.startMs)!.ease).toBe(
+      'expo.inOut',
+    );
+    // the focus is clamped so the crop stays inside the frame
+    for (const k of p.keyframes.filter((k) => k.prop !== 'scale'))
+      expect(k.v).toBeGreaterThanOrEqual(0);
+  });
+
+  it('pans between nearby targets instead of zooming out, and zooms out when idle or far', () => {
+    const near = planZoom([click(4000, 800, 600), click(7000, 1000, 700)], opts);
+    expect(near.steps.map((s) => s.kind)).toEqual(['zoom-in', 'pan', 'zoom-out']);
+    const far = planZoom([click(4000, 300, 300), click(8000, 2300, 1200)], opts);
+    expect(far.steps.map((s) => s.kind)).toEqual(['zoom-in', 'zoom-out', 'zoom-in', 'zoom-out']);
+    const idle = planZoom([click(4000, 800, 600), click(20000, 900, 600)], opts);
+    expect(idle.steps.map((s) => s.kind)).toEqual(['zoom-in', 'zoom-out', 'zoom-in', 'zoom-out']);
+  });
+
+  it('never changes zoom more than once per 1.5 s, and reports what it skipped', () => {
+    const evs = [
+      click(3000, 300, 300),
+      click(4200, 2300, 1200),
+      click(5000, 300, 300),
+      click(5600, 2300, 1200),
+      click(9000, 1200, 700),
+    ];
+    const p = planZoom(evs, opts);
+    for (let i = 1; i < p.steps.length; i++)
+      expect(p.steps[i]!.startMs - p.steps[i - 1]!.startMs).toBeGreaterThanOrEqual(1500);
+    expect(p.skipped.length).toBeGreaterThan(0);
+  });
+
+  it('limits zoom so the crop stays sharp when that is useful, otherwise zooms 1.7x and reports it as soft', () => {
+    const strict = planZoom([click(4000, 800, 600)], {
+      frame: { w: 1920, h: 1080 },
+      clipDurMs: 30_000,
+      outWidth: 1920,
+      strictSharp: true,
+    });
+    expect(strict.steps).toHaveLength(0);
+    expect(strict.notes.join(' ')).toMatch(/too low resolution/);
+    const dflt = planZoom([click(4000, 800, 600)], {
+      frame: { w: 1920, h: 1080 },
+      clipDurMs: 30_000,
+      outWidth: 1920,
+    });
+    expect(dflt.maxScale).toBeCloseTo(1.7, 3);
+    expect(dflt.soft).toBe(true);
+    expect(dflt.cropPx).toBeLessThan(1920);
+    expect(dflt.notes.join(' ')).toMatch(/soft/);
+    const sharp = planZoom([click(4000, 800, 600)], {
+      frame: { w: 3840, h: 2160 },
+      clipDurMs: 30_000,
+      outWidth: 1920,
+    });
+    expect(sharp.maxScale).toBeLessThanOrEqual(2 + 1e-3);
+    expect(sharp.soft).toBe(false);
+    const free = planZoom([click(4000, 800, 600)], {
+      frame: { w: 1920, h: 1080 },
+      clipDurMs: 30_000,
+      outWidth: 1920,
+      allowSoft: true,
+    });
+    expect(free.maxScale).toBeCloseTo(2, 3);
+  });
+
+  it('a target box sets the scale with padding', () => {
+    const p = planZoom(
+      [{ t: 4000, type: 'click', x: 800, y: 600, box: { x: 700, y: 540, w: 400, h: 120 } }],
+      { frame: { w: 3840, h: 2160 }, clipDurMs: 30_000, outWidth: 960 },
+    );
+    expect(p.steps[0]!.scale).toBe(2.5);
+  });
+});
