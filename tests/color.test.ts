@@ -1,4 +1,5 @@
 import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -27,10 +28,20 @@ const GRADIENT = `gradients=s=${W}x${H}:r=24:d=1:c0=0x101010:c1=0xf0f0f0:x0=0:y0
 beforeAll(() => activatePlugins(ROOT));
 
 /** Runs one effect over a generated picture and returns the path of the last frame as PNG (rgba). */
-function run(id: string, params: Record<string, unknown> | undefined, o: { src?: string; frames?: number; alpha?: boolean; ctx?: Partial<FxContext>; out: string }): string {
+type RunOpts = { src?: string; frames?: number; alpha?: boolean; ctx?: Partial<FxContext>; out: string };
+function runArgs(id: string, params: Record<string, unknown> | undefined, o: RunOpts): string[] {
   const lines = effectLines({ id, ...(params ? { params } : {}) }, 'src', 'fxout', 'chk', { ...CTX, ...o.ctx });
   const fmt = o.alpha ? 'yuva420p' : 'yuv420p';
-  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', o.src ?? BARS, '-filter_complex', `[0:v]format=${fmt}[src];${lines.join(';')}`, '-map', '[fxout]', '-frames:v', String(o.frames ?? 1), '-update', '1', '-pix_fmt', 'rgba', o.out]);
+  return ['-v', 'error', '-y', '-f', 'lavfi', '-i', o.src ?? BARS, '-filter_complex', `[0:v]format=${fmt}[src];${lines.join(';')}`, '-map', '[fxout]', '-frames:v', String(o.frames ?? 1), '-update', '1', '-pix_fmt', 'rgba', o.out];
+}
+function run(id: string, params: Record<string, unknown> | undefined, o: RunOpts): string {
+  execFileSync('ffmpeg', runArgs(id, params, o));
+  return o.out;
+}
+/** The same, without blocking the test worker: the long loops below must let the runner talk to it. */
+const execFileP = promisify(execFile);
+async function runAsync(id: string, params: Record<string, unknown> | undefined, o: RunOpts): Promise<string> {
+  await execFileP('ffmpeg', runArgs(id, params, o));
   return o.out;
 }
 function px(png: string, x: number, y: number): number[] {
@@ -82,7 +93,7 @@ describe('colour plugin: every effect, every parameter, at its limits', () => {
         for (let j = q.shift(); j; j = q.shift()) {
           try {
             // three frames: temporal filters (tmix, denoise) need history; mid-range timestamps exercise {T0} sources
-            run(j.id, j.params, { frames: 3, alpha: j.alpha, out: join(dir, j.name + '.png') });
+            await runAsync(j.id, j.params, { frames: 3, alpha: j.alpha, out: join(dir, j.name + '.png') });
           } catch (e) {
             failures.push(`${j.id} ${JSON.stringify(j.params)}${j.alpha ? ' (alpha)' : ''}: ${(e as Error).message.split('\n').slice(-2).join(' ')}`);
           }
@@ -339,7 +350,7 @@ describe('colour plugin: speed (printed, not a pass mark; each must finish)', ()
     for (const { decl } of pluginEffects().filter((e) => e.plugin.manifest.id === 'color')) {
       const lines = effectLines({ id: decl.id }, 'src', 'fxout', 'sp', { W: 1280, H: 720, FPS: 24, SRCFPS: 24, SPEED: 1, T0: 0 });
       const t0 = Date.now();
-      execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=1280x720:r=24:d=1', '-filter_complex', `[0:v]format=yuv420p[src];${lines.join(';')}`, '-map', '[fxout]', '-frames:v', '24', '-f', 'null', '-'], { timeout: 120_000 });
+      await execFileP('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=1280x720:r=24:d=1', '-filter_complex', `[0:v]format=yuv420p[src];${lines.join(';')}`, '-map', '[fxout]', '-frames:v', '24', '-f', 'null', '-'], { timeout: 120_000 });
       rows.push(`${decl.id.padEnd(20)} ${String(Date.now() - t0).padStart(5)} ms  (${decl.cost ?? 'light'})`);
     }
     console.log('COLOR EFFECT COST, 24 frames at 1280x720 on this machine:\n' + rows.join('\n'));
