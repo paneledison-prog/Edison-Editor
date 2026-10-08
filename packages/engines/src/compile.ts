@@ -5,6 +5,7 @@ import { MAX_AUDIO_SPEED, clipAudioChain, dbToLin } from './audiofx.js';
 import { EngineError } from './run.js';
 import { blurRegionFilter, hasMotion, zoomFilter } from './zoom.js';
 import { effectLines, pluginEffectDecl, type FxContext } from './plugins.js';
+import { checkClipKeyframes, nodeLines } from './fxanim.js';
 import type { Preset } from './presets.js';
 
 export interface Plan {
@@ -233,6 +234,7 @@ export function compile(inp: CompileInput): Plan {
         `${c.id}: speed ${speed}x is below 0.5x; there is no frame interpolation, so motion will judder`,
       );
 
+    checkClipKeyframes(c);
     const k = nIn++;
     if (a.kind === 'image') {
       inputs.push('-loop', '1', '-framerate', String(fps), '-t', sec(c.dur), '-i', src);
@@ -270,6 +272,7 @@ export function compile(inp: CompileInput): Plan {
       }
       // LUTs run right after the clip's own scale and zoom, before plugin nodes: order of the fx array decides among nodes of
       // the same kind, and a LUT is always first, as camera conversions are on a colourist's first node.
+      const fxCtxEarly: FxContext = { W: width, H: height, FPS: fps, SRCFPS: a.probe.fps || fps, SPEED: speed, T0: c.start / 1000 };
       const luts = (c.fx ?? []).filter((f): f is Extract<Fx, { type: 'lut' }> => f.type === 'lut' && !f.bypass);
       if (luts.length) {
         const base = `v${nV}`;
@@ -285,9 +288,10 @@ export function compile(inp: CompileInput): Plan {
               `${c.id}: LUT file ${f.file} does not exist`,
               'put the .cube file inside the project folder',
             );
-          vLines.push(
-            `[${cur}]format=gbrp,lut3d=file='${path.replace(/'/g, "\\'")}':interp=tetrahedral,format=yuv420p[${out}]`,
-          );
+          const lut = (from: string, to: string) => [
+            `[${from}]format=gbrp,lut3d=file='${path.replace(/'/g, "\\'")}':interp=tetrahedral,format=yuv420p[${to}]`,
+          ];
+          vLines.push(...nodeLines(c, f, cur, out, `${base}l${i}`, fxCtxEarly, { fps, atSec: c.start / 1000, lut }));
           cur = out;
         });
       }
@@ -314,6 +318,9 @@ export function compile(inp: CompileInput): Plan {
       }
       const pfx = live.filter((f) => !isSource(f));
       const sfx = live.filter(isSource);
+      for (const f of sfx)
+        if (f.mix !== undefined || (f.node && Object.keys(c.keyframes ?? {}).some((p) => p.startsWith(`fx.${f.node}.`))))
+          throw new EngineError('ENGINE_MISSING', `${c.id}: effect ${f.id} works on the source frames, so it cannot be mixed or keyframed`, 'remove the mix or the keyframes, or use another effect');
       if (sfx.length) {
         const base = `v${nV}`;
         const firstIdx = vLines.findIndex((l, i) => i >= lineStart && l.includes(`[${k}:v]`));
@@ -336,7 +343,11 @@ export function compile(inp: CompileInput): Plan {
         vLines.push(last.replace(new RegExp(`\\[${base}\\]$`), `[${cur}]`));
         pfx.forEach((f, i) => {
           const out = i === pfx.length - 1 ? base : `${base}fx${i}`;
-          vLines.push(...effectLines(f, cur, out, `${base}f${i}`, fxCtx));
+          vLines.push(...nodeLines(c, f, cur, out, `${base}f${i}`, fxCtx, { fps, atSec: c.start / 1000 }));
+          if (f.node && Object.keys(c.keyframes ?? {}).some((p) => p.startsWith(`fx.${f.node}.`) && !p.endsWith('.mix'))) {
+            const msg = `${c.id}: effect "${f.id}" is animated: it is rendered twice per slice and blended, so it costs about twice as much; temporal filters inside it restart at each sample`;
+            if (!notes.includes(msg)) notes.push(msg);
+          }
           cur = out;
         });
       }
@@ -360,7 +371,7 @@ export function compile(inp: CompileInput): Plan {
       nV++;
     }
     if (wantsAudio) {
-      const chain = clipAudioChain(a.probe.audio!.ch, c.fx);
+      const chain = clipAudioChain(a.probe.audio!.ch, c.fx, c.keyframes);
       const duck = c.fx?.find((f) => f.type === 'duck') as
         Extract<Fx, { type: 'duck' }> | undefined;
       // 10 ms edge fades at every clip edge so spliced joins cannot click.

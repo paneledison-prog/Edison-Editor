@@ -58,6 +58,15 @@ function KeyframeEditor({
   const fps = project.meta.fps;
   if (!clip?.keyframes || !Object.keys(clip.keyframes).length) return null;
   const Graph = graph;
+  /** `fx.f_k3f9.exposure` reads as "exposure · lumetri": the parameter and the effect it belongs to. */
+  const labels = Object.fromEntries(
+    Object.keys(clip.keyframes).map((prop) => {
+      const m = /^fx\.(f_[^.]+)\.(\w+)$/.exec(prop);
+      if (!m) return [prop, prop];
+      const fx = clip.fx?.find((f) => f.node === m[1]);
+      return [prop, `${m[2]} · ${fx?.id ?? fx?.type ?? m[1]}`];
+    }),
+  );
   return (
     <div data-testid="keyframes">
       <dt>Keyframes</dt>
@@ -75,6 +84,7 @@ function KeyframeEditor({
           dur={clip.dur}
           fps={fps}
           keyframes={clip.keyframes}
+          labels={labels}
           editable={editable}
           onEdit={onEdit}
         />
@@ -109,7 +119,7 @@ function KeyframeEditor({
             }}
           >
             <span>
-              {prop} <code>{k.t} ms</code> = <code>{k.v}</code>
+              {labels[prop] ?? prop} <code>{k.t} ms</code> = <code>{k.v}</code>
             </span>
             <EaseEditor
               value={k.ease ?? 'linear'}

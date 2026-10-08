@@ -79,7 +79,7 @@ async function check(f: Fx) {
 }
 
 const label = (f: Fx): string =>
-  f.type === 'plugin' ? f.id : f.type === 'lut' ? f.file : f.type === 'blur-region' ? `blur ${Math.round(f.x * 100)},${Math.round(f.y * 100)} ${Math.round(f.w * 100)}x${Math.round(f.h * 100)}%` : f.type;
+  f.type === 'gain' ? `gain ${f.db} dB` : f.type === 'plugin' ? f.id : f.type === 'lut' ? f.file : f.type === 'blur-region' ? `blur ${Math.round(f.x * 100)},${Math.round(f.y * 100)} ${Math.round(f.w * 100)}x${Math.round(f.h * 100)}%` : f.type;
 
 // ---------------------------------------------------------------------------------------------------------------
 
@@ -97,12 +97,12 @@ export const list: Handler = async (inv) => {
       const decl = E.pluginEffectDecl(f.id);
       const params = decl ? Object.fromEntries(Object.entries(decl.params).map(([k, p]) => [k, f.params?.[k] ?? p.default])) : (f.params ?? {});
       const a = animated(node);
-      return { ...base, enabled: !f.bypass, params, ...(Object.keys(a).length ? { animated: a } : {}), ...(decl ? {} : { problem: 'no loaded plugin provides this effect' }) };
+      return { ...base, enabled: !f.bypass, params, ...(f.mix !== undefined ? { mix: f.mix } : {}), ...(Object.keys(a).length ? { animated: a } : {}), ...(decl ? {} : { problem: 'no loaded plugin provides this effect' }) };
     }
-    if (f.type === 'lut') return { ...base, enabled: !f.bypass };
+    if (f.type === 'lut') return { ...base, enabled: !f.bypass, ...(f.mix !== undefined ? { mix: f.mix } : {}), ...(Object.keys(animated(node)).length ? { animated: animated(node) } : {}) };
     if (f.type === 'blur-region') return { ...base, enabled: true, region: { x: f.x, y: f.y, w: f.w, h: f.h }, strength: f.strength ?? 24 };
-    const { type: _t, ...rest } = f as Record<string, unknown>;
-    return { ...base, enabled: true, settings: rest };
+    const { type: _t, node: _n, ...rest } = f as Record<string, unknown>;
+    return { ...base, enabled: true, settings: rest, ...(Object.keys(animated(node)).length ? { animated: animated(node) } : {}) };
   });
   const a = clip.asset ? project.assets[clip.asset] : undefined;
   let verified: boolean | undefined;
@@ -145,17 +145,25 @@ export const add: Handler = async (inv) => {
   const effect = str(inv, 'effect');
   const lut = str(inv, 'lut');
   const region = str(inv, 'region');
-  if ([effect, lut, region].filter((v) => v !== undefined).length !== 1)
-    throw new CliError('INVALID_ARGS', 'give exactly one of --effect ID, --lut FILE, --region x,y,w,h', 2, 'studio color effects lists effect ids');
-  let fx: Video;
-  if (effect) fx = { type: 'plugin', id: effect, ...(paramsOf(inv) ? { params: paramsOf(inv)! } : {}) };
+  const gain = num(inv, 'gain');
+  if ([effect, lut, region, gain].filter((v) => v !== undefined).length !== 1)
+    throw new CliError('INVALID_ARGS', 'give exactly one of --effect ID, --lut FILE, --region x,y,w,h, --gain DB', 2, 'studio color effects lists effect ids');
+  let fx: Video | Extract<Fx, { type: 'gain' }>;
+  if (gain !== undefined) fx = { type: 'gain', db: gain };
+  else if (effect) fx = { type: 'plugin', id: effect, ...(paramsOf(inv) ? { params: paramsOf(inv)! } : {}) };
   else if (lut) fx = { type: 'lut', file: lut };
   else {
     const v = region!.split(',').map(Number);
     if (v.length !== 4 || v.some((x) => !Number.isFinite(x))) throw new CliError('INVALID_ARGS', '--region is x,y,w,h as fractions of the frame, e.g. 0.1,0.1,0.3,0.2', 2);
     fx = { type: 'blur-region', x: v[0]!, y: v[1]!, w: v[2]!, h: v[3]!, ...(num(inv, 'strength') !== undefined ? { strength: num(inv, 'strength')! } : {}) };
   }
-  if (inv.flags['bypass'] && fx.type !== 'blur-region') (fx as { bypass?: boolean }).bypass = true;
+  if (inv.flags['bypass'] && (fx.type === 'plugin' || fx.type === 'lut')) (fx as { bypass?: boolean }).bypass = true;
+  const mix = num(inv, 'mix');
+  if (mix !== undefined) {
+    if (fx.type !== 'plugin' && fx.type !== 'lut') throw new CliError('INVALID_ARGS', '--mix applies to plugin effects and LUTs', 2);
+    if (mix < 0 || mix > 1) throw new CliError('INVALID_ARGS', '--mix is 0..1', 2);
+    if (mix !== 1) fx.mix = mix;
+  }
   await check(fx);
   const at = num(inv, 'at');
   const base = named(project, clip); // the effects already there are named first, so the new one cannot repeat an id
@@ -187,6 +195,13 @@ export const set: Handler = async (inv) => {
       [f['x'], f['y'], f['w'], f['h']] = v;
     }
     if (num(inv, 'strength') !== undefined) f['strength'] = num(inv, 'strength');
+  }
+  const mix = num(inv, 'mix');
+  if (mix !== undefined) {
+    if (cur.type !== 'plugin' && cur.type !== 'lut') throw new CliError('INVALID_ARGS', '--mix applies to plugin effects and LUTs', 2);
+    if (mix < 0 || mix > 1) throw new CliError('INVALID_ARGS', '--mix is 0..1', 2);
+    if (mix === 1) delete f['mix'];
+    else f['mix'] = mix;
   }
   if (inv.flags['bypass'] && inv.flags['enable']) throw new CliError('INVALID_ARGS', 'give --bypass or --enable, not both', 2);
   if (inv.flags['bypass']) f['bypass'] = true;

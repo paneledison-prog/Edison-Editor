@@ -307,6 +307,46 @@ describe('P6: manual edits in the browser, all through ops', () => {
   );
 
   it_(
+    'graph editor: keyframes on an effect parameter get their own tab, named for the parameter and the effect, and drag like any other',
+    async () => {
+      const { dir, store } = seeded();
+      store.apply([
+        { type: 'clip.set', args: { id: 'c_01', patch: { fx: [{ type: 'plugin', id: 'lumetri', node: 'f_ab12' }] } } },
+        { type: 'kf.set', args: { clip: 'c_01', prop: 'fx.f_ab12.exposure', t: 500, v: 0, ease: 'sine.inOut' } },
+        { type: 'kf.set', args: { clip: 'c_01', prop: 'fx.f_ab12.exposure', t: 2000, v: 1.5 } },
+      ]);
+      const before = readFileSync(join(dir, 'project.studio.json'), 'utf8');
+      const page = await open(await serve(dir));
+      await page.locator('[data-clip-id=c_01]').click();
+      await page.getByTestId('graph-toggle').click();
+      await page.getByTestId('graph').waitFor();
+      const tab = page.getByRole('tab', { name: 'exposure · lumetri' });
+      await tab.waitFor();
+      expect(await tab.getAttribute('title')).toBe('fx.f_ab12.exposure');
+      expect(await page.getByTestId('graph-kf').count()).toBe(2);
+      expect(await page.locator('[data-testid=keyframes]').textContent()).toContain('exposure · lumetri');
+      const h = page.locator('[data-testid=graph-kf]').nth(1);
+      await h.scrollIntoViewIfNeeded();
+      const box = (await h.boundingBox())!;
+      const r = await rev(page);
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 40, { steps: 6 });
+      await page.mouse.up();
+      await waitRevChange(page, r);
+      const kf = clipOf(dir, 'c_01').keyframes['fx.f_ab12.exposure'];
+      expect(kf).toHaveLength(2);
+      expect(kf[1].v).toBeLessThan(1.5); // dragged down
+      expect(log(dir).filter((e) => e.actor === 'ui')).toHaveLength(1);
+      const r2 = await rev(page);
+      await page.getByRole('button', { name: /^Undo/ }).click();
+      await waitRevChange(page, r2);
+      expect(readFileSync(join(dir, 'project.studio.json'), 'utf8')).toBe(before);
+    },
+    90_000,
+  );
+
+  it_(
     'EXIT: manual and agent edits interleave, and undo walks back across both to the original bytes',
     async () => {
       const { dir } = seeded();

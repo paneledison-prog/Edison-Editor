@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { Fx } from '@studio/core';
+import type { Clip, Fx } from '@studio/core';
+import { expr, pointsOf } from './zoom.js';
 import { EngineError, ffmpeg } from './run.js';
 
 export const dbToLin = (db: number) => Math.pow(10, db / 20);
@@ -31,13 +32,17 @@ export const MAX_AUDIO_SPEED = 8;
  * This one function builds the chain for both the renderer and the measurement commands, so what
  * you measured is what renders.
  */
-export function audioFxFilters(fx: Fx[] | undefined): string[] {
+export function audioFxFilters(fx: Fx[] | undefined, keyframes?: Clip['keyframes']): string[] {
   const out: string[] = [];
   for (const f of fx ?? []) {
     switch (f.type) {
-      case 'gain':
-        out.push(`volume=${f4(f.db)}dB`);
+      case 'gain': {
+        // keyframes on the gain (`fx.<node>.db`): the level in dB as a function of the clip's time, converted to a factor
+        const kfs = f.node ? keyframes?.[`fx.${f.node}.db`] : undefined;
+        if (kfs?.length) out.push(`volume=volume='pow(10,(${expr(pointsOf(kfs, f.db))})/20)':eval=frame`);
+        else out.push(`volume=${f4(f.db)}dB`);
         break;
+      }
       case 'highpass':
         out.push(`highpass=f=${f4(f.hz)}`);
         break;
@@ -93,14 +98,14 @@ export interface ChainSource {
 }
 
 /** The per-clip audio chain up to (not including) the join fades: stereo, speed, effects. */
-export function clipAudioChain(channels: number, fx: Fx[] | undefined): string[] {
+export function clipAudioChain(channels: number, fx: Fx[] | undefined, keyframes?: Clip['keyframes']): string[] {
   const speed = fx?.find((f) => f.type === 'speed');
   const factor = speed && speed.type === 'speed' ? speed.factor : 1;
   return [
     'aresample=48000',
     channels === 1 ? 'pan=stereo|c0=c0|c1=c0' : 'aformat=channel_layouts=stereo',
     ...(factor !== 1 ? atempoChain(factor) : []),
-    ...audioFxFilters(fx),
+    ...audioFxFilters(fx, keyframes),
   ];
 }
 

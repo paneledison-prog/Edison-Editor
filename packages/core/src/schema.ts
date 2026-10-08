@@ -126,6 +126,8 @@ export const Fx = z.discriminatedUnion('type', [
         .regex(/^(?!.*\.\.)[A-Za-z0-9_][A-Za-z0-9_./ -]*\.(cube|3dl)$/i, 'a .cube or .3dl path inside the project'),
       bypass: z.boolean().optional(),
       node: NodeId.optional(),
+      /** how much of the effect shows, 0..1 (default 1): the picture before it and after it, mixed */
+      mix: num(0, 1).optional(),
     })
     .strict(),
   // A plugin's video effect; the id and parameters are checked against the plugin's manifest at render time.
@@ -137,6 +139,8 @@ export const Fx = z.discriminatedUnion('type', [
       /** a node switched off: kept in the stack, skipped by the render */
       bypass: z.boolean().optional(),
       node: NodeId.optional(),
+      /** how much of the effect shows, 0..1 (default 1) */
+      mix: num(0, 1).optional(),
     })
     .strict(),
   z.object({ type: z.literal('gain'), db: num(-60, 40), node: NodeId.optional() }).strict(),

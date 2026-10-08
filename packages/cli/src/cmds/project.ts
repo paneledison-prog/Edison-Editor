@@ -115,6 +115,15 @@ export const show: Handler = async (inv) => {
 export const validate: Handler = async (inv) => {
   const { project, driftedFromLog } = store(inv).load();
   const issues = validateProject(project);
+  // keyframes on effect parameters are checked against the effects themselves (name, number type, range)
+  const E = await import('@studio/engines');
+  E.activatePlugins(inv.dir);
+  for (const c of project.clips)
+    try {
+      E.checkClipKeyframes(c);
+    } catch (e) {
+      issues.push({ code: 'KF_PARAM', message: (e as Error).message, path: `clips.${c.id}.keyframes` } as (typeof issues)[number]);
+    }
   if (issues.length)
     throw new OpError('VALIDATION', `${issues.length} issue(s): ${issues[0]!.message}`, issues);
   return {

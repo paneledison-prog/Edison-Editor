@@ -10,7 +10,7 @@ import { EngineError } from './run.js';
 const SUB = 12;
 const f = (n: number) => (Math.round(n * 1e5) / 1e5).toString();
 
-interface Pt {
+export interface Pt {
   t: number;
   v: number;
 }
@@ -21,8 +21,11 @@ export function propPoints(
   prop: 'scale' | 'x' | 'y' | 'rot' | 'opacity',
   dflt: number,
 ): Pt[] {
-  const kfs = c.keyframes?.[prop];
-  const base = (c.transform as Record<string, number | undefined> | undefined)?.[prop] ?? dflt;
+  return pointsOf(c.keyframes?.[prop], (c.transform as Record<string, number | undefined> | undefined)?.[prop] ?? dflt);
+}
+
+/** The same for any keyframe list (an effect parameter, a mix): eased segments are sampled into linear pieces. */
+export function pointsOf(kfs: Clip['keyframes'] extends Record<string, infer K> | undefined ? K | undefined : never, base: number): Pt[] {
   if (!kfs?.length) return [{ t: 0, v: base }];
   const sorted = [...kfs].sort((a, b) => a.t - b.t);
   const out: Pt[] = [];
@@ -73,9 +76,12 @@ export function expr(pts: Pt[]): string {
   return terms.join('+');
 }
 
+/** Keyframes on effect parameters (`fx.<node>.<name>`) belong to the effect stack, not to the clip's own motion. */
+export const isFxProp = (p: string) => p.startsWith('fx.');
+
 export function hasMotion(c: Clip): boolean {
   return (
-    !!(c.keyframes && Object.keys(c.keyframes).length) ||
+    Object.keys(c.keyframes ?? {}).some((p) => !isFxProp(p)) ||
     !!(c.transform && Object.keys(c.transform).length)
   );
 }
@@ -94,7 +100,7 @@ export function zoomFilter(c: Clip, width: number, height: number): string {
   if (!hasMotion(c)) return '';
   const known = new Set(['scale', 'x', 'y', 'rot', 'opacity']);
   for (const p of Object.keys(c.keyframes ?? {}))
-    if (!known.has(p))
+    if (!known.has(p) && !isFxProp(p))
       throw new EngineError(
         'ENGINE_MISSING',
         `${c.id}: keyframes on "${p}" are not implemented for media clips; supported: scale, x, y, rot, opacity`,

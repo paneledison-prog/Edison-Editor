@@ -28,7 +28,7 @@ export interface ProjectView {
     srcIn?: number;
     props?: Record<string, unknown>;
     keyframes?: Record<string, Keyframe[]>;
-    fx?: { type: string; factor?: number }[];
+    fx?: { type: string; factor?: number; id?: string; node?: string }[];
     label?: string;
   }[];
   markers: { id: string; t: number; label: string }[];

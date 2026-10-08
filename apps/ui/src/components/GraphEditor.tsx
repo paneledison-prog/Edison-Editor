@@ -14,6 +14,8 @@ interface Props {
   dur: number;
   fps: number;
   keyframes: Record<string, Kf[]>;
+  /** friendlier names for the tabs (an effect parameter reads as "exposure · lumetri") */
+  labels?: Record<string, string>;
   editable: boolean;
   onEdit: (specs: OpSpec[], label: string) => void;
 }
@@ -28,7 +30,8 @@ const RANGE: Record<string, [number, number]> = { scale: [1, 2], x: [0, 1], y: [
  * functions the renderer uses (motion/src/ease.ts); a handle drags in time (snapped to a frame) and in value,
  * and the edit is sent once, on release, as one undoable op.
  */
-export default function GraphEditor({ clipId, dur, fps, keyframes, editable, onEdit }: Props) {
+export default function GraphEditor({ clipId, dur, fps, keyframes, labels, editable, onEdit }: Props) {
+  const name = (p: string) => labels?.[p] ?? p;
   const props = Object.keys(keyframes).filter((p) => keyframes[p]!.length);
   const [prop, setProp] = useState(props[0]!);
   const [drag, setDrag] = useState<{ id: string; t: number; v: number } | null>(null);
@@ -88,12 +91,13 @@ export default function GraphEditor({ clipId, dur, fps, keyframes, editable, onE
             aria-selected={p === active}
             class={`graph-tab ${p === active ? 'on' : ''}`}
             onClick={() => setProp(p)}
+            title={p}
           >
-            {p}
+            {name(p)}
           </button>
         ))}
       </div>
-      <svg ref={svg} viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={`${active} over time`}>
+      <svg ref={svg} viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={`${name(active)} over time`}>
         {[0, 0.5, 1].map((u) => (
           <line key={u} class="graph-grid" x1={PAD} x2={W - PAD} y1={Y(lo + span * u)} y2={Y(lo + span * u)} />
         ))}
@@ -110,7 +114,7 @@ export default function GraphEditor({ clipId, dur, fps, keyframes, editable, onE
             cy={Y(k.v)}
             r={6}
             tabIndex={0}
-            aria-label={`${active} keyframe at ${k.t} ms, value ${k.v}`}
+            aria-label={`${name(active)} keyframe at ${k.t} ms, value ${k.v}`}
             onPointerDown={(e) => {
               if (!editable) return;
               (e.currentTarget as Element).setPointerCapture(e.pointerId);
