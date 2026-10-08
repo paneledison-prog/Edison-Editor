@@ -115,7 +115,7 @@ The thumbnail headline is now set by the motion renderer (`thumbnail-headline` t
 
 `GET /api/frame?t=MS&w=PX` on `studio ui` returns one PNG of the timeline at that time (preview size, 160 to 960 px wide) through the same compiler as a render, so cuts, speed, zoom, blur and overlays are all in it; composition clips are drawn from a motion still for that instant. It uses the original media (not a proxy) and has no audio. Frames are cached by project revision, time and width; requests are served one at a time. Measured: the first frame of a project with a title card took 2.9 s (browser start for the overlay plus ffmpeg), a cached one is a file read. The page debounces 180 ms, keeps the old image until the new one is ready, and drops answers to superseded requests. Tested in real Chromium: the title card is in the frame at 4 s and absent at 8 s, the preview follows 12 quick key presses to exactly the final position, and a CLI edit refreshes it. There is no playback, no play button, and no audio.
 
-UI shell bundle: 18.4 KB to 19.7 KB gzipped (budget 250 KB).
+UI shell bundle: 18.4 KB to 18.8 KB gzipped (budget 250 KB).
 
 ## Settings window
 
