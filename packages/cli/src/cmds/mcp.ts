@@ -12,7 +12,7 @@ import { COMMANDS, type CmdMeta } from '../registry.js';
  */
 const SUPPORTED = ['2025-06-18', '2025-03-26', '2024-11-05'];
 /** `ui` is a long-running server and `mcp` is this process. */
-const EXCLUDED = new Set(['ui', 'mcp']);
+const EXCLUDED = new Set(['ui', 'mcp', 'design.ui']);
 
 export const toolName = (m: CmdMeta) => `studio_${m.name.replace(/[.-]/g, '_')}`;
 

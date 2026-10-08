@@ -1,0 +1,19 @@
+{
+  "name": "@studio/design-editor",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@studio/design": "workspace:*",
+    "lucide-preact": "^0.545.0",
+    "preact": "^10.24.0"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.9.0",
+    "vite": "^7.0.0"
+  }
+}

@@ -30,6 +30,25 @@ importers:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@22.20.5)
 
+  apps/design:
+    dependencies:
+      '@studio/design':
+        specifier: workspace:*
+        version: link:../../packages/design
+      lucide-preact:
+        specifier: ^0.545.0
+        version: 0.545.0(preact@10.29.8)
+      preact:
+        specifier: ^10.24.0
+        version: 10.29.8
+    devDependencies:
+      '@preact/preset-vite':
+        specifier: ^2.9.0
+        version: 2.10.6(@babel/core@7.29.7)(preact@10.29.8)(rollup@4.64.2)(vite@7.3.7(@types/node@22.20.5))
+      vite:
+        specifier: ^7.0.0
+        version: 7.3.7(@types/node@22.20.5)
+
   apps/ui:
     dependencies:
       lucide-preact:
@@ -57,6 +76,9 @@ importers:
       '@studio/core':
         specifier: workspace:*
         version: link:../core
+      '@studio/design':
+        specifier: workspace:*
+        version: link:../design
       '@studio/engines':
         specifier: workspace:*
         version: link:../engines
@@ -76,11 +98,23 @@ importers:
         specifier: ^3.25.0
         version: 3.25.76
 
+  packages/design:
+    dependencies:
+      '@studio/motion':
+        specifier: workspace:*
+        version: link:../../motion
+      zod:
+        specifier: ^3.25.0
+        version: 3.25.76
+
   packages/engines:
     dependencies:
       '@studio/core':
         specifier: workspace:*
         version: link:../core
+      '@studio/design':
+        specifier: workspace:*
+        version: link:../design
       '@studio/motion':
         specifier: workspace:*
         version: link:../../motion

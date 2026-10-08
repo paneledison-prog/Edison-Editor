@@ -18,6 +18,8 @@ project.studio.json  ◀─── ops (validated, logged, undoable) ◀───
         │
         ├──▶ plugins/ (templates, effects, scripts)  ·  expressions  ·  studio script run
         └──▶ UI (watches file)  ·  inspect (frames, sheets, loudness, QC)
+
+design.studio.json ◀─── ops ◀─── studio design ... / design editor   (a separate editor and file: see docs/design.md)
 ```
 
 Per-project directory:

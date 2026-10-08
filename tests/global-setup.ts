@@ -9,7 +9,15 @@ export default function setup() {
     stdio: 'pipe',
     env: { ...process.env, NODE_ENV: 'production' },
   });
+  execFileSync('pnpm', ['-C', 'apps/design', 'build'], {
+    cwd: join(import.meta.dirname, '..'),
+    stdio: 'pipe',
+    env: { ...process.env, NODE_ENV: 'production' },
+  });
   execFileSync('node', [join(import.meta.dirname, '..', 'scripts', 'build-motion.mjs')], {
+    stdio: 'pipe',
+  });
+  execFileSync('node', [join(import.meta.dirname, '..', 'scripts', 'build-design.mjs')], {
     stdio: 'pipe',
   });
   execFileSync('node', [join(import.meta.dirname, '..', 'scripts', 'build-cli.mjs')], {

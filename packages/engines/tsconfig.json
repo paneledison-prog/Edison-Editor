@@ -5,13 +5,18 @@
     "rootDir": "src",
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
-  "include": ["src"],
+  "include": [
+    "src"
+  ],
   "references": [
     {
       "path": "../core"
     },
     {
       "path": "../../motion"
+    },
+    {
+      "path": "../design"
     }
   ]
 }

@@ -8,7 +8,7 @@
   },
   "packageManager": "pnpm@10.28.0",
   "scripts": {
-    "build": "node scripts/build-motion.mjs && node scripts/build-cli.mjs",
+    "build": "node scripts/build-motion.mjs && node scripts/build-design.mjs && node scripts/build-cli.mjs",
     "typecheck": "tsc -b",
     "test": "vitest run",
     "format": "prettier --write .",
@@ -16,7 +16,8 @@
     "tokens:check": "node scripts/tokens-check.mjs",
     "ui:build": "pnpm -C apps/ui build",
     "bundle:check": "node scripts/bundle-size.mjs",
-    "studio": "node packages/cli/dist/studio.js"
+    "studio": "node packages/cli/dist/studio.js",
+    "design:build": "pnpm -C apps/design build"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

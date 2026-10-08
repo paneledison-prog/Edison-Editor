@@ -99,3 +99,7 @@ Lucide (ISC) is in use. Geist Sans / Geist Mono (OFL) are **not bundled yet**: `
 No new dependency. The plugin loader, the expression evaluator, and the four shipped plugins (`glow`, `shapes`, `light-fx`, `logo-reveal`) and the three shipped scripts are Studio's own code, MIT like the repository. The shipped plugins use only FFmpeg filters already in the build and the browser's own 2D canvas and SVG. Plugin names such as "glow" or "saber" describe an effect; they are not copies of any commercial product and use none of its code or assets.
 Test footage: the *Sintel* trailer (c) Blender Foundation, CC BY 3.0, was downloaded to a scratch directory to try the edit. It is not in the repository.
 
+## Design editor
+
+No new dependency. `packages/design` (zod, already used) and `apps/design` (preact and lucide-preact, already used by the media editor) are Studio's own code, MIT like the repository. Export uses the Chromium and FFmpeg already recorded above; MP4 uses libx264, the others use libvpx-vp9, prores_ks, and the GIF palette filters of the same FFmpeg build. Fonts are the brand's Inter (SIL OFL, recorded above). The editor imitates the layout of design-and-animation tools in general (layers, properties, timeline); it contains no code or assets from any of them.
+

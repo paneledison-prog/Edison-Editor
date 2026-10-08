@@ -70,7 +70,7 @@ function pageBundle(): string {
   return p;
 }
 
-interface FontFile {
+export interface FontFile {
   family: string;
   weight: string;
   data: string;
@@ -93,7 +93,7 @@ function loadFontFile(f: { path: string; family: string }): FontFile[] {
   return ['400', '700', '800'].map((weight) => ({ family: f.family, weight, data, sha }));
 }
 
-function loadFonts(palette: Palette, root: string): FontFile[] {
+export function loadFonts(palette: Palette, root: string): FontFile[] {
   const out: FontFile[] = [];
   for (const f of Object.values(palette.fonts)) {
     for (const [weight, rel] of Object.entries(f.files)) {
@@ -212,7 +212,7 @@ export function prepare(s: MotionSpec): Prepared {
 export const defaultConcurrency = () => Math.max(1, Math.floor(cpus().length / 2));
 
 type PW = typeof import('playwright-core');
-async function launch() {
+export async function launch() {
   let pw: PW;
   try {
     pw = await import('playwright-core');
@@ -246,7 +246,7 @@ async function launch() {
 }
 
 /** Fast PNG capture through the DevTools protocol (about 2x quicker than page.screenshot), transparent unless a checkerboard is wanted. */
-async function shooter(
+export async function shooter(
   page: Awaited<ReturnType<Awaited<ReturnType<typeof launch>>['newPage']>>,
   transparent: boolean,
 ) {

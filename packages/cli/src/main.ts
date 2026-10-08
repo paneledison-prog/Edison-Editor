@@ -37,6 +37,7 @@ const loaders: Record<CmdMeta['module'], () => Promise<Record<string, unknown>>>
   expr: () => import('./cmds/expr.js'),
   script: () => import('./cmds/script.js'),
   color: () => import('./cmds/color.js'),
+  design: () => import('./cmds/design.js'),
 };
 
 function findCommand(argv: string[]): { meta: CmdMeta; rest: string[] } | undefined {
@@ -110,7 +111,7 @@ export async function main(argv: string[]): Promise<void> {
       log: (m) => process.stderr.write(m + '\n'),
     };
     // Plugins add templates and effects; every module that renders or validates a composition must see them.
-    if (!['tools', 'project', 'ops', 'doctor', 'models', 'cache', 'ingest'].includes(meta.module)) {
+    if (!['tools', 'project', 'ops', 'doctor', 'models', 'cache', 'ingest', 'design'].includes(meta.module)) {
       const { activatePlugins } = await import('@studio/engines');
       activatePlugins(inv.dir);
     }

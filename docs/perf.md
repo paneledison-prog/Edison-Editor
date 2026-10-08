@@ -148,6 +148,22 @@ Not verified in phase 9:
 - The graph editor was tested with a mouse drag on one handle; keyboard use of handles, touch, and several handles at once were not. It has no add-keyframe or handle-curve (bezier) editing.
 - Windows: the shipped scripts and plugin paths were not run there.
 
+## Design editor
+
+Measured on this container (4 cores, no GPU), single runs.
+
+| What | Measurement |
+|---|---|
+| Editor bundle | 164.8 KB JS + 18.2 KB CSS raw; 54.1 KB gzip in total, measured by a test (budget 250 KB). It includes the op engine (zod), so edits apply on the page before they are sent |
+| Export, 1920x1080, 150 frames, 40 layers (shapes, text, shadows, presets) to MP4 | 1 page 7.8 s (19.2 fps); 2 pages 5.6 s (26.8 fps); 4 pages 4.5 s (33.1 fps); 392 KB file |
+| Export, 1280x720 button scene (4 layers), 90 frames | 2.7 s (32.9 fps) with 2 pages |
+| Still PNG | about 2.3 s, almost all of it starting Chromium |
+| Browser tests | 13 scenarios in 18.7 s, including an MP4 export started from the page |
+
+Verified by test (`tests/design.test.ts`, `design-cli.test.ts`, `design-ui.test.ts`): a 300-operation random edit sequence undoes to the original bytes at every step; presets, delete, duplicate, move and keyframe ops invert exactly; a failing batch changes nothing; stills have the right pixels at chosen points and are byte-identical across runs; every frame of a PNG sequence is identical at 1 and 3 pages; MP4 size, rate, codec and duration; the animation moves (pixels checked at 0 and 1.2 s); MOV is ProRes 4444 with alpha, WebM has alpha mode, PNG corners are transparent, MP4 refuses alpha; an image layer draws its file and a missing file is an error; an audio layer is mixed and its volume curve silences the first 500 ms (measured with the loudness tool); the editor draws, creates, moves, resizes, edits numbers, applies presets, auto-keys, shows agent edits live, renames, hides, reorders, deletes, duplicates, groups, edits text, plays, exports, and refuses edits when read-only.
+
+Not verified: other browsers than Chromium; touch input; scenes longer than 5 s or larger than 1080p; more than about 40 layers on a slow machine (the page redraws every layer on each change); text in scripts Inter does not cover; audio playback inside the page (the export mixes it, the page only starts it); the look of `glass` against busy backgrounds.
+
 ## Not measured
 
 - UI memory with a 2-hour project open (budget < 300 MB).
