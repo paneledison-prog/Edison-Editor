@@ -111,6 +111,12 @@ Reading: on real speech the three models place the same word start up to a secon
 
 The thumbnail headline is now set by the motion renderer (`thumbnail-headline` template, largest font that fits the box and 3 lines, fitted in one browser page), not sharp's text engine; sharp still composites. The existing thumbnail tests pass unchanged, and a new one checks the longest allowed headline (5 long words) stays on at most 3 lines inside the margins at 1280x720 and 1080x1920. A thumbnail now starts a headless Chromium (about 1.5 s) where sharp text did not.
 
+## Phase 8: canvas preview
+
+`GET /api/frame?t=MS&w=PX` on `studio ui` returns one PNG of the timeline at that time (preview size, 160 to 960 px wide) through the same compiler as a render, so cuts, speed, zoom, blur and overlays are all in it; composition clips are drawn from a motion still for that instant. It uses the original media (not a proxy) and has no audio. Frames are cached by project revision, time and width; requests are served one at a time. Measured: the first frame of a project with a title card took 2.9 s (browser start for the overlay plus ffmpeg), a cached one is a file read. The page debounces 180 ms, keeps the old image until the new one is ready, and drops answers to superseded requests. Tested in real Chromium: the title card is in the frame at 4 s and absent at 8 s, the preview follows 12 quick key presses to exactly the final position, and a CLI edit refreshes it. There is no playback, no play button, and no audio.
+
+UI shell bundle: 18.4 KB to 19.7 KB gzipped (budget 250 KB).
+
 ## Settings window
 
 A modal with Appearance, Project and Connector tabs (9 tests in real Chromium plus the `project.set` op: focus trap and Escape, arrow-key tabs, theme persistence with storage blocked, saving the project settings as one `ui` op that Undo reverses byte for byte, the Connector tab's exact command and clipboard copy, and a real MCP handshake from the server). The Connector tab proves only that `studio mcp` starts; whether Claude Code is connected cannot be seen from the page, and the page never runs `claude`. UI shell bundle: 15.45 KB to 18.4 KB gzipped (budget 250 KB); the baseline was raised for the dialog.

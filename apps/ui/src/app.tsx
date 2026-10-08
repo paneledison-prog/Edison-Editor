@@ -21,6 +21,7 @@ import { Button, IconButton } from './components/Button';
 import { EaseEditor } from './components/EaseEditor';
 import { EmptyState, PanelHeader } from './components/PanelHeader';
 import { KF_STEP, frameMs, kfSetSpecs } from './timeline/edit';
+import { Canvas } from './Canvas';
 import { Settings } from './settings/Settings';
 import { loadPrefs, savePrefs, type Prefs } from './settings/prefs';
 import { currentTheme, setTheme, type Theme } from './theme';
@@ -399,20 +400,13 @@ export function App() {
       </aside>
 
       <main class="canvas" aria-label="Canvas">
-        <div
-          class="artboard"
-          role="img"
-          aria-label="Artboard"
-          style={{ aspectRatio: aspect, background: project?.meta.background }}
+        <Canvas
+          project={project}
+          timelineMs={timelineMs}
+          playheadMs={playheadMs}
+          rev={rev}
+          live={status === 'live'}
         />
-        <span class="badge" title="Proxy media and overlays; render a preview for the exact result">
-          Approximate preview
-        </span>
-        {project && (
-          <span class="canvas-note muted">
-            No media preview yet. Render a preview to review the result.
-          </span>
-        )}
       </main>
 
       <aside class="panel inspector" aria-label="Inspector">
