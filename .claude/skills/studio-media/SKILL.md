@@ -1,6 +1,6 @@
 ---
 name: studio-media
-description: Use whenever the task is to edit, build, render, or verify media in the Studio workspace: video (trim, captions, silence cuts, reframing), images (background removal, upscaling, batch resize, grading, thumbnails), audio (denoise, podcast cleanup, loudness, ducking, transcription), motion graphics (motion templates), or product demo videos. Also use when changing the Studio UI or its design tokens.
+description: Use whenever the task is to edit, build, render, or verify media in the Studio workspace: video (trim, captions, silence cuts, reframing), images (background removal, upscaling, batch resize, grading, thumbnails), audio (denoise, podcast cleanup, loudness, ducking, transcription), motion graphics (motion templates). Also use when changing the Studio UI or its design tokens.
 ---
 
 # Studio media skill
@@ -21,7 +21,6 @@ Read in this order the first time in a session:
 | Images | `rules/04-image.md` |
 | Motion graphics | `rules/05-motion-graphics.md` |
 | Captions or subtitles | `rules/06-captions.md` |
-| Product demo | `rules/07-product-demo.md` plus video, audio, captions, motion |
 | Verifying any output | `rules/09-verification.md` |
 | Speed, memory, bundle size | `rules/10-performance.md` |
 | UI work or tokens | `rules/11-ui-design-system.md` |

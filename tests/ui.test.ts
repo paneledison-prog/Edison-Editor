@@ -223,7 +223,7 @@ async function serve(dir: string): Promise<string> {
 function seeded(n = 3) {
   const dir = tmpDir('studio-live-');
   const store = ProjectStore.init(dir, {
-    name: 'Demo project',
+    name: 'Sample project',
     width: 1920,
     height: 1080,
     fps: 30,

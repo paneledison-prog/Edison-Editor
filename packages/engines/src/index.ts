@@ -14,5 +14,4 @@ export * from './models.js';
 export * from './motion.js';
 export * from './transcribe.js';
 export * from './captions.js';
-export * from './demo.js';
 export * from './zoom.js';

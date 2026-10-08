@@ -26,7 +26,6 @@ export interface CmdMeta {
     | 'models'
     | 'motion'
     | 'captions'
-    | 'demo'
     | 'mcp';
   fn: string;
 }
@@ -735,63 +734,6 @@ export const COMMANDS: CmdMeta[] = [
     usage: 'studio captions add --cues FILE [--track t_xx]',
     example: 'studio captions add --cues captions/x.clean.cues.json',
     flags: [s('cues', 'cue file', true), s('track', 'captions track (created when omitted)')],
-  }),
-  cmd({
-    name: 'demo.ingest',
-    module: 'demo',
-    fn: 'ingest',
-    writes: true,
-    summary:
-      'Ingest a screen recording (and optional events.jsonl, VO, music, logo), validate the events, and start the privacy scan (contact sheets).',
-    usage:
-      'studio demo ingest <recording> --name N [--events events.jsonl] [--vo F] [--music F] [--logo F]',
-    example: 'studio demo ingest rec.mp4 --name acme --events events.jsonl --vo vo.wav',
-    flags: [
-      s('name', 'demo name (default: file name)'),
-      s('events', 'events.jsonl from the recorder'),
-      s('vo', 'voice-over audio'),
-      s('music', 'music bed'),
-      s('logo', 'logo PNG'),
-    ],
-  }),
-  cmd({
-    name: 'demo.autozoom',
-    module: 'demo',
-    fn: 'autozoom',
-    writes: true,
-    summary:
-      'Plan zoom and pan from clicks (cluster, lead the click, ease, hold, pan or zoom out) and write ordinary scale/x/y keyframes on a clip.',
-    usage:
-      'studio demo autozoom --clip c_xx --events events.jsonl [--box-frac 0.5] [--max-scale 2.5] [--allow-soft | --strict-sharp]',
-    example: 'studio demo autozoom --clip c_01 --events demo/acme/events.jsonl',
-    flags: [
-      s('clip', 'media clip', true),
-      s('events', 'events.jsonl', true),
-      n('box-frac', 'target box width as a fraction of the frame (0.45-0.6)'),
-      n('max-scale', 'largest zoom (max 2.5)'),
-      n('out-width', 'output width for the sharpness check'),
-      b('allow-soft', 'zoom to the maximum even when the crop is below the output resolution'),
-      b('strict-sharp', 'never zoom below the sharp limit'),
-    ],
-  }),
-  cmd({
-    name: 'demo.build',
-    module: 'demo',
-    fn: 'build',
-    writes: true,
-    summary:
-      'Build the demo: cut dead time, ramp loading spans, zoom on clicks, overlays, intro/outro, VO cleanup, ducked music, captions; render 16:9, 9:16 and 1:1, QC each, write report.md.',
-    usage:
-      'studio demo build --name N [--plan plan.json] --privacy-reviewed [--aspects 16x9,9x16,1x1]',
-    example: 'studio demo build --name acme --plan demo/acme/plan.json --privacy-reviewed',
-    flags: [
-      s('name', 'demo name'),
-      s('plan', 'plan.json: beats, intro, outro, lowerThird, callouts'),
-      b('privacy-reviewed', 'state that the contact sheets were viewed (required)'),
-      s('aspects', 'comma list of 16x9, 9x16, 1x1'),
-      s('model', 'whisper model for the VO (default whisper-small)'),
-      b('allow-soft', 'allow soft zooms up to the maximum'),
-    ],
   }),
   cmd({
     name: 'mcp',
