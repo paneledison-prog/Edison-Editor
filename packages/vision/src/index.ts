@@ -12,3 +12,4 @@ export * from './ba.js';
 export * from './tracks.js';
 export * from './sfm.js';
 export * from './segment.js';
+export * from './cuts.js';

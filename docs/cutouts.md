@@ -26,3 +26,10 @@ Colour histograms from the marks and the box give each pixel a likelihood; an ed
 * Edges are soft alpha from a band, not a hair-level matte; no despill or colour decontamination.
 * Tested on synthetic footage only; not on real people or hair. The model prior was not run here.
 * A matte follows at most 700 frames in one build.
+
+## Real footage (three film/TV clips with people, tested through the CLI)
+* **Box, dots and strokes on a person against a similarly coloured background** (a man in a blue shirt in front of brown wood paneling) gave a poor first matte: wood was taken as skin and the neck and lower face had holes, because the wood strokes taught the model colours the skin also has. A rough `--outline` of the man (about 25 px accuracy at 854 px wide) gave a clean first frame: face, hands, shirt, and the bottle in front correctly excluded.
+* **Following** through the clip kept the man, but the matte leaked into a carved wood post beside his hand (the same colour as skin). The second marked frame with background strokes on the post was clean at that frame; the report said so (following from frame 0 reached the marked frame with IoU 0.91, and back with 0.91) and the leak between the marks remained. So: usable as a draft, not as a finished matte; hair edges are soft and rough.
+* **Cuts:** one clip has two hard cuts. The first run followed the matte across a cut and produced nonsense (a bald man's matte placed on a girl). Matte building now detects cuts, never follows across one, leaves a shot with no marked frame empty and says so (`checkThese`), so each shot needs its own marked frame.
+* **A dark sweater against a dark background** (clip c) came out loose even with an outline: part of the dark wall at the left was included and a patch of the phone was lost. Not fixed.
+* A cutout rendered over a green project background looked right overall (man on green, edges soft, a few green holes and some wood fragments near the hair).

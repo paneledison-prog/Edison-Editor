@@ -50,6 +50,8 @@ export interface TrackData {
     ms: number;
     model: string;
     lostRanges: [number, number][];
+    /** where the picture is replaced by an unrelated one (ms of the asset): a track does not mean anything across it */
+    cuts?: number[];
     /** plane3d: what the camera solve and the plane fit found */
     solve?: { f: number; hfovDeg: number; rmsPx: number; points: number; planeInliers: number; planePoints: number; planeRms: number; cached: boolean; frames: number; registered: number };
   };
@@ -78,6 +80,13 @@ export function loadTrack(projectDir: string, project: Project, id: string): Tra
     return null;
   }
 }
+
+const grayDiff = (a: Gray, b: Gray): number => {
+  let s = 0;
+  let n = 0;
+  for (let i = 0; i < a.d.length; i += 7) (s += Math.abs(a.d[i]! - b.d[i]!), n++);
+  return s / n;
+};
 
 /** Analysis rate and size a tracker uses on this source. */
 export function analysisOf(t: Tracker, info: { w: number; h: number; fps: number }): { fps: number; size: { w: number; h: number } } {
@@ -183,20 +192,31 @@ export async function buildTrack(o: TrackBuildOptions): Promise<{ data: TrackDat
   const forward: { H: Mat3 | null; ok: boolean; refined: boolean; inliers: number }[] = [];
   const nFwd = total - r - 1;
   let seen = 0;
+  const jumps: { frame: number; d: number }[] = [];
   async function* after(): AsyncGenerator<Gray> {
+    let prevG = ref;
     for (;;) {
       const n = await fwd.next();
       if (n.done || seen >= nFwd) return;
       seen++;
       if (seen % 25 === 0) log(`tracker ${id}: frame ${r + seen + 1} of ${total}`);
-      yield gray(n.value);
+      const g = gray(n.value);
+      jumps.push({ frame: r + seen, d: grayDiff(prevG, g) });
+      prevG = g;
+      yield g;
     }
   }
   for await (const f of trackPlane(ref, quad, after(), opts)) forward.push(f);
   const backward: typeof forward = [];
   if (back.length) {
     function* walk(): Generator<Gray> {
-      for (let i = back.length - 1; i >= 0; i--) yield gray(back[i]!);
+      let prevG = ref;
+      for (let i = back.length - 1; i >= 0; i--) {
+        const g = gray(back[i]!);
+        jumps.push({ frame: i + 1, d: grayDiff(prevG, g) }); // between frame i and i + 1 of the whole range
+        prevG = g;
+        yield g;
+      }
     }
     for await (const f of trackPlane(ref, quad, walk(), opts)) backward.push(f);
   }
@@ -226,6 +246,8 @@ export async function buildTrack(o: TrackBuildOptions): Promise<{ data: TrackDat
     else lostRanges.push([i, i]);
   });
   const fromMs = t.from + (r - backward.length) * step;
+  const med = jumps.map((j) => j.d).sort((x, y) => x - y)[jumps.length >> 1] ?? 0;
+  const cutMs = jumps.filter((j) => j.d > Math.max(0.06, 6 * med)).map((j) => Math.round(fromMs + (j.frame - (backward.length - r)) * step));
   const data: TrackData = {
     v: TRACK_VERSION,
     tracker: id,
@@ -247,6 +269,7 @@ export async function buildTrack(o: TrackBuildOptions): Promise<{ data: TrackDat
       ms: Date.now() - t0,
       model: t.model,
       lostRanges: lostRanges.map(([x, y]) => [Math.round(fromMs + x * step), Math.round(fromMs + y * step)]),
+      ...(cutMs.length ? { cuts: cutMs } : {}),
     },
   };
   mkdirSync(join(projectDir, '.studio', 'cache', 'track'), { recursive: true });

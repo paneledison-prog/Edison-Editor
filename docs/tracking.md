@@ -31,3 +31,11 @@ Synthetic footage with a known camera only.
 * Pins draw over whatever is in front (no occlusion), are rendered at canvas size, and cannot be used on a clip with zoom/pan keyframes.
 * Long clips: expression tables are cut into 360-frame pieces and passed to FFmpeg as a script file (tested to 450 frames); tracking holds at most 4000 frames before the reference frame in memory.
 * Frame previews do not build trackers; run `studio track build TK` first (renders build them).
+
+## Real footage (three short film/TV clips, 1.4 to 3 s, 848 to 1140 px wide)
+What happened when these were run, not what is hoped:
+* **Camera shake:** the clips have almost none. On two of them the tracked camera path moved 0.5 and 8 px; `stabilize` changed nothing useful (background-region shake 0.157 to 0.220 px and 0.115 to 0.178 px at 160 px wide, which is measurement noise), so there was nothing to fix. This is not evidence that stabilization works on real shake; it was verified on synthetic shake only.
+* **A moving subject filling the frame fools the default.** On the third clip the face fills the frame; the default whole-frame stabilize followed the face (path moved 3.6% of the width, zoom 1.25, background moved more than before). `--box` on the background (here the left strip) gave a steady background with zoom 1.11. `stabilize` now warns when the tracked path moves more than 2% of the width without `--box`.
+* **Cuts:** the third clip contains two hard cuts (1800 and 2933 ms). Tracking across a cut is meaningless; `track add`/`build` now report cuts and say to track each shot separately. (Found by this footage; before, the cuts only showed up as two "lost" frames.)
+* **3D solve:** refused on all three, correctly ("the camera does not move enough"): static or near-static cameras have no parallax.
+* **Pin on a low-texture wood panel** (a static camera): the tracker lost 8 of 43 frames and the pin skewed in the later frames. The tool warned about the lost frames. Pins need a region with texture that stays visible.

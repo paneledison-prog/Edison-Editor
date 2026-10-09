@@ -88,6 +88,7 @@ function summary(d: import('@studio/engines').TrackData) {
 }
 const trackWarnings = (id: string, d: import('@studio/engines').TrackData): string[] => {
   const w: string[] = [];
+  if (d.stats.cuts?.length) w.push(`tracker ${id}: the picture is replaced by an unrelated one at ${d.stats.cuts.join(', ')} ms (a cut), so the track means nothing across it; track each shot separately (--from/--to)`);
   if (d.stats.lost > 0) w.push(`tracker ${id} lost the region in ${d.stats.lost} of ${d.frames} frames (${d.stats.lostRanges.map((r) => `${r[0]}–${r[1]} ms`).join(', ')}); those frames are interpolated, so check them with studio track preview ${id}`);
   if (d.stats.solve && d.stats.solve.rmsPx > 1.5) w.push(`tracker ${id}: the camera solve reprojects with ${d.stats.solve.rmsPx.toFixed(2)} px error, which is loose; the scene may move, or the lens may be strongly distorted`);
   if (d.stats.meanInliers < 12 && !d.stats.solve) w.push(`tracker ${id}: only ${d.stats.meanInliers} feature points agreed on average; the region may lack texture (flat colour or very blurry), so the result is less certain`);
@@ -299,6 +300,7 @@ export const stabilize: Handler = async (inv) => {
     },
     warnings: [
       ...(built ? trackWarnings(id, built.data) : []),
+      ...(plan && !str(inv, 'tracker') && !str(inv, 'box') && plan.removed > 0.02 ? [`the tracked path moved ${px(plan.removed)} px (${Math.round(plan.removed * 1000) / 10}% of the width) from its smoothed version. If the picture is mostly a moving subject, this follows the subject, not the camera: look with studio track preview ${id} and use --box on the background`] : []),
       ...(plan && plan.alpha < 0.999 ? [`the zoom limit (maxZoom ${(fx as { maxZoom?: number }).maxZoom ?? 1.25}) allowed only ${Math.round(plan.alpha * 100)}% of the correction; raise --max-zoom for a steadier picture with more cropped away`] : []),
     ],
   };

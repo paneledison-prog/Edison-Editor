@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Matte, Project } from '@studio/core';
 import {
-  VideoWriter, drawLine, drawPoly, followStep, probeVideo, readFrames, readSize, segmentFrame, startFollowing, tileRgb,
+  VideoWriter, detectCuts, drawLine, drawPoly, followStep, probeVideo, readFrames, readSize, segmentFrame, startFollowing, tileRgb,
   type Seeds,
 } from '@studio/vision';
 import { grabFrame } from './grab.js';
@@ -33,6 +33,8 @@ export interface MatteData {
   fromMs: number;
   frames: number;
   keys: { at: number; frame: number }[];
+  /** where shots change (ms of the asset); following does not cross them */
+  cuts?: number[];
   /** per frame: the share of the picture the matte covers, and how much of the re-decided band stayed undecided (0..1) */
   coverage: number[];
   uncertain: number[];
@@ -187,27 +189,41 @@ export async function buildMatte(o: MatteBuildOptions): Promise<{ data: MatteDat
     return r;
   };
   keys.forEach((k, ki) => (final[k.frame] = keyAlpha[ki]!));
-  const first = keys[0]!.frame;
-  const last = keys[keys.length - 1]!.frame;
-  if (first > 0) for (const [i, v] of follow(0, range(first - 1, 0, -1))) final[i] = v;
-  if (last < N - 1) for (const [i, v] of follow(keys.length - 1, range(last + 1, N - 1, 1))) final[i] = v;
-  for (let ki = 0; ki + 1 < keys.length; ki++) {
-    const ia = keys[ki]!.frame;
-    const ib = keys[ki + 1]!.frame;
-    const fw = follow(ki, range(ia + 1, ib, 1));
-    const bw = follow(ki + 1, range(ib - 1, ia, -1));
-    drift.push({ from: keys[ki]!.at, to: keys[ki + 1]!.at, direction: 'forward', iou: iouBytes(fw.get(ib)!, keyAlpha[ki + 1]!) });
-    drift.push({ from: keys[ki + 1]!.at, to: keys[ki]!.at, direction: 'backward', iou: iouBytes(bw.get(ia)!, keyAlpha[ki]!) });
-    for (let i = ia + 1; i < ib; i++) {
-      const wb = (i - ia) / (ib - ia);
-      const f = fw.get(i)!;
-      const b = bw.get(i)!;
-      const o2 = new Uint8Array(w * h);
-      for (let p = 0; p < o2.length; p++) o2[p] = Math.round(f[p]! * (1 - wb) + b[p]! * wb);
-      final[i] = o2;
+  // A cut replaces the picture with an unrelated one: following never crosses one, and a shot with no marked frame has no matte.
+  const cuts = detectCuts(frames, w, h);
+  const starts = [0, ...cuts];
+  const shotNotes: MatteData['flagged'] = [];
+  starts.forEach((a0, si) => {
+    const b0 = (starts[si + 1] ?? N) - 1;
+    const inShot = keys.map((k, ki) => ({ k, ki })).filter(({ k }) => k.frame >= a0 && k.frame <= b0);
+    if (si > 0) shotNotes.push({ frame: a0, ms: Math.round(m.from + a0 * step), why: inShot.length ? 'a cut: a new shot starts here and is followed from its own marked frame' : 'a cut: a new shot starts here with no marked frame, so the matte is empty until the next cut; mark the object in it (studio matte key)' });
+    if (!inShot.length) {
+      for (let i = a0; i <= b0; i++) final[i] = new Uint8Array(w * h);
+      return;
     }
-    log(`between ${keys[ki]!.at} and ${keys[ki + 1]!.at} ms: following reaches the next marked frame with IoU ${drift[drift.length - 2]!.iou.toFixed(3)} (forward), ${drift[drift.length - 1]!.iou.toFixed(3)} (backward)`);
-  }
+    const first = inShot[0]!;
+    const last = inShot[inShot.length - 1]!;
+    if (first.k.frame > a0) for (const [i, v] of follow(first.ki, range(first.k.frame - 1, a0, -1))) final[i] = v;
+    if (last.k.frame < b0) for (const [i, v] of follow(last.ki, range(last.k.frame + 1, b0, 1))) final[i] = v;
+    for (let j = 0; j + 1 < inShot.length; j++) {
+      const ki = inShot[j]!.ki;
+      const ia = keys[ki]!.frame;
+      const ib = keys[ki + 1]!.frame;
+      const fw = follow(ki, range(ia + 1, ib, 1));
+      const bw = follow(ki + 1, range(ib - 1, ia, -1));
+      drift.push({ from: keys[ki]!.at, to: keys[ki + 1]!.at, direction: 'forward', iou: iouBytes(fw.get(ib)!, keyAlpha[ki + 1]!) });
+      drift.push({ from: keys[ki + 1]!.at, to: keys[ki]!.at, direction: 'backward', iou: iouBytes(bw.get(ia)!, keyAlpha[ki]!) });
+      for (let i = ia + 1; i < ib; i++) {
+        const wb = (i - ia) / (ib - ia);
+        const f = fw.get(i)!;
+        const bb = bw.get(i)!;
+        const o2 = new Uint8Array(w * h);
+        for (let p = 0; p < o2.length; p++) o2[p] = Math.round(f[p]! * (1 - wb) + bb[p]! * wb);
+        final[i] = o2;
+      }
+      log(`between ${keys[ki]!.at} and ${keys[ki + 1]!.at} ms: following reaches the next marked frame with IoU ${drift[drift.length - 2]!.iou.toFixed(3)} (forward), ${drift[drift.length - 1]!.iou.toFixed(3)} (backward)`);
+    }
+  });
 
   // write the video and the numbers
   mkdirSync(dirOf(projectDir), { recursive: true });
@@ -224,9 +240,9 @@ export async function buildMatte(o: MatteBuildOptions): Promise<{ data: MatteDat
   await wr.close();
   renameSync(tmp, video);
   const peak = Math.max(...coverage, 1e-9);
-  const flagged: MatteData['flagged'] = [];
+  const flagged: MatteData['flagged'] = [...shotNotes];
   const ms = (i: number) => Math.round(m.from + i * step);
-  for (let i = 1; i < N && flagged.length < 12; i++) {
+  for (let i = 1; i < N && flagged.length < 14; i++) {
     const jump = Math.abs(coverage[i]! - coverage[i - 1]!) / peak;
     if (jump > 0.3) flagged.push({ frame: i, ms: ms(i), why: `the matte's area changed by ${Math.round(jump * 100)}% of its peak in one frame` });
     else if (coverage[i]! < 0.0005 && coverage[i - 1]! >= 0.0005) flagged.push({ frame: i, ms: ms(i), why: 'the matte became empty' });
@@ -244,6 +260,7 @@ export async function buildMatte(o: MatteBuildOptions): Promise<{ data: MatteDat
     fromMs: m.from,
     frames: N,
     keys: keys.map((k) => ({ at: k.at, frame: k.frame })),
+    cuts: cuts.map((c) => Math.round(m.from + c * step)),
     coverage,
     uncertain: unc.map((v) => Math.round(v * 1000) / 1000),
     flagged,
