@@ -171,7 +171,11 @@ function EffectsEditor({ project, clipId, editable, onEdit }: { project: Project
                 checked={!off}
                 disabled={!editable || !canSwitch(f)}
                 aria-label={`${name} on`}
-                onChange={() => put(list.map((g) => (g === f ? (off ? Object.fromEntries(Object.entries(g).filter(([k]) => k !== 'bypass')) : { ...g, bypass: true }) : g)) as FxEntry[], `${off ? 'enable' : 'switch off'} ${name}`)}
+                onChange={(e) => {
+                  // what the person asked for is what the box now shows; deciding from the last rendered state would undo a quick off-on
+                  const wantOn = (e.currentTarget as HTMLInputElement).checked;
+                  put(list.map((g) => (g === f ? (wantOn ? Object.fromEntries(Object.entries(g).filter(([k]) => k !== 'bypass')) : { ...g, bypass: true }) : g)) as FxEntry[], `${wantOn ? 'enable' : 'switch off'} ${name}`);
+                }}
               />{' '}
               {name}
               {f.tracker ? ` on ${f.tracker}` : ''}
@@ -274,11 +278,21 @@ export function App() {
     setNotice(r.ok ? null : (r.message ?? 'edit failed'));
   }, []);
   // Every edit names the revision it was made against; the server refuses it if an agent changed the project since.
+  // One edit at a time: the next is sent only after the page has seen the project this one made (or a moment has passed), so a
+  // quick second edit names the revision the first produced instead of being refused as made against an old one.
+  const editQueue = useRef<Promise<unknown>>(Promise.resolve());
   const edit = useCallback(
-    async (specs: OpSpec[], label: string) => {
-      const r = await sendOps(revRef.current, specs, label);
-      report(r);
-      return r;
+    (specs: OpSpec[], label: string) => {
+      const run = async () => {
+        const before = revRef.current;
+        const r = await sendOps(before, specs, label);
+        report(r);
+        if (r.ok) for (let i = 0; i < 40 && revRef.current === before; i++) await new Promise((res) => setTimeout(res, 50));
+        return r;
+      };
+      const p = editQueue.current.then(run, run);
+      editQueue.current = p.catch(() => undefined);
+      return p;
     },
     [report],
   );
