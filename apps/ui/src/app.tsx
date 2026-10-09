@@ -139,6 +139,54 @@ function KeyframeEditor({
   );
 }
 
+type FxEntry = NonNullable<ProjectView['clips'][number]['fx']>[number] & Record<string, unknown>;
+
+/** The clip's effects, switchable and removable by the person when no agent holds the workspace; every change is one op. */
+function EffectsEditor({ project, clipId, editable, onEdit }: { project: ProjectView; clipId: string; editable: boolean; onEdit: (specs: OpSpec[], label: string) => void }) {
+  const clip = project.clips.find((c) => c.id === clipId);
+  const list = (clip?.fx ?? []) as FxEntry[];
+  const named = list.filter((f) => f.node);
+  if (!clip || !named.length) return null;
+  const put = (next: FxEntry[], label: string, dropNode?: string) => {
+    const dead = dropNode
+      ? Object.entries(clip.keyframes ?? {}).flatMap(([prop, ks]) => (prop.startsWith(`fx.${dropNode}.`) ? ks.map((k) => k.id) : []))
+      : [];
+    onEdit(
+      [...dead.map((id) => ({ type: 'kf.delete', args: { clip: clip.id, id } })), { type: 'clip.set', args: { id: clip.id, patch: { fx: next.length ? next : null } } }],
+      label,
+    );
+  };
+  const canSwitch = (f: FxEntry) => ['plugin', 'lut', 'stabilize', 'pin', 'cutout'].includes(f.type);
+  return (
+    <div data-testid="effects">
+      <dt>Effects</dt>
+      {named.map((f) => {
+        const off = !!f.bypass;
+        const name = f.id ?? f.type;
+        return (
+          <div class="fx-row" key={f.node} data-fx-node={f.node}>
+            <label>
+              <input
+                type="checkbox"
+                checked={!off}
+                disabled={!editable || !canSwitch(f)}
+                aria-label={`${name} on`}
+                onChange={() => put(list.map((g) => (g === f ? (off ? Object.fromEntries(Object.entries(g).filter(([k]) => k !== 'bypass')) : { ...g, bypass: true }) : g)) as FxEntry[], `${off ? 'enable' : 'switch off'} ${name}`)}
+              />{' '}
+              {name}
+              {f.tracker ? ` on ${f.tracker}` : ''}
+              {f.matte ? ` in ${f.matte.id}` : ''}
+            </label>
+            <Button variant="ghost" disabled={!editable} onClick={() => put(list.filter((g) => g !== f), `remove ${name}`, f.node)}>
+              Remove
+            </Button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function Inspector({
   project,
   selectedId,
@@ -177,17 +225,6 @@ function Inspector({
           'Keyframes',
           String(Object.values(clip.keyframes ?? {}).reduce((n, k) => n + k.length, 0)),
         ],
-        ...(clip.fx?.some((f) => f.node)
-          ? ([
-              [
-                'Effects',
-                clip.fx
-                  .filter((f) => f.node)
-                  .map((f) => `${f.id ?? f.type}${f.bypass ? ' (off)' : ''}${f.tracker ? ` on ${f.tracker}` : ''}${f.matte ? ` in ${f.matte.id}` : ''}`)
-                  .join(', '),
-              ],
-            ] as [string, string][])
-          : []),
       ]
     : [
         ['Canvas', `${project.meta.width}×${project.meta.height}`],
@@ -206,6 +243,7 @@ function Inspector({
           <dd>{v}</dd>
         </div>
       ))}
+      {clip && <EffectsEditor project={project} clipId={clip.id} editable={editable} onEdit={onEdit} />}
       {clip && (
         <KeyframeEditor project={project} clipId={clip.id} editable={editable} onEdit={onEdit} />
       )}

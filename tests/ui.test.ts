@@ -1,5 +1,5 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { extname, join } from 'node:path';
 import { chromium, type Browser, type Page } from 'playwright-core';
@@ -535,4 +535,42 @@ describe('live timeline in a real browser', () => {
     await page.locator('[data-testid=status][data-status=no-server]').waitFor();
     expect(await page.getByTestId('status').textContent()).toBe('No project loaded');
   });
+});
+
+describe('effects in the inspector', () => {
+  it_('the person can switch an effect off and on and remove it with its keyframes, each as one step; while an agent holds the workspace the controls are off', async () => {
+    const { dir, store, ctx } = seeded(1);
+    store.apply(
+      [
+        { type: 'clip.set', args: { id: 'c_01', patch: { fx: [{ type: 'plugin', id: 'lumetri', node: 'f_aaaa' }] } } },
+        { type: 'kf.set', args: { clip: 'c_01', prop: 'fx.f_aaaa.exposure', t: 0, v: 0 } },
+      ],
+      { ctx, actor: 'agent' },
+    );
+    const url = await serve(dir);
+    const bctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await bctx.newPage();
+    await page.goto(url);
+    await page.locator('[data-testid=status][data-status=live]').waitFor();
+    await page.locator('[data-clip-id=c_01]').click();
+    const row = page.locator('[data-fx-node=f_aaaa]');
+    await row.waitFor();
+    const box = row.getByRole('checkbox');
+    const fx = () => (store.load().project.clips[0] as any).fx;
+    await box.uncheck();
+    await expect.poll(() => fx()?.[0]?.bypass, { timeout: 3000 }).toBe(true);
+    await box.check();
+    await expect.poll(() => fx()?.[0]?.bypass, { timeout: 3000 }).toBeUndefined();
+    await row.getByRole('button', { name: 'Remove' }).click();
+    await expect.poll(() => fx(), { timeout: 3000 }).toBeUndefined();
+    expect(Object.keys(store.load().project.clips[0]!.keyframes ?? {})).toEqual([]);
+    store.undo({ actor: 'agent', ctx });
+    await expect.poll(() => fx()?.length, { timeout: 3000 }).toBe(1);
+    expect(Object.keys(store.load().project.clips[0]!.keyframes ?? {}).length).toBe(1); // one undo brought both back
+    // an agent holds the workspace: the controls are off
+    writeFileSync(join(dir, '.studio', 'agent.json'), JSON.stringify({ agent: 'a1', start: Date.now(), expires: Date.now() + 60_000 }));
+    await expect.poll(() => row.getByRole('checkbox').isDisabled(), { timeout: 5000 }).toBe(true);
+    expect(await row.getByRole('button', { name: 'Remove' }).isDisabled()).toBe(true);
+    await bctx.close();
+  }, 60_000);
 });
