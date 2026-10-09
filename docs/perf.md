@@ -209,3 +209,13 @@ Details and the table of tests: `docs/workspaces.md`. Measured on 4 cores and 16
 Five media workspaces each ingesting, adding a clip and rendering 640x360 (clips of 2 to 6 s) at a limit of 2: 2.5 s wall, never more than 2 renders at once. These clips are short; the saving that matters is memory and not being killed, and it costs wall time on a fast machine.
 
 UI bundles after this change: media shell 20.80 KB to 21.65 KB gzipped (+4.1%: workspace tabs, the agent-working state, the drop guard; budget 250 KB, baseline updated); design editor 54.1 KB to 55.2 KB gzipped in total (budget 250 KB).
+
+## Tracking, stabilization, 3D solve and cut-outs (measured in tests, 4 cores, 480 px analysis)
+| Step | Measured |
+|---|---|
+| Planar track, 75 frames, no refinement | 2.1 s (about 28 ms/frame) |
+| 3D solve, 60 frames: features 3 s + solve 2.4 s | about 5.4 s; 60-frame CLI solve with preview 7 to 10 s |
+| Plane3d tracker on a cached solve | 78 ms |
+| Matte, 60 frames from one marked frame | 7.8 s alone (about 0.13 s/frame); 18 s when the machine was loaded |
+| Stabilize render, 450 frames at 640x360 | measured as part of a 57 s test including the track; not timed separately |
+| Animated effect parameters | 3 to 4 times the cost of the same effect fixed (see docs/plugins.md) |
