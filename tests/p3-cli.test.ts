@@ -518,6 +518,7 @@ describe('engines that are missing fail with a fix, never with placeholder outpu
       'whisper-tiny.en',
       'whisper-small',
       'whisper-medium',
+      'sam2.1-tiny',
     ]);
     expect(rows.every((x: any) => x.license && x.licenseSource.startsWith('https://'))).toBe(true);
     expect((await studio(['models', 'fetch', 'nope', '--project', dir])).code).toBe(2);
