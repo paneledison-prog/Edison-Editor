@@ -28,10 +28,12 @@ export interface ProjectView {
     srcIn?: number;
     props?: Record<string, unknown>;
     keyframes?: Record<string, Keyframe[]>;
-    fx?: { type: string; factor?: number; id?: string; node?: string }[];
+    fx?: { type: string; factor?: number; id?: string; node?: string; bypass?: boolean; tracker?: string; matte?: { id: string } }[];
     label?: string;
   }[];
   markers: { id: string; t: number; label: string }[];
+  trackers?: Record<string, { asset: string; model: string; label?: string }>;
+  mattes?: Record<string, { asset: string; keys: unknown[]; label?: string }>;
 }
 export interface Keyframe {
   id: string;

@@ -177,6 +177,17 @@ function Inspector({
           'Keyframes',
           String(Object.values(clip.keyframes ?? {}).reduce((n, k) => n + k.length, 0)),
         ],
+        ...(clip.fx?.some((f) => f.node)
+          ? ([
+              [
+                'Effects',
+                clip.fx
+                  .filter((f) => f.node)
+                  .map((f) => `${f.id ?? f.type}${f.bypass ? ' (off)' : ''}${f.tracker ? ` on ${f.tracker}` : ''}${f.matte ? ` in ${f.matte.id}` : ''}`)
+                  .join(', '),
+              ],
+            ] as [string, string][])
+          : []),
       ]
     : [
         ['Canvas', `${project.meta.width}×${project.meta.height}`],
@@ -184,6 +195,8 @@ function Inspector({
         ['Duration', `${timelineMs} ms`],
         ['Tracks', String(project.tracks.length)],
         ['Clips', String(project.clips.length)],
+        ...(project.trackers ? ([['Trackers', Object.keys(project.trackers).join(', ')]] as [string, string][]) : []),
+        ...(project.mattes ? ([['Mattes', Object.keys(project.mattes).join(', ')]] as [string, string][]) : []),
       ];
   return (
     <dl class="props" data-testid="inspector">
