@@ -18,7 +18,7 @@ import { pythonReady, removeBackground } from './bgremove.js';
 import { requireModel, studioRoot } from './models.js';
 import { EngineError, run } from './run.js';
 
-export const MATTE_VERSION = 13;
+export const MATTE_VERSION = 15;
 const MAX_FRAMES = 700;
 
 export interface MatteData {

@@ -570,6 +570,11 @@ export function segmentWithModel(rgb: Uint8Array, w: number, h: number, seeds: S
   if (onRef / area < 0.4) return { seg, ok: false, why: 'the model\'s subject lies mostly off the marked object' };
   if (box && inBox / area < 0.6) return { seg, ok: false, why: 'the model\'s subject reaches well outside the marked box' };
   const colour = colorEvidence(rgb, n, seg.fg, seg.bg);
+  // something marked as not the object (a bar passing in front) that the model joined to the subject: taken out near the strokes
+  const bgStroke = new Uint8Array(n);
+  for (let i = 0; i < n; i++) if (marks[i] === LABEL_BG) bgStroke[i] = 1;
+  const bgNear = morph(bgStroke, w, h, Math.max(4, Math.round(0.05 * w)), true);
+  for (let i = 0; i < n; i++) if (bgNear[i] && (colour[i]! < 0.6 || seg.alpha[i]! < 0.5)) sel[i] = 0;
   const { alpha } = refineToTarget(rgb, w, h, sel, colour);
   // what the person marked as the object but the model left out: the marked stroke and what the colours join to it nearby
   const markMask = new Uint8Array(n);
