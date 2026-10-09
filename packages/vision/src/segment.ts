@@ -62,7 +62,7 @@ function fillPolygon(m: Uint8Array, w: number, h: number, pts: [number, number][
 }
 
 /** The marks as a label image (0 unknown, 1 inside, 2 outside) at the analysis size; strokes of the foreground win over the box. */
-export function rasterSeeds(w: number, h: number, s: Seeds): { labels: Uint8Array; box?: Uint8Array; marks: Uint8Array } {
+export function rasterSeeds(w: number, h: number, s: Seeds): { labels: Uint8Array; box?: Uint8Array; marks: Uint8Array; strokes: Uint8Array } {
   const labels = new Uint8Array(w * h);
   let box: Uint8Array | undefined;
   if (s.box) {
@@ -71,16 +71,16 @@ export function rasterSeeds(w: number, h: number, s: Seeds): { labels: Uint8Arra
     for (let y = Math.max(0, Math.floor(by * h)); y < Math.min(h, Math.ceil((by + bh) * h)); y++) for (let x = Math.max(0, Math.floor(bx * w)); x < Math.min(w, Math.ceil((bx + bw) * w)); x++) box[y * w + x] = 1;
     for (let i = 0; i < w * h; i++) if (!box[i]) labels[i] = LABEL_BG;
   }
-  const draw = (shapes: Shape[] | undefined, v: number) => {
+  const draw = (target: Uint8Array, shapes: Shape[] | undefined, v: number) => {
     for (const sh of shapes ?? []) {
       const pts = sh.p.map(([x, y]) => [x * w, y * h] as [number, number]);
       const r = Math.max(0.7, (sh.r ?? 0.006) * w);
-      if (sh.closed && pts.length >= 3) fillPolygon(labels, w, h, pts, v);
+      if (sh.closed && pts.length >= 3) fillPolygon(target, w, h, pts, v);
       for (let i = 0; i < pts.length; i++) {
         const a = pts[i]!;
         const b = pts[Math.min(i + 1, pts.length - 1)]!;
         const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / Math.max(1, r * 0.7)));
-        for (let k = 0; k <= n; k++) disc(labels, w, h, a[0] + ((b[0] - a[0]) * k) / n, a[1] + ((b[1] - a[1]) * k) / n, r, v);
+        for (let k = 0; k <= n; k++) disc(target, w, h, a[0] + ((b[0] - a[0]) * k) / n, a[1] + ((b[1] - a[1]) * k) / n, r, v);
       }
     }
   };
@@ -96,12 +96,16 @@ export function rasterSeeds(w: number, h: number, s: Seeds): { labels: Uint8Arra
     }
   }
   const before = labels.slice();
-  draw(s.bg, LABEL_BG);
-  draw(s.fg, LABEL_FG);
+  draw(labels, s.bg, LABEL_BG);
+  draw(labels, s.fg, LABEL_FG);
+  // every stroke and dot as drawn, wherever it lies (also inside an outline, where the label was already 'inside')
+  const strokes = new Uint8Array(w * h);
+  draw(strokes, s.bg, LABEL_BG);
+  draw(strokes, s.fg, LABEL_FG);
   // the pixels the strokes and dots themselves set (not the box or the outline's rings): what was said outright
   const marks = new Uint8Array(w * h);
   for (let i = 0; i < w * h; i++) if (labels[i] && labels[i] !== before[i]) marks[i] = labels[i]!;
-  return { labels, box, marks };
+  return { labels, box, marks, strokes };
 }
 
 // ----- colour models ------------------------------------------------------------------------------------------------------------------
@@ -335,6 +339,8 @@ export interface Segmented {
   alpha: Float32Array;
   fg: ColorModel;
   bg: ColorModel;
+  /** parts the person marked that a model's mask would leave out (a thin antenna, a held object): kept and carried along by flow */
+  extra?: Float32Array;
 }
 
 function modelsFrom(rgb: Uint8Array, labelsFg: Uint8Array, labelsBg: Uint8Array, wFg: number, wBg: number): { fg: ColorModel; bg: ColorModel } {
@@ -444,6 +450,153 @@ export function segmentFrame(rgb: Uint8Array, w: number, h: number, seeds: Seeds
   return { alpha, fg, bg };
 }
 
+// ----- a model's mask: choosing the subject and snapping it to the picture ----------------------------------------------------------------------
+
+/** Connected parts (4-neighbour) of a binary mask: a label per pixel (0 = none) and each part's size. */
+export function components(mask: Uint8Array, w: number, h: number): { id: Int32Array; sizes: number[] } {
+  const id = new Int32Array(w * h);
+  const sizes: number[] = [0];
+  const stack: number[] = [];
+  for (let s = 0; s < mask.length; s++) {
+    if (!mask[s] || id[s]) continue;
+    const c = sizes.length;
+    let size = 0;
+    id[s] = c;
+    stack.push(s);
+    while (stack.length) {
+      const p = stack.pop()!;
+      size++;
+      const x = p % w;
+      const y = (p - x) / w;
+      if (x > 0 && mask[p - 1] && !id[p - 1]) ((id[p - 1] = c), stack.push(p - 1));
+      if (x < w - 1 && mask[p + 1] && !id[p + 1]) ((id[p + 1] = c), stack.push(p + 1));
+      if (y > 0 && mask[p - w] && !id[p - w]) ((id[p - w] = c), stack.push(p - w));
+      if (y < h - 1 && mask[p + w] && !id[p + w]) ((id[p + w] = c), stack.push(p + w));
+    }
+    sizes.push(size);
+  }
+  return { id, sizes };
+}
+
+/**
+ * The parts of a model's mask that are the subject: those that mostly lie on the reference (the marked or the carried-over
+ * matte). Other salient things in the picture are left out. The soft fringe of the chosen parts is kept.
+ */
+export function selectSubject(prior: Float32Array, ref: Float32Array, w: number, h: number, o: { minOverlap?: number; reach?: number } = {}): Float32Array {
+  const n = w * h;
+  const bin = new Uint8Array(n);
+  for (let i = 0; i < n; i++) bin[i] = prior[i]! > 0.5 ? 1 : 0;
+  const { id, sizes } = components(bin, w, h);
+  const ov = new Array<number>(sizes.length).fill(0);
+  let region = ref;
+  if (o.reach) {
+    const rb = new Uint8Array(n);
+    for (let i = 0; i < n; i++) rb[i] = ref[i]! > 0.5 ? 1 : 0;
+    const grown = morph(rb, w, h, o.reach, true);
+    region = Float32Array.from(grown, (v) => v);
+  }
+  for (let i = 0; i < n; i++) if (id[i] && ref[i]! > 0.5) ov[id[i]!]!++;
+  const keep = new Uint8Array(n);
+  const minSize = Math.max(8, Math.round(0.0015 * n));
+  const chosen = sizes.map((sz, c) => c > 0 && sz >= minSize && ov[c]! / sz >= (o.minOverlap ?? 0.3));
+  for (let i = 0; i < n; i++) if (id[i] && chosen[id[i]!] && region[i]! > 0.5) keep[i] = 1;
+  const d = morph(keep, w, h, 3, true);
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) if (d[i]) out[i] = keep[i] ? Math.max(prior[i]!, 0.5) : prior[i]! > 0.5 ? 0 : prior[i]!;
+  return out;
+}
+
+/** A matte from a target (a model's subject mask): sure inside kept, a thin band at the boundary decided with the picture's edges. */
+function refineToTarget(rgb: Uint8Array, w: number, h: number, target: Float32Array, colour: Float32Array | null, band = 3): { alpha: Float32Array; unsure: number } {
+  const n = w * h;
+  const inside = new Uint8Array(n);
+  for (let i = 0; i < n; i++) inside[i] = target[i]! > 0.5 ? 1 : 0;
+  const sure = morph(inside, w, h, band, false);
+  const near = morph(inside, w, h, band, true);
+  const active = new Uint8Array(n);
+  const fixed = new Float32Array(n);
+  const ev = new Float32Array(n);
+  let nActive = 0;
+  for (let i = 0; i < n; i++) {
+    if (sure[i]) fixed[i] = 1;
+    else if (near[i]) {
+      active[i] = 1;
+      ev[i] = colour ? 0.7 * target[i]! + 0.3 * colour[i]! : target[i]!;
+      nActive++;
+    }
+  }
+  const solved = nActive ? solveField(w, h, active, fixed, edgeWeights(rgb, w, h, 4), ev, 0.5, { iters: 120 }) : fixed;
+  const alpha = new Float32Array(n);
+  let unsure = 0;
+  for (let i = 0; i < n; i++) {
+    if (!active[i]) alpha[i] = fixed[i]!;
+    else {
+      alpha[i] = Math.min(1, Math.max(0, (solved[i]! - 0.5) * 2.2 + 0.5));
+      if (alpha[i]! > 0.2 && alpha[i]! < 0.8) unsure++;
+    }
+  }
+  return { alpha, unsure: nActive ? unsure / nActive : 0 };
+}
+
+export interface ModelKey {
+  seg: Segmented;
+  /** the model's mask agrees with what was marked (so it is the right guide for this object) */
+  ok: boolean;
+  why: string;
+}
+
+/**
+ * A marked frame, with a model's mask as the guide: the subject is the part(s) of the mask on the marked object; the marks
+ * still decide (a foreground mark is inside, a background mark is outside). `ok` says whether the model found the marked
+ * object at all; if not, `seg` is the colour result unchanged.
+ */
+export function segmentWithModel(rgb: Uint8Array, w: number, h: number, seeds: Seeds, seg: Segmented, prior: Float32Array): ModelKey {
+  const n = w * h;
+  const { strokes: marks, box } = rasterSeeds(w, h, seeds); // the strokes themselves (an outline's inside is only a hint)
+  // the marked region only guides which parts are the subject: the model may reach a little past a rough outline (hair, a hand),
+  // but never past a box (the box says what is outside)
+  const sel = selectSubject(prior, seg.alpha, w, h, { reach: Math.max(4, Math.round(0.04 * w)) });
+  if (box) for (let i = 0; i < n; i++) if (!box[i]) sel[i] = 0;
+  let area = 0;
+  let onRef = 0;
+  let inBox = 0;
+  for (let i = 0; i < n; i++)
+    if (sel[i]! > 0.5) {
+      area++;
+      if (seg.alpha[i]! > 0.5) onRef++;
+      if (!box || box[i]) inBox++;
+    }
+  if (area < 0.003 * n) return { seg, ok: false, why: 'the model found nothing on the marked object' };
+  if (onRef / area < 0.4) return { seg, ok: false, why: 'the model\'s subject lies mostly off the marked object' };
+  if (box && inBox / area < 0.6) return { seg, ok: false, why: 'the model\'s subject reaches well outside the marked box' };
+  const colour = colorEvidence(rgb, n, seg.fg, seg.bg);
+  const { alpha } = refineToTarget(rgb, w, h, sel, colour);
+  // what the person marked as the object but the model left out: the marked stroke and what the colours join to it nearby
+  const markMask = new Uint8Array(n);
+  for (let i = 0; i < n; i++) if (marks[i] === LABEL_FG && sel[i]! <= 0.5) markMask[i] = 1;
+  const near = morph(markMask, w, h, Math.max(3, Math.round(0.025 * w)), true);
+  const extra = new Float32Array(n);
+  for (let i = 0; i < n; i++)
+    if (near[i] && alpha[i]! < 0.5 && (seg.alpha[i]! > 0.5 || colour[i]! > 0.5)) {
+      extra[i] = 1;
+      alpha[i] = 1;
+    }
+  for (let i = 0; i < n; i++) {
+    if (marks[i] === LABEL_FG) alpha[i] = 1;
+    else if (marks[i] === LABEL_BG) alpha[i] = 0;
+  }
+  for (let i = 0; i < n; i++) if (marks[i] === LABEL_FG && sel[i]! <= 0.5) extra[i] = 1;
+  // the colour models are learnt again from the model-guided matte, so that following has the object's real palette
+  const sureFg = new Uint8Array(n);
+  const sureBg = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    if (alpha[i]! > 0.92) sureFg[i] = 1;
+    else if (alpha[i]! < 0.08) sureBg[i] = 1;
+  }
+  const m = modelsFrom(rgb, morph(sureFg, w, h, 2, false), morph(sureBg, w, h, 2, false), 1, 1);
+  return { seg: { alpha, fg: m.fg, bg: m.bg, extra }, ok: true, why: '' };
+}
+
 // ----- following it through time -------------------------------------------------------------------------------------------------------------
 
 /** Samples `src` at the positions given by a flow field (backward warp): out(p) = src(p + flow(p)). */
@@ -484,6 +637,8 @@ export interface FollowState {
   runBg: ColorModel;
   /** a colour that the object's own palette gives less probability than this is not the object's (something else in front) */
   fgFloor: number;
+  /** marked parts that a model's mask leaves out, carried along (see Segmented.extra) */
+  extra?: Float32Array;
 }
 
 /** Starts following from a segmented keyframe. */
@@ -492,7 +647,7 @@ export function startFollowing(rgb: Uint8Array, w: number, h: number, seg: Segme
   for (let i = 0; i < w * h; i += 3) if (seg.alpha[i]! > 0.9) ps.push(seg.fg.p(rgb[3 * i]!, rgb[3 * i + 1]!, rgb[3 * i + 2]!));
   ps.sort((a, b) => a - b);
   const fgFloor = ps.length ? 0.25 * ps[Math.floor(ps.length * 0.03)]! : 0;
-  const st: FollowState = { w, h, rgb, gray: grayOf(rgb, w, h), alpha: seg.alpha, refFg: seg.fg, refBg: seg.bg, runFg: new ColorModel(), runBg: new ColorModel(), fgFloor };
+  const st: FollowState = { w, h, rgb, gray: grayOf(rgb, w, h), alpha: seg.alpha, refFg: seg.fg, refBg: seg.bg, runFg: new ColorModel(), runBg: new ColorModel(), fgFloor, ...(seg.extra ? { extra: seg.extra } : {}) };
   learn(st, rgb, seg.alpha);
   return st;
 }
@@ -532,7 +687,7 @@ export interface FollowStep {
  * The matte of the next frame: the last one carried over by optical flow, its confident inside and outside kept, and a band
  * around the boundary decided again from colours and edges.
  */
-export function followStep(st: FollowState, rgb: Uint8Array, o: { band?: number } = {}): FollowStep {
+export function followStep(st: FollowState, rgb: Uint8Array, o: { band?: number; prior?: Float32Array } = {}): FollowStep {
   const { w, h } = st;
   const n = w * h;
   const gray = grayOf(rgb, w, h);
@@ -547,6 +702,63 @@ export function followStep(st: FollowState, rgb: Uint8Array, o: { band?: number 
       cnt++;
     }
   const band = o.band ?? Math.max(4, Math.min(Math.round(0.05 * w), Math.round(0.012 * w + 0.8 * (cnt ? mv / cnt : 0))));
+  if (o.prior) {
+    // A model's mask guides: its parts that lie on the carried-over matte are the subject, and the boundary is snapped to the
+    // picture. If it lost the subject (much less than the carried-over matte), flow and colours decide, as without a model.
+    // (the carried-over matte and the previous one together: where the object was and where the motion says it went)
+    const ref = new Float32Array(n);
+    let before = 0;
+    for (let i = 0; i < n; i++) {
+      ref[i] = Math.max(warped[i]!, st.alpha[i]!);
+      if (ref[i]! > 0.5) before++;
+    }
+    const sel = selectSubject(o.prior, ref, w, h, { reach: Math.max(10, Math.round(0.06 * w)) });
+    // The model does not know about something passing in front of the object (a bar, a hand of someone else): it joins the
+    // subject's mask. A sizeable piece of picture in colours the object never had is taken out again (small ones, such as
+    // the inside of a mouth, are the object's own).
+    const foreign = new Uint8Array(n);
+    for (let i = 0; i < n; i++)
+      if (sel[i]! > 0.5) {
+        const r = rgb[3 * i]!;
+        const g = rgb[3 * i + 1]!;
+        const b = rgb[3 * i + 2]!;
+        if (st.refFg.p(r, g, b) < st.fgFloor && st.runFg.p(r, g, b) < st.fgFloor) foreign[i] = 1;
+      }
+    const fc = components(foreign, w, h);
+    const bigOnly = new Uint8Array(n);
+    for (let i = 0; i < n; i++) if (fc.id[i] && fc.sizes[fc.id[i]!]! >= 0.008 * n) bigOnly[i] = 1;
+    const carve = morph(bigOnly, w, h, 1, true);
+    for (let i = 0; i < n; i++) if (carve[i]) sel[i] = 0;
+    let after = 0;
+    let both = 0;
+    for (let i = 0; i < n; i++)
+      if (sel[i]! > 0.5) {
+        after++;
+        if (ref[i]! > 0.5) both++;
+      }
+    // the model is trusted only while it agrees with where the motion says the object went (IoU of the two)
+    const agree = before + after - both > 0 ? both / (before + after - both) : 0;
+    if (before > 0 && agree >= 0.6) {
+      const colour = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
+        const a = st.refFg.p(rgb[3 * i]!, rgb[3 * i + 1]!, rgb[3 * i + 2]!);
+        colour[i] = a / (a + st.refBg.p(rgb[3 * i]!, rgb[3 * i + 1]!, rgb[3 * i + 2]!));
+      }
+      // the parts the person marked that the model leaves out go along with the motion, as long as they keep the object's colours
+      if (st.extra) {
+        const ex = warpByFlow(st.extra, w, h, flow.u, flow.v);
+        const kept = new Float32Array(n);
+        for (let i = 0; i < n; i++) if (ex[i]! > 0.5 && colour[i]! > 0.5 && sel[i]! <= 0.5) ((kept[i] = 1), (sel[i] = 1));
+        st.extra = kept;
+      }
+      const r = refineToTarget(rgb, w, h, sel, colour);
+      learn(st, rgb, r.alpha);
+      st.rgb = rgb;
+      st.gray = gray;
+      st.alpha = r.alpha;
+      return { alpha: r.alpha, band: 3, uncertain: r.unsure };
+    }
+  }
   const inside = new Uint8Array(n);
   for (let i = 0; i < n; i++) inside[i] = warped[i]! > 0.5 ? 1 : 0;
   const sureFg = morph(inside, w, h, band, false);

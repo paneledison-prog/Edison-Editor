@@ -125,6 +125,8 @@ export const Matte = z
       .max(80),
     fps: z.number().min(1).max(60).optional(),
     width: z.number().int().min(160).max(1280).optional(),
+    /** what decides the boundary: a saliency model guided by the marks (auto: u2net when it can run), or the marks and colours alone */
+    engine: z.enum(['auto', 'colour', 'u2net', 'u2netp']).optional(),
     label: z.string().max(80).optional(),
   })
   .strict();

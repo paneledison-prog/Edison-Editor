@@ -10,14 +10,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Matte, Project } from '@studio/core';
 import {
-  VideoWriter, detectCuts, drawLine, drawPoly, followStep, probeVideo, readFrames, readSize, segmentFrame, startFollowing, tileRgb,
+  VideoWriter, detectCuts, drawLine, drawPoly, followStep, probeVideo, readFrames, readSize, segmentFrame, segmentWithModel, startFollowing, tileRgb,
   type Seeds,
 } from '@studio/vision';
 import { grabFrame } from './grab.js';
-import { removeBackground } from './bgremove.js';
-import { EngineError } from './run.js';
+import { pythonReady, removeBackground } from './bgremove.js';
+import { requireModel, studioRoot } from './models.js';
+import { EngineError, run } from './run.js';
 
-export const MATTE_VERSION = 1;
+export const MATTE_VERSION = 13;
 const MAX_FRAMES = 700;
 
 export interface MatteData {
@@ -41,7 +42,7 @@ export interface MatteData {
   flagged: { frame: number; ms: number; why: string }[];
   /** following from one marked frame reaches the next: how well the result agrees with the marks there (IoU) */
   drift: { from: number; to: number; direction: 'forward' | 'backward'; iou: number }[];
-  stats: { ms: number; keys: number; prior: string[] };
+  stats: { ms: number; keys: number; prior: string[]; /** what decided the boundary: a saliency model guided by the marks, or the marks and colours alone */ engine: string; engineNote?: string };
 }
 
 export function matteKey(project: Project, id: string): string {
@@ -85,6 +86,67 @@ async function modelPrior(rgb: Uint8Array, w: number, h: number, model: 'u2net' 
     rmSync(tmp, { recursive: true, force: true });
   }
 }
+
+
+type ModelName = 'u2net' | 'u2netp';
+
+/**
+ * Saliency masks (0..255 per pixel) of the given frames. Kept on disk per source and size, so changing marks does not run the
+ * model again. One python process does all that are missing.
+ */
+async function framePriors(o: { projectDir: string; tag: string; model: ModelName; frames: Uint8Array[]; need: number[]; w: number; h: number; log: (m: string) => void }): Promise<Map<number, Uint8Array>> {
+  const { w, h } = o;
+  const sharp = (await import('sharp')).default;
+  const dir = join(dirOf(o.projectDir), `prior-${o.tag}-${o.model}`);
+  mkdirSync(dir, { recursive: true });
+  const out = new Map<number, Uint8Array>();
+  const todo: number[] = [];
+  for (const i of o.need) {
+    const f = join(dir, `${i}.u8`);
+    if (existsSync(f)) {
+      const b = readFileSync(f);
+      if (b.length === w * h) {
+        out.set(i, new Uint8Array(b));
+        continue;
+      }
+    }
+    todo.push(i);
+  }
+  if (todo.length) {
+    const tmp = mkdtempSync(join(tmpdir(), 'studio-prior-'));
+    try {
+      const jobs: { in: string; out: string }[] = [];
+      for (const i of todo) {
+        const png = join(tmp, `${i}.png`);
+        await sharp(Buffer.from(o.frames[i]!), { raw: { width: w, height: h, channels: 3 } }).png().toFile(png);
+        jobs.push({ in: png, out: join(tmp, `${i}.m.png`) });
+      }
+      writeFileSync(join(tmp, 'jobs.json'), JSON.stringify(jobs));
+      o.log(`running ${o.model} on ${todo.length} frames`);
+      const r = await run('python3', ['-I', join(studioRoot(), 'tools', 'bgremove.py'), '--model', requireModel(o.model), '--jobs', join(tmp, 'jobs.json')], { timeoutMs: 120_000 + 4_000 * todo.length });
+      if (r.code !== 0) {
+        let msg = r.stderr.trim().split('\n').pop() ?? '';
+        try {
+          msg = JSON.parse(msg).message;
+        } catch {
+          /* keep raw */
+        }
+        throw new Error(msg || 'the model run failed');
+      }
+      for (let k = 0; k < todo.length; k++) {
+        const raw = await sharp(jobs[k]!.out).greyscale().raw().toBuffer();
+        if (raw.length !== w * h) throw new Error('the model returned a mask of the wrong size');
+        const u = new Uint8Array(raw);
+        out.set(todo[k]!, u);
+        writeFileSync(join(dir, `${todo[k]}.u8`), u);
+      }
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+  return out;
+}
+const toFloat = (u: Uint8Array): Float32Array => Float32Array.from(u, (v) => v / 255);
 
 export interface MatteBuildOptions {
   projectDir: string;
@@ -144,6 +206,29 @@ export async function buildMatte(o: MatteBuildOptions): Promise<{ data: MatteDat
     .sort((x, y) => x.frame - y.frame);
   for (let i = 1; i < keys.length; i++) if (keys[i]!.frame === keys[i - 1]!.frame) throw new EngineError('INVALID_INPUT', `matte ${id}: two marked frames fall on the same analysed frame (${keys[i]!.at} ms)`, 'keep marked frames at least one frame apart');
 
+  // which engine: a saliency model guided by the marks, or the marks and colours alone
+  const want = m.engine ?? 'auto';
+  let model: ModelName | null = want === 'colour' ? null : want === 'auto' ? 'u2net' : want;
+  let engineNote: string | undefined;
+  if (model) {
+    const py = await pythonReady();
+    let missing = py.ok ? '' : `python is not ready (${py.detail})`;
+    if (!missing)
+      try {
+        requireModel(model);
+      } catch (e) {
+        missing = (e as Error).message;
+      }
+    if (missing) {
+      if (want !== 'auto') throw new EngineError('ENGINE_MISSING', `matte ${id}: engine ${want} cannot run: ${missing}`, 'studio doctor; or --engine colour (marks and colours alone, weaker on real footage)');
+      engineNote = `the model engine is not available (${missing}); marks and colours alone were used`;
+      model = null;
+    }
+  }
+  const tag = createHash('sha256').update(JSON.stringify([a.hash, a.workingCopy?.path ?? a.path, m.from, fps, w, h, N])).digest('hex').slice(0, 16);
+  const prior = new Map<number, Uint8Array>();
+  const modelKey: boolean[] = [];
+
   // the marked frames
   const priors: string[] = [];
   const keyAlpha: Uint8Array[] = [];
@@ -164,11 +249,42 @@ export async function buildMatte(o: MatteBuildOptions): Promise<{ data: MatteDat
     } catch (e) {
       throw new EngineError('INVALID_INPUT', `matte ${id} at ${k.at} ms: ${(e as Error).message}`, 'give a box, foreground marks, an outline or a prior');
     }
+    let ok = false;
+    if (model) {
+      try {
+        const got = await framePriors({ projectDir, tag, model, frames, need: [k.frame], w, h, log });
+        const mk = segmentWithModel(frames[k.frame]!, w, h, k.seeds as Seeds, seg, toFloat(got.get(k.frame)!));
+        ok = mk.ok;
+        if (ok) seg = mk.seg;
+        else {
+          engineNote = `at ${k.at} ms ${mk.why}; marks and colours alone were used there`;
+          log(`marked frame ${k.at} ms: ${engineNote}`);
+          if (want !== 'auto') throw new EngineError('INVALID_INPUT', `matte ${id} at ${k.at} ms: ${mk.why}`, 'mark the object more exactly (--box around it, --fg on it), or --engine colour');
+        }
+      } catch (e) {
+        if (e instanceof EngineError) throw e;
+        if (want !== 'auto') throw new EngineError('ENGINE_FAILED', `matte ${id}: the ${model} model failed: ${(e as Error).message}`, 'studio doctor; or --engine colour');
+        engineNote = `the model failed (${(e as Error).message}); marks and colours alone were used`;
+        model = null;
+      }
+    }
+    modelKey.push(ok);
     keyAlpha.push(toBytes(seg.alpha));
     states.push(seg);
     log(`marked frame ${k.at} ms: ${Math.round((100 * keyAlpha[keyAlpha.length - 1]!.reduce((s, v) => s + (v > 127 ? 1 : 0), 0)) / (w * h))}% of the picture`);
   }
 
+  // the model's mask for every frame that is followed (marked frames done above)
+  if (model && modelKey.some(Boolean)) {
+    try {
+      const all = await framePriors({ projectDir, tag, model, frames, need: Array.from({ length: N }, (_, i) => i), w, h, log });
+      for (const [i, u] of all) prior.set(i, u);
+    } catch (e) {
+      if (want !== 'auto') throw new EngineError('ENGINE_FAILED', `matte ${id}: the ${model} model failed: ${(e as Error).message}`, 'studio doctor; or --engine colour');
+      engineNote = `the model failed (${(e as Error).message}); marks and colours alone were used`;
+      prior.clear();
+    }
+  }
   const final: Uint8Array[] = new Array(N);
   const unc: number[] = new Array(N).fill(0);
   const drift: MatteData['drift'] = [];
@@ -177,7 +293,8 @@ export async function buildMatte(o: MatteBuildOptions): Promise<{ data: MatteDat
     const out = new Map<number, Uint8Array>();
     const st = startFollowing(frames[keys[ki]!.frame]!, w, h, states[ki]!);
     for (const i of idx) {
-      const r = followStep(st, frames[i]!);
+      const pr = modelKey[ki] ? prior.get(i) : undefined;
+      const r = followStep(st, frames[i]!, pr ? { prior: toFloat(pr) } : {});
       out.set(i, toBytes(r.alpha));
       unc[i] = Math.max(unc[i]!, r.uncertain);
     }
@@ -265,7 +382,7 @@ export async function buildMatte(o: MatteBuildOptions): Promise<{ data: MatteDat
     uncertain: unc.map((v) => Math.round(v * 1000) / 1000),
     flagged,
     drift: drift.map((d) => ({ ...d, iou: Math.round(d.iou * 1000) / 1000 })),
-    stats: { ms: Date.now() - t0, keys: keys.length, prior: priors },
+    stats: { ms: Date.now() - t0, keys: keys.length, prior: priors, engine: prior.size && modelKey.some(Boolean) ? model! : 'colour', ...(engineNote ? { engineNote } : {}) },
   };
   const metaTmp = `${matteMeta(projectDir, key)}.${process.pid}.tmp`;
   writeFileSync(metaTmp, JSON.stringify(data));
@@ -298,7 +415,7 @@ export async function ensureMattes(
     else if (o.build) out[id] = (await buildMatte({ projectDir, project, id, log: o.log })).data;
     else if (o.placeholder) {
       o.placeholder(id);
-      out[id] = { v: MATTE_VERSION, id, key: '', asset: m.asset, file: '', fps: 30, w: 16, h: 9, fromMs: m.from, frames: 1, keys: [], coverage: [], uncertain: [], flagged: [], drift: [], stats: { ms: 0, keys: 0, prior: [] } };
+      out[id] = { v: MATTE_VERSION, id, key: '', asset: m.asset, file: '', fps: 30, w: 16, h: 9, fromMs: m.from, frames: 1, keys: [], coverage: [], uncertain: [], flagged: [], drift: [], stats: { ms: 0, keys: 0, prior: [], engine: 'colour' } };
     } else throw new EngineError('INVALID_INPUT', `matte ${id} has not been built yet`, `studio matte build ${id}`);
   }
   return out;

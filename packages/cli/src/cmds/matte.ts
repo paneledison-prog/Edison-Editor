@@ -145,6 +145,7 @@ export const add: Handler = async (inv) => {
     keys: [{ at, seeds: seeds ?? {}, ...(prior ? { prior } : {}) }],
     ...(num(inv, 'fps') !== undefined ? { fps: num(inv, 'fps') } : {}),
     ...(num(inv, 'width') !== undefined ? { width: num(inv, 'width') } : {}),
+    ...(str(inv, 'engine') ? { engine: str(inv, 'engine') } : {}),
     ...(str(inv, 'label') ? { label: str(inv, 'label') } : {}),
   });
   const id = makeId('mt', new Set(Object.keys(project.mattes ?? {})), cryptoRng());
@@ -288,7 +289,7 @@ export const cutout: Handler = async (inv) => {
     if (!seeds && !prior) throw new CliError('INVALID_ARGS', `give --matte mt_xxxx, or the marks to make one: ${MARKS_HELP}`, 2);
     const [from, to] = playedRange(clip);
     const at = Math.round(num(inv, 'at') ?? from);
-    const matte = parsedMatte({ asset: aid, from: Math.max(0, from - 200), to: Math.min(a.probe.durMs ?? to + 200, to + 200), keys: [{ at, seeds: seeds ?? {}, ...(prior ? { prior } : {}) }], label: `cutout ${clip.id}` });
+    const matte = parsedMatte({ asset: aid, from: Math.max(0, from - 200), to: Math.min(a.probe.durMs ?? to + 200, to + 200), keys: [{ at, seeds: seeds ?? {}, ...(prior ? { prior } : {}) }], ...(str(inv, 'engine') ? { engine: str(inv, 'engine') } : {}), label: `cutout ${clip.id}` });
     id = makeId('mt', new Set(Object.keys(project.mattes ?? {})), cryptoRng());
     ahead = { ...project, mattes: { ...(project.mattes ?? {}), [id]: matte } } as Project;
     specs.push({ type: 'matte.add', args: { id, matte } });
