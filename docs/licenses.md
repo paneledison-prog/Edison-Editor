@@ -107,3 +107,9 @@ No new dependency. `packages/design` (zod, already used) and `apps/design` (prea
 
 No new dependency. `plugins/color` is Studio's own code (MIT) and uses only filters already in the FFmpeg build recorded above (`lutrgb`, `curves`, `huesaturation`, `colorbalance`-style math, `gblur`, `unsharp`, `hqdn3d`, `nlmeans`, `minterpolate`, `deshake`, `chromakey`, `despill`, `displace`, `rgbashift`, `lenscorrection`, `lut3d`, `waveform`, `vectorscope`, `histogram`). The names of effects (Lumetri, Keylight, Twixtor-style, and so on) describe what an effect does; none uses code, assets, LUTs or presets from those products. No LUT files ship.
 
+
+### Object Mask Tool (promptable segmentation)
+
+| Model | Version | License | Size | Why | Scope |
+| ----- | ------- | ------- | ---- | --- | ----- |
+| SAM 2.1 Hiera-tiny (ONNX, onnx-community export, rev 814a066) | 2.1 | Apache-2.0 (https://github.com/facebookresearch/sam2/blob/main/LICENSE) | 74 MB (int8 image encoder 53 MB + prompt encoder/mask decoder 21 MB), downloaded on demand into `models/` | Select the object the person or agent points at, by points and boxes (`studio mask`) | runtime, optional, run by `tools/segment.py` with the existing onnxruntime/numpy/pillow; segmentation only, not generative |

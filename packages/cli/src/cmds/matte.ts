@@ -142,7 +142,7 @@ export const add: Handler = async (inv) => {
   if (!seeds && !prior) throw new CliError('INVALID_ARGS', `say what to cut out: ${MARKS_HELP}`, 2, 'studio inspect frame shows the frame to mark');
   const matte = parsedMatte({
     asset: str(inv, 'asset'), from, to,
-    keys: [{ at, seeds: seeds ?? {}, ...(prior ? { prior } : {}) }],
+    keys: [{ at, seeds: seeds ?? {}, ...(prior ? { prior } : {}), ...(str(inv, 'pick') ? { pick: str(inv, 'pick') } : {}) }],
     ...(num(inv, 'fps') !== undefined ? { fps: num(inv, 'fps') } : {}),
     ...(num(inv, 'width') !== undefined ? { width: num(inv, 'width') } : {}),
     ...(str(inv, 'engine') ? { engine: str(inv, 'engine') } : {}),
@@ -169,6 +169,7 @@ export const key: Handler = async (inv) => {
   if (at === undefined) throw new CliError('INVALID_ARGS', '--at is required: the frame (ms of the asset) you are marking', 2);
   const seeds = seedsFrom(inv, sizeOf(project, m.asset));
   const prior = str(inv, 'prior');
+  const pick = str(inv, 'pick') as 'auto' | 'whole' | 'best' | 'first' | undefined;
   if (!seeds && !prior) throw new CliError('INVALID_ARGS', `give the marks: ${MARKS_HELP}`, 2);
   const info = project.assets[m.asset]!.probe.fps ?? 30;
   const near = Math.max(1, Math.round(500 / Math.min(60, m.fps ?? Math.min(30, info))));
@@ -182,9 +183,9 @@ export const key: Handler = async (inv) => {
       if (seeds.outline) merged['outline'] = seeds.outline;
       if (seeds.fg) merged['fg'] = [...(old.seeds.fg ?? []), ...seeds.fg];
       if (seeds.bg) merged['bg'] = [...(old.seeds.bg ?? []), ...seeds.bg];
-      keys[i] = { at: old.at, seeds: merged as Seeds, ...(prior ? { prior: prior as 'u2net' } : old.prior ? { prior: old.prior } : {}) };
-    } else keys[i] = { at: old.at, seeds: seeds ?? old.seeds, ...(prior ? { prior: prior as 'u2net' } : {}) };
-  } else keys.push({ at: Math.round(at), seeds: seeds ?? {}, ...(prior ? { prior: prior as 'u2net' } : {}) });
+      keys[i] = { at: old.at, seeds: merged as Seeds, ...(prior ? { prior: prior as 'u2net' } : old.prior ? { prior: old.prior } : {}), ...(pick ? { pick } : old.pick ? { pick: old.pick } : {}) };
+    } else keys[i] = { at: old.at, seeds: seeds ?? old.seeds, ...(prior ? { prior: prior as 'u2net' } : {}), ...(pick ? { pick } : {}) };
+  } else keys.push({ at: Math.round(at), seeds: seeds ?? {}, ...(prior ? { prior: prior as 'u2net' } : {}), ...(pick ? { pick } : {}) });
   keys.sort((x, y) => x.at - y.at);
   const next = parsedMatte({ ...m, keys });
   const ahead = { ...project, mattes: { ...project.mattes, [id]: next } } as Project;
@@ -308,3 +309,43 @@ export const cutout: Handler = async (inv) => {
   };
 };
 void ({} as typeof MatteSeeds);
+
+// ----- the Object Mask Tool: `studio mask ...` is the matte machinery with the promptable segmenter as the default engine ---------------------------
+
+/** `--point` (inside the object) and `--neg` (outside it) are dots; they become foreground and background marks. */
+function dotsToMarks(inv: Invocation): Invocation {
+  const flags = { ...inv.flags };
+  const join = (a: unknown, b: string) => (typeof a === 'string' && a ? `${a}|${b}` : b);
+  const pt = str(inv, 'point');
+  if (pt) flags['fg'] = join(flags['fg'], pt.split(';').map((p) => p.trim()).filter(Boolean).join('|'));
+  const ng = str(inv, 'neg');
+  if (ng) flags['bg'] = join(flags['bg'], ng.split(';').map((p) => p.trim()).filter(Boolean).join('|'));
+  delete flags['point'];
+  delete flags['neg'];
+  return { ...inv, flags };
+}
+/** Select an object by clicking on it: points on it, points off it, a box; the segmenter finds the object and Studio follows it. */
+export const maskAdd: Handler = async (inv) => {
+  const i = dotsToMarks(inv);
+  if (!i.flags['engine']) i.flags['engine'] = 'sam';
+  return add(i);
+};
+export const maskKey: Handler = async (inv) => key(dotsToMarks(inv));
+
+/** What the segmenter makes of the prompts on one frame: its three candidates side by side. Nothing is stored. */
+export const maskPick: Handler = async (inv) => {
+  const { project } = store(inv).load();
+  const i = dotsToMarks(inv);
+  const aid = str(inv, 'asset');
+  const a = videoAsset(project, aid);
+  const seeds = seedsFrom(i, sizeOf(project, aid!));
+  if (!seeds) throw new CliError('INVALID_ARGS', 'give a point on the object (--point x,y), a box, or an outline', 2, 'studio inspect frame shows the frame to mark');
+  const at = Math.round(num(inv, 'at') ?? 0);
+  const rel = `renders/mask-candidates-${aid}-${at}.png`;
+  const E = await engines();
+  const r = await E.maskCandidates({ projectDir: inv.dir, project, asset: aid!, at, seeds, ...(num(inv, 'width') ? { width: num(inv, 'width') } : {}), out: join(inv.dir, rel), log: inv.log });
+  return {
+    data: { file: rel, key: 'top left: the frame. Then the segmenter\'s three candidates (tinted), with your points (green = on the object, red = not) and box. Pick one with --pick 0|1|2-style index via `mask add --pick whole|best|first`, or correct the points and look again.', auto: r.auto, candidates: r.candidates, ms: r.ms },
+    artifacts: [{ kind: 'image', path: rel }],
+  };
+};

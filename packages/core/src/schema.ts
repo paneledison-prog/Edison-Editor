@@ -120,13 +120,13 @@ export const Matte = z
     to: z.number().int().min(1),
     /** frames where the object was marked, in ms of the asset; the matte is followed from each to the next */
     keys: z
-      .array(z.object({ at: z.number().int().min(0), seeds: MatteSeeds, prior: z.enum(['u2net', 'u2netp']).optional() }).strict())
+      .array(z.object({ at: z.number().int().min(0), seeds: MatteSeeds, prior: z.enum(['u2net', 'u2netp']).optional(), pick: z.enum(['auto', 'whole', 'best', 'first']).optional() }).strict())
       .min(1)
       .max(80),
     fps: z.number().min(1).max(60).optional(),
     width: z.number().int().min(160).max(1280).optional(),
     /** what decides the boundary: a saliency model guided by the marks (auto: u2net when it can run), or the marks and colours alone */
-    engine: z.enum(['auto', 'colour', 'u2net', 'u2netp']).optional(),
+    engine: z.enum(['auto', 'colour', 'u2net', 'u2netp', 'sam']).optional(),
     label: z.string().max(80).optional(),
   })
   .strict();

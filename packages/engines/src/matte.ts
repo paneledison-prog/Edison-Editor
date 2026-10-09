@@ -10,15 +10,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Matte, Project } from '@studio/core';
 import {
-  VideoWriter, detectCuts, drawLine, drawPoly, followStep, probeVideo, readFrames, readSize, segmentFrame, segmentWithModel, startFollowing, tileRgb,
+  VideoWriter, detectCuts, drawLine, drawPoly, followPrepare, followStep, probeVideo, promptsFromMask, promptsFromSeeds, segmentFromPrompted, readFrames, readSize, segmentFrame, segmentWithModel, startFollowing, tileRgb,
   type Seeds,
 } from '@studio/vision';
 import { grabFrame } from './grab.js';
 import { pythonReady, removeBackground } from './bgremove.js';
 import { requireModel, studioRoot } from './models.js';
 import { EngineError, run } from './run.js';
+import { SamServer } from './sam.js';
 
-export const MATTE_VERSION = 15;
+export const MATTE_VERSION = 16;
 const MAX_FRAMES = 700;
 
 export interface MatteData {
@@ -171,6 +172,15 @@ const iouBytes = (a: Uint8Array, b: Uint8Array): number => {
 
 /** Builds (or reads from the cache) the matte video of a matte. */
 export async function buildMatte(o: MatteBuildOptions): Promise<{ data: MatteData; cached: boolean }> {
+  const holder: { sam?: SamServer } = {};
+  try {
+    return await buildMatteCore(o, holder);
+  } finally {
+    await holder.sam?.close();
+  }
+}
+
+async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer }): Promise<{ data: MatteData; cached: boolean }> {
   const { projectDir, project, id } = o;
   const log = o.log ?? (() => undefined);
   const m = project.mattes?.[id];
@@ -208,7 +218,7 @@ export async function buildMatte(o: MatteBuildOptions): Promise<{ data: MatteDat
 
   // which engine: a saliency model guided by the marks, or the marks and colours alone
   const want = m.engine ?? 'auto';
-  let model: ModelName | null = want === 'colour' ? null : want === 'auto' ? 'u2net' : want;
+  let model: ModelName | null = want === 'colour' || want === 'sam' ? null : want === 'auto' ? 'u2net' : want;
   let engineNote: string | undefined;
   if (model) {
     const py = await pythonReady();
@@ -228,6 +238,17 @@ export async function buildMatte(o: MatteBuildOptions): Promise<{ data: MatteDat
   const tag = createHash('sha256').update(JSON.stringify([a.hash, a.workingCopy?.path ?? a.path, m.from, fps, w, h, N])).digest('hex').slice(0, 16);
   const prior = new Map<number, Uint8Array>();
   const modelKey: boolean[] = [];
+  // the promptable segmenter (Object Mask Tool): every frame is encoded once (cached), then asked with prompts
+  let sam: SamServer | undefined;
+  if (want === 'sam') {
+    sam = holder.sam = await SamServer.start(join(dirOf(projectDir), `sam-${tag}`));
+    let encMs = 0;
+    for (let i = 0; i < N; i++) {
+      if (i % 10 === 0) log(`encoding frames for the segmenter: ${i}/${N}`);
+      encMs += await sam.embed(`f${i}`, frames[i]!, w, h);
+    }
+    log(`encoded ${N} frames in ${(encMs / 1000).toFixed(1)} s (cached frames cost nothing)`);
+  }
 
   // the marked frames
   const priors: string[] = [];
@@ -243,7 +264,18 @@ export async function buildMatte(o: MatteBuildOptions): Promise<{ data: MatteDat
         throw new EngineError('ENGINE_MISSING', `matte ${id}: the ${k.prior} prior could not run: ${(e as Error).message}`, 'drop --prior (marks alone work), or set up the model (studio doctor)');
       }
     }
-    let seg;
+    let seg: ReturnType<typeof segmentFrame>;
+    if (sam) {
+      const pr = promptsFromSeeds(w, h, k.seeds as Seeds);
+      if (!pr.points.length && !pr.box) throw new EngineError('INVALID_INPUT', `matte ${id} at ${k.at} ms: the segmenter needs a point on the object, a box, or an outline`, 'studio mask add --point x,y   or   --box x,y,w,h');
+      const got = await sam.decode(`f${k.frame}`, w, h, { ...pr, ...(k.pick ? { pick: k.pick } : {}) });
+      seg = segmentFromPrompted(frames[k.frame]!, w, h, k.seeds as Seeds, got.prob);
+      modelKey.push(true);
+      keyAlpha.push(toBytes(seg.alpha));
+      states.push(seg);
+      log(`marked frame ${k.at} ms: candidate ${got.picked} of 3 (predicted quality ${got.iou.join(' / ')}), ${Math.round((100 * keyAlpha[keyAlpha.length - 1]!.reduce((t, v) => t + (v > 127 ? 1 : 0), 0)) / (w * h))}% of the picture`);
+      continue;
+    }
     try {
       seg = segmentFrame(frames[k.frame]!, w, h, k.seeds as Seeds, { prior });
     } catch (e) {
@@ -289,12 +321,21 @@ export async function buildMatte(o: MatteBuildOptions): Promise<{ data: MatteDat
   const unc: number[] = new Array(N).fill(0);
   const drift: MatteData['drift'] = [];
   /** follows from a marked frame over frame indices `idx` (in order) */
-  const follow = (ki: number, idx: number[]): Map<number, Uint8Array> => {
+  const follow = async (ki: number, idx: number[]): Promise<Map<number, Uint8Array>> => {
     const out = new Map<number, Uint8Array>();
     const st = startFollowing(frames[keys[ki]!.frame]!, w, h, states[ki]!);
     for (const i of idx) {
-      const pr = modelKey[ki] ? prior.get(i) : undefined;
-      const r = followStep(st, frames[i]!, pr ? { prior: toFloat(pr) } : {});
+      let r;
+      if (sam && modelKey[ki]) {
+        // the segmenter is asked about this frame with prompts taken from the matte carried over to it
+        const pre = followPrepare(st, frames[i]!);
+        const pr = promptsFromMask(pre.warped, w, h);
+        const got = pr ? await sam.decode(`f${i}`, w, h, { ...pr, pick: 'first' }) : null;
+        r = followStep(st, frames[i]!, { pre, ...(got ? { prior: got.prob } : {}) });
+      } else {
+        const pr = modelKey[ki] ? prior.get(i) : undefined;
+        r = followStep(st, frames[i]!, pr ? { prior: toFloat(pr) } : {});
+      }
       out.set(i, toBytes(r.alpha));
       unc[i] = Math.max(unc[i]!, r.uncertain);
     }
@@ -310,24 +351,25 @@ export async function buildMatte(o: MatteBuildOptions): Promise<{ data: MatteDat
   const cuts = detectCuts(frames, w, h);
   const starts = [0, ...cuts];
   const shotNotes: MatteData['flagged'] = [];
-  starts.forEach((a0, si) => {
+  for (let si = 0; si < starts.length; si++) {
+    const a0 = starts[si]!;
     const b0 = (starts[si + 1] ?? N) - 1;
     const inShot = keys.map((k, ki) => ({ k, ki })).filter(({ k }) => k.frame >= a0 && k.frame <= b0);
     if (si > 0) shotNotes.push({ frame: a0, ms: Math.round(m.from + a0 * step), why: inShot.length ? 'a cut: a new shot starts here and is followed from its own marked frame' : 'a cut: a new shot starts here with no marked frame, so the matte is empty until the next cut; mark the object in it (studio matte key)' });
     if (!inShot.length) {
       for (let i = a0; i <= b0; i++) final[i] = new Uint8Array(w * h);
-      return;
+      continue;
     }
     const first = inShot[0]!;
     const last = inShot[inShot.length - 1]!;
-    if (first.k.frame > a0) for (const [i, v] of follow(first.ki, range(first.k.frame - 1, a0, -1))) final[i] = v;
-    if (last.k.frame < b0) for (const [i, v] of follow(last.ki, range(last.k.frame + 1, b0, 1))) final[i] = v;
+    if (first.k.frame > a0) for (const [i, v] of await follow(first.ki, range(first.k.frame - 1, a0, -1))) final[i] = v;
+    if (last.k.frame < b0) for (const [i, v] of await follow(last.ki, range(last.k.frame + 1, b0, 1))) final[i] = v;
     for (let j = 0; j + 1 < inShot.length; j++) {
       const ki = inShot[j]!.ki;
       const ia = keys[ki]!.frame;
       const ib = keys[ki + 1]!.frame;
-      const fw = follow(ki, range(ia + 1, ib, 1));
-      const bw = follow(ki + 1, range(ib - 1, ia, -1));
+      const fw = await follow(ki, range(ia + 1, ib, 1));
+      const bw = await follow(ki + 1, range(ib - 1, ia, -1));
       drift.push({ from: keys[ki]!.at, to: keys[ki + 1]!.at, direction: 'forward', iou: iouBytes(fw.get(ib)!, keyAlpha[ki + 1]!) });
       drift.push({ from: keys[ki + 1]!.at, to: keys[ki]!.at, direction: 'backward', iou: iouBytes(bw.get(ia)!, keyAlpha[ki]!) });
       for (let i = ia + 1; i < ib; i++) {
@@ -340,7 +382,7 @@ export async function buildMatte(o: MatteBuildOptions): Promise<{ data: MatteDat
       }
       log(`between ${keys[ki]!.at} and ${keys[ki + 1]!.at} ms: following reaches the next marked frame with IoU ${drift[drift.length - 2]!.iou.toFixed(3)} (forward), ${drift[drift.length - 1]!.iou.toFixed(3)} (backward)`);
     }
-  });
+  }
 
   // write the video and the numbers
   mkdirSync(dirOf(projectDir), { recursive: true });
@@ -382,7 +424,7 @@ export async function buildMatte(o: MatteBuildOptions): Promise<{ data: MatteDat
     uncertain: unc.map((v) => Math.round(v * 1000) / 1000),
     flagged,
     drift: drift.map((d) => ({ ...d, iou: Math.round(d.iou * 1000) / 1000 })),
-    stats: { ms: Date.now() - t0, keys: keys.length, prior: priors, engine: prior.size && modelKey.some(Boolean) ? model! : 'colour', ...(engineNote ? { engineNote } : {}) },
+    stats: { ms: Date.now() - t0, keys: keys.length, prior: priors, engine: sam ? 'sam2.1-tiny' : prior.size && modelKey.some(Boolean) ? model! : 'colour', ...(engineNote ? { engineNote } : {}) },
   };
   const metaTmp = `${matteMeta(projectDir, key)}.${process.pid}.tmp`;
   writeFileSync(metaTmp, JSON.stringify(data));
@@ -504,6 +546,71 @@ export async function matteSheet(o: { projectDir: string; project: Project; id: 
     p.stdin.end(Buffer.from(sheet.data));
   });
   return { file: o.out, frames: rows };
+}
+
+
+/**
+ * The Object Mask Tool, one frame: what the segmenter makes of these prompts, as its three candidates side by side, so the
+ * right one can be chosen (`--pick`) or the prompts corrected before anything is built. Nothing is stored in the project.
+ */
+export async function maskCandidates(o: { projectDir: string; project: Project; asset: string; at: number; seeds: Seeds; width?: number; out: string; log?: (m: string) => void }): Promise<{ file: string; candidates: { index: number; predictedQuality: number; areaPct: number; keepsPointsInside: boolean; keepsPointsOutside: boolean }[]; auto: number; prompts: ReturnType<typeof promptsFromSeeds>; ms: { encode: number; decode: number } }> {
+  const a = o.project.assets[o.asset]!;
+  const src = join(o.projectDir, a.workingCopy?.path ?? a.path);
+  const info = probeVideo(src);
+  const size = readSize(info, { width: Math.min(o.width ?? 480, info.w) });
+  const { w, h } = size;
+  const frame = await grabFrame(src, o.at, info.fps || 30, { w, h });
+  if (!frame) throw new EngineError('INVALID_INPUT', `no frame at ${o.at} ms of ${o.asset}`);
+  const rgb = new Uint8Array(frame);
+  const pr = promptsFromSeeds(w, h, o.seeds);
+  if (!pr.points.length && !pr.box) throw new EngineError('INVALID_INPUT', 'give a point on the object (--point), a box or an outline', 'studio mask pick --asset a_x --at MS --point x,y');
+  const tag = createHash('sha256').update(JSON.stringify([a.hash, o.at, w, h])).digest('hex').slice(0, 16);
+  const sam = await SamServer.start(join(dirOf(o.projectDir), 'sam-pick'));
+  try {
+    const encode = await sam.embed(`p${tag}`, rgb, w, h);
+    const tiles: Uint8Array[] = [rgb.slice()];
+    const cands: { index: number; predictedQuality: number; areaPct: number; keepsPointsInside: boolean; keepsPointsOutside: boolean }[] = [];
+    let auto = 0;
+    let decode = 0;
+    for (let k = 0; k < 3; k++) {
+      const got = await sam.decode(`p${tag}`, w, h, { ...pr, index: k });
+      if (k === 0) auto = (await sam.decode(`p${tag}`, w, h, { ...pr })).picked;
+      decode += got.ms;
+      const over = rgb.slice();
+      let cnt = 0;
+      for (let p = 0; p < w * h; p++) {
+        const m = got.prob[p]! > 0.5 ? 1 : 0;
+        cnt += m;
+        for (let c = 0; c < 3; c++) over[3 * p + c] = Math.round(rgb[3 * p + c]! * (1 - 0.55 * m) + [255, 0, 200][c]! * 0.55 * m);
+      }
+      pr.points.forEach(([x, y], i) => {
+        const col: [number, number, number] = pr.labels[i] === 1 ? [0, 255, 70] : [255, 50, 50];
+        drawLine(over, w, h, [x - 3, y], [x + 3, y], col, 5);
+      });
+      if (pr.box) drawPoly(over, w, h, [[pr.box[0], pr.box[1]], [pr.box[2], pr.box[1]], [pr.box[2], pr.box[3]], [pr.box[0], pr.box[3]]], [255, 255, 255], 1);
+      tiles.push(over);
+      const at = (x: number, y: number) => got.prob[Math.min(h - 1, Math.max(0, Math.round(y))) * w + Math.min(w - 1, Math.max(0, Math.round(x)))]! > 0.5;
+      cands.push({
+        index: k,
+        predictedQuality: got.iou[k] ?? 0,
+        areaPct: Math.round((cnt / (w * h)) * 1000) / 10,
+        keepsPointsInside: pr.points.every(([x, y], i) => pr.labels[i] !== 1 || at(x, y)),
+        keepsPointsOutside: pr.points.every(([x, y], i) => pr.labels[i] !== 0 || !at(x, y)),
+      });
+    }
+    const sheet = tileRgb(tiles, w, h, 2);
+    mkdirSync(join(o.out, '..'), { recursive: true });
+    const { spawn } = await import('node:child_process');
+    await new Promise<void>((resolve, reject) => {
+      const p = spawn('ffmpeg', ['-v', 'error', '-y', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', `${sheet.w}x${sheet.h}`, '-i', '-', '-frames:v', '1', o.out], { stdio: ['pipe', 'ignore', 'pipe'] });
+      p.stdin.on('error', () => undefined);
+      p.on('close', (code) => (code === 0 ? resolve() : reject(new EngineError('ENGINE_FAILED', 'ffmpeg could not write the sheet'))));
+      p.stdin.end(Buffer.from(sheet.data));
+    });
+    return { file: o.out, candidates: cands, auto, prompts: pr, ms: { encode, decode } };
+  } finally {
+    await sam.close();
+  }
 }
 
 /** Copies the matte video out of the cache (gray, lossless). */

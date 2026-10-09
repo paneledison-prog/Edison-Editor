@@ -11,3 +11,8 @@ Rules
 * Cut-outs: mark, preview, mark more where it drifts. The default engine (`--engine auto`) lets the u2net model guide the cut-out of people and other prominent objects; your marks pick the object, and a `--fg` stroke keeps a part the model skipped (antenna, pale thin parts). `--engine colour` is marks and colours only. For similar colours without the model draw `--outline`. Read `stats.engine` / `engineNote` in the matte data. Things passing in front need their own marks (`--bg-fill`).
 * Heavy commands (track, solve, matte, stabilize, pin, cutout) go through the job governor; use `--project` and `--agent` as in rule 15.
 * Limits to state in a report: synthetic-footage evidence only, planar camera model for stabilization, focal estimate can be a few percent off, mattes are soft-band alpha.
+
+## Object Mask Tool (`studio mask`)
+* To cut out or remove one specific object (a person, a phone, a bottle, a logo), select it by pointing: `studio mask pick --asset a_xx --at MS --point "x,y" --neg "x,y" --box x,y,w,h` shows the segmenter's three candidates on one frame and stores nothing; then `studio mask add` with the same marks, `studio mask preview`, and `studio mask key ... --add` where it drifts or includes the wrong thing. Prefer a box plus one or two points; several far-apart positive points confuse the model.
+* Use the result like any matte: `studio cutout --clip c_xx --matte mt_xxxx [--invert]`, or `fx ... --matte`.
+* Look at every result: the candidate the model rates highest is not always right, hair and thin parts are soft, the model is weak on flat synthetic or cartoon objects. Details and measured numbers: `docs/masks.md`.

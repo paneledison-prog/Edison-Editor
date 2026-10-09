@@ -13,7 +13,7 @@ import { hashFile } from './hash.js';
 import { EngineError, run } from './run.js';
 
 export interface ManifestEntry {
-  kind: 'onnx' | 'binary-zip' | 'whisper-dir';
+  kind: 'onnx' | 'binary-zip' | 'whisper-dir' | 'file-dir';
   task: string;
   file: string;
   url: string;
@@ -22,7 +22,7 @@ export interface ManifestEntry {
   license: string;
   licenseSource: string;
   notes: string;
-  /** whisper-dir: every file of the model directory, each checked by size and sha256. */
+  /** whisper-dir and file-dir: every file of the model directory, each checked by size and sha256. */
   files?: { file: string; url: string; sha256: string; bytes: number }[];
 }
 export interface Manifest {
@@ -84,7 +84,7 @@ export function modelStatus(): ModelStatus[] {
   return Object.entries(loadManifest().models).map(([name, e]) => {
     const path = modelFile(name);
     const present =
-      e.kind === 'whisper-dir'
+      e.kind === 'whisper-dir' || e.kind === 'file-dir'
         ? (e.files ?? []).every((f) => {
             const fp = join(path, f.file);
             return existsSync(fp) && statSync(fp).size === f.bytes;
@@ -129,7 +129,7 @@ export async function fetchModel(
 ): Promise<FetchResult> {
   const e = entry(name);
   const log = o.log ?? (() => {});
-  if (e.kind === 'whisper-dir') return fetchDir(name, e, o);
+  if (e.kind === 'whisper-dir' || e.kind === 'file-dir') return fetchDir(name, e, o);
   const dest = e.kind === 'binary-zip' ? join(modelsDir(), `${name}.zip`) : modelFile(name);
   mkdirSync(dirname(dest), { recursive: true });
   const ok = e.kind === 'binary-zip' ? existsSync(modelFile(name)) : existsSync(dest);

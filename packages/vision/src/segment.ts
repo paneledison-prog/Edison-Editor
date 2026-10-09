@@ -602,6 +602,176 @@ export function segmentWithModel(rgb: Uint8Array, w: number, h: number, seeds: S
   return { seg: { alpha, fg: m.fg, bg: m.bg, extra }, ok: true, why: '' };
 }
 
+// ----- promptable model: prompts from marks and from a matte, and a frame from its mask ------------------------------------------------------
+
+export interface ModelPrompts {
+  points: [number, number][];
+  /** 1 inside the object, 0 outside */
+  labels: number[];
+  box?: [number, number, number, number];
+}
+
+/** A few evenly spread pixels of each connected part of a mask. */
+function samplePixels(mask: Uint8Array, w: number, h: number, perPart: number, minSize = 1): [number, number][] {
+  const { id, sizes } = components(mask, w, h);
+  const lists: number[][] = sizes.map(() => []);
+  for (let i = 0; i < mask.length; i++) if (id[i]) lists[id[i]!]!.push(i);
+  const out: [number, number][] = [];
+  for (let c = 1; c < lists.length; c++) {
+    const l = lists[c]!;
+    if (l.length < minSize) continue;
+    const k = Math.min(perPart, l.length);
+    for (let j = 0; j < k; j++) {
+      const i = l[Math.floor(((j + 0.5) * l.length) / k)]!;
+      out.push([i % w, Math.floor(i / w)]);
+    }
+  }
+  return out;
+}
+
+/** What the marks say, as a promptable model wants it: points on the object, points off it, and a box. */
+export function promptsFromSeeds(w: number, h: number, seeds: Seeds): ModelPrompts {
+  const { labels, box, strokes } = rasterSeeds(w, h, seeds);
+  const fg = new Uint8Array(w * h);
+  const bg = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    if (strokes[i] === LABEL_FG) fg[i] = 1;
+    else if (strokes[i] === LABEL_BG) bg[i] = 1;
+  }
+  const points: [number, number][] = [];
+  const lab: number[] = [];
+  for (const p of samplePixels(fg, w, h, 3)) (points.push(p), lab.push(1));
+  for (const p of samplePixels(bg, w, h, 3)) (points.push(p), lab.push(0));
+  let bx: [number, number, number, number] | undefined;
+  if (seeds.box) {
+    const [x, y, bw, bh] = seeds.box;
+    bx = [Math.max(0, x * w), Math.max(0, y * h), Math.min(w - 1, (x + bw) * w), Math.min(h - 1, (y + bh) * h)];
+  }
+  if (!lab.includes(1) && !bx) {
+    // an outline only: its inside gives a box and a point
+    let x0 = w, y0 = h, x1 = 0, y1 = 0, sx = 0, sy = 0, cnt = 0;
+    for (let i = 0; i < w * h; i++)
+      if (labels[i] === LABEL_FG) {
+        const x = i % w, y = Math.floor(i / w);
+        x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); sx += x; sy += y; cnt++;
+      }
+    if (cnt) {
+      bx = [x0, y0, x1, y1];
+      const cx = sx / cnt, cy = sy / cnt;
+      let best = -1, bd = 1e18;
+      for (let i = 0; i < w * h; i++)
+        if (labels[i] === LABEL_FG) {
+          const d = (i % w - cx) ** 2 + (Math.floor(i / w) - cy) ** 2;
+          if (d < bd) (bd = d, best = i);
+        }
+      if (best >= 0) (points.push([best % w, Math.floor(best / w)]), lab.push(1));
+    }
+  }
+  return { points, labels: lab, ...(bx ? { box: bx } : {}) };
+}
+
+/** Prompts for the next frame from the matte carried over to it: points deep inside, points around it, a box. */
+export function promptsFromMask(alpha: Float32Array, w: number, h: number): ModelPrompts | null {
+  const n = w * h;
+  const m = new Uint8Array(n);
+  let x0 = w, y0 = h, x1 = 0, y1 = 0, cnt = 0;
+  for (let i = 0; i < n; i++)
+    if (alpha[i]! > 0.5) {
+      m[i] = 1;
+      const x = i % w, y = Math.floor(i / w);
+      x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); cnt++;
+    }
+  if (cnt < 0.002 * n) return null;
+  let inner = morph(m, w, h, Math.max(2, Math.round(0.012 * w)), false);
+  if (!inner.some((v) => v)) inner = m;
+  const points: [number, number][] = [];
+  const labels: number[] = [];
+  // 3 x 3 cells over the box: in each, the inner pixel nearest the mean of the inner pixels of that cell
+  const cw = (x1 - x0 + 1) / 3, ch = (y1 - y0 + 1) / 3;
+  for (let cy = 0; cy < 3; cy++)
+    for (let cx = 0; cx < 3; cx++) {
+      const px: number[] = [];
+      for (let y = Math.floor(y0 + cy * ch); y < Math.floor(y0 + (cy + 1) * ch); y++)
+        for (let x = Math.floor(x0 + cx * cw); x < Math.floor(x0 + (cx + 1) * cw); x++) if (inner[y * w + x]) px.push(y * w + x);
+      if (px.length < 12) continue;
+      let mx = 0, my = 0;
+      for (const i of px) (mx += i % w, my += Math.floor(i / w));
+      mx /= px.length; my /= px.length;
+      let best = px[0]!, bd = 1e18;
+      for (const i of px) {
+        const d = (i % w - mx) ** 2 + (Math.floor(i / w) - my) ** 2;
+        if (d < bd) (bd = d, best = i);
+      }
+      points.push([best % w, Math.floor(best / w)]);
+      labels.push(1);
+    }
+  // outside: pixels in a ring a little way from the matte, one per direction around its centre
+  const near = morph(m, w, h, Math.max(3, Math.round(0.03 * w)), true);
+  const far = morph(m, w, h, Math.max(8, Math.round(0.12 * w)), true);
+  const ccx = (x0 + x1) / 2, ccy = (y0 + y1) / 2;
+  const sectors: number[][] = Array.from({ length: 8 }, () => []);
+  for (let i = 0; i < n; i++)
+    if (far[i] && !near[i]) {
+      const a = Math.atan2(Math.floor(i / w) - ccy, (i % w) - ccx);
+      sectors[Math.min(7, Math.floor(((a + Math.PI) / (2 * Math.PI)) * 8))]!.push(i);
+    }
+  for (const l of sectors) {
+    if (l.length < 20) continue;
+    let mx = 0, my = 0;
+    for (const i of l) (mx += i % w, my += Math.floor(i / w));
+    mx /= l.length; my /= l.length;
+    let best = l[0]!, bd = 1e18;
+    for (const i of l) {
+      const d = (i % w - mx) ** 2 + (Math.floor(i / w) - my) ** 2;
+      if (d < bd) (bd = d, best = i);
+    }
+    points.push([best % w, Math.floor(best / w)]);
+    labels.push(0);
+  }
+  const pad = Math.round(0.03 * Math.max(w, h));
+  return { points, labels, box: [Math.max(0, x0 - pad), Math.max(0, y0 - pad), Math.min(w - 1, x1 + pad), Math.min(h - 1, y1 + pad)] };
+}
+
+/**
+ * A marked frame from a promptable model's mask: the mask is the object (the marks decided which one), its boundary is snapped
+ * to the picture's edges in a thin band, strokes still win, and the colour models are learnt for following.
+ */
+export function segmentFromPrompted(rgb: Uint8Array, w: number, h: number, seeds: Seeds, prior: Float32Array): Segmented {
+  const n = w * h;
+  const { strokes } = rasterSeeds(w, h, seeds);
+  const bin = new Uint8Array(n);
+  for (let i = 0; i < n; i++) bin[i] = prior[i]! > 0.5 ? 1 : 0;
+  // specks the model left away from the object are not the object, unless a stroke says so
+  // small holes inside the object are model noise (the mask is predicted at a quarter of the resolution): filled
+  const notIn = new Uint8Array(n);
+  for (let i = 0; i < n; i++) notIn[i] = bin[i] ? 0 : 1;
+  const holes = components(notIn, w, h);
+  const touches = new Uint8Array(holes.sizes.length);
+  for (let x = 0; x < w; x++) (touches[holes.id[x]!] = 1, (touches[holes.id[(h - 1) * w + x]!] = 1));
+  for (let y = 0; y < h; y++) (touches[holes.id[y * w]!] = 1, (touches[holes.id[y * w + w - 1]!] = 1));
+  for (let i = 0; i < n; i++) if (holes.id[i] && !touches[holes.id[i]!] && holes.sizes[holes.id[i]!]! < 0.004 * n && strokes[i] !== LABEL_BG) { bin[i] = 1; prior[i] = 1; }
+  const { id, sizes } = components(bin, w, h);
+  const hasStroke = new Uint8Array(sizes.length);
+  for (let i = 0; i < n; i++) if (id[i] && strokes[i] === LABEL_FG) hasStroke[id[i]!] = 1;
+  const target = new Float32Array(n);
+  const minSize = Math.max(6, Math.round(0.0008 * n));
+  for (let i = 0; i < n; i++) if (id[i] && (sizes[id[i]!]! >= minSize || hasStroke[id[i]!])) target[i] = Math.max(prior[i]!, 0.5);
+  const inside = new Uint8Array(n);
+  for (let i = 0; i < n; i++) inside[i] = target[i]! > 0.5 ? 1 : 0;
+  const sureFg = morph(inside, w, h, 2, false);
+  const outside = new Uint8Array(n);
+  for (let i = 0; i < n; i++) outside[i] = inside[i] ? 0 : 1;
+  const sureBg = morph(outside, w, h, 2, false);
+  const m = modelsFrom(rgb, sureFg, sureBg, 1, 1);
+  const colour = colorEvidence(rgb, n, m.fg, m.bg);
+  const { alpha } = refineToTarget(rgb, w, h, target, colour);
+  for (let i = 0; i < n; i++) {
+    if (strokes[i] === LABEL_FG) alpha[i] = 1;
+    else if (strokes[i] === LABEL_BG) alpha[i] = 0;
+  }
+  return { alpha, fg: m.fg, bg: m.bg };
+}
+
 // ----- following it through time -------------------------------------------------------------------------------------------------------------
 
 /** Samples `src` at the positions given by a flow field (backward warp): out(p) = src(p + flow(p)). */
@@ -692,12 +862,24 @@ export interface FollowStep {
  * The matte of the next frame: the last one carried over by optical flow, its confident inside and outside kept, and a band
  * around the boundary decided again from colours and edges.
  */
-export function followStep(st: FollowState, rgb: Uint8Array, o: { band?: number; prior?: Float32Array } = {}): FollowStep {
+export interface FollowPrep {
+  gray: Gray;
+  flow: ReturnType<typeof denseFlow>;
+  /** the last matte carried to this frame by optical flow */
+  warped: Float32Array;
+}
+/** The first half of a step: the motion to the new frame and the matte carried over. A promptable model can be asked about `warped`. */
+export function followPrepare(st: FollowState, rgb: Uint8Array): FollowPrep {
   const { w, h } = st;
-  const n = w * h;
   const gray = grayOf(rgb, w, h);
   const flow = denseFlow(gray, st.gray, { levels: 4, iters: 3, radius: 5 });
-  const warped = warpByFlow(st.alpha, w, h, flow.u, flow.v);
+  return { gray, flow, warped: warpByFlow(st.alpha, w, h, flow.u, flow.v) };
+}
+
+export function followStep(st: FollowState, rgb: Uint8Array, o: { band?: number; prior?: Float32Array; pre?: FollowPrep } = {}): FollowStep {
+  const { w, h } = st;
+  const n = w * h;
+  const { gray, flow, warped } = o.pre ?? followPrepare(st, rgb);
   // how far the boundary moved decides how wide the band must be
   let mv = 0;
   let cnt = 0;

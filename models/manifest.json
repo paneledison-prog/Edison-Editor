@@ -145,6 +145,43 @@
       "license": "MIT",
       "licenseSource": "https://huggingface.co/Systran/faster-whisper-medium (model card: license mit; upstream openai/whisper is MIT)",
       "notes": "CTranslate2 conversion of OpenAI Whisper medium (finals, multilingual; about 1.5 GB), pinned to revision 08e178d48790749d25932bbc082711ddcfdfbc4f."
+    },
+    "sam2.1-tiny": {
+      "kind": "file-dir",
+      "task": "segment",
+      "file": "sam2.1-tiny",
+      "files": [
+        {
+          "file": "vision_encoder_int8.onnx",
+          "url": "https://huggingface.co/onnx-community/sam2.1-hiera-tiny-ONNX/resolve/814a066640debee5a91e70aa401fb8e17e030503/onnx/vision_encoder_int8.onnx",
+          "sha256": "d848e08b747ba44ee59b31246988528d5ecc67d1e1c0a2f5c08395c86d92176f",
+          "bytes": 440423
+        },
+        {
+          "file": "vision_encoder_int8.onnx_data",
+          "url": "https://huggingface.co/onnx-community/sam2.1-hiera-tiny-ONNX/resolve/814a066640debee5a91e70aa401fb8e17e030503/onnx/vision_encoder_int8.onnx_data",
+          "sha256": "4359d45f8aafcbc69f945e714af7fb06b74b24c753b5af86b6a230ecd0e737bc",
+          "bytes": 52573088
+        },
+        {
+          "file": "prompt_encoder_mask_decoder.onnx",
+          "url": "https://huggingface.co/onnx-community/sam2.1-hiera-tiny-ONNX/resolve/814a066640debee5a91e70aa401fb8e17e030503/onnx/prompt_encoder_mask_decoder.onnx",
+          "sha256": "874414704c5d686db7d206a35f6e15d26563d50c8c4468fccc6739bd7e491dcf",
+          "bytes": 213114
+        },
+        {
+          "file": "prompt_encoder_mask_decoder.onnx_data",
+          "url": "https://huggingface.co/onnx-community/sam2.1-hiera-tiny-ONNX/resolve/814a066640debee5a91e70aa401fb8e17e030503/onnx/prompt_encoder_mask_decoder.onnx_data",
+          "sha256": "e9874d900dd4134ed60eab1e97910327c2419e0b2954485d8fd6e7f1a1470f47",
+          "bytes": 20958208
+        }
+      ],
+      "url": "https://huggingface.co/onnx-community/sam2.1-hiera-tiny-ONNX",
+      "sha256": "",
+      "bytes": 74184833,
+      "license": "Apache-2.0",
+      "licenseSource": "https://github.com/facebookresearch/sam2/blob/main/LICENSE",
+      "notes": "SAM 2.1 Hiera-tiny, promptable segmentation (points, boxes), ONNX export by onnx-community pinned to revision 814a066640debee5a91e70aa401fb8e17e030503; int8 image encoder (1024x1024 input) and the fp32 prompt encoder + mask decoder. Not generative."
     }
   }
 }
