@@ -8,8 +8,8 @@ import { CliError } from '../args.js';
 import type { Handler, Invocation } from '../main.js';
 import { num, parseJson, runSpecs, store, str } from './shared.js';
 
-type Video = Extract<Fx, { type: 'plugin' | 'lut' | 'blur-region' | 'stabilize' | 'pin' }>;
-export const isVideo = (f: Fx): f is Video => f.type === 'plugin' || f.type === 'lut' || f.type === 'blur-region' || f.type === 'stabilize' || f.type === 'pin';
+type Video = Extract<Fx, { type: 'plugin' | 'lut' | 'blur-region' | 'stabilize' | 'pin' | 'cutout' }>;
+export const isVideo = (f: Fx): f is Video => f.type === 'plugin' || f.type === 'lut' || f.type === 'blur-region' || f.type === 'stabilize' || f.type === 'pin' || f.type === 'cutout';
 export const nodeOf = (f: Fx): string | undefined => (f as { node?: string }).node;
 
 const engines = () => import('@studio/engines');
@@ -82,7 +82,7 @@ async function check(f: Fx) {
 }
 
 export const label = (f: Fx): string =>
-  f.type === 'stabilize' ? `stabilize ${f.tracker}${f.lock ? ' (locked)' : ''}` : f.type === 'pin' ? `pin ${f.asset} on ${f.tracker}` : f.type === 'gain' ? `gain ${f.db} dB` : f.type === 'plugin' ? f.id : f.type === 'lut' ? f.file : f.type === 'blur-region' ? `blur ${Math.round(f.x * 100)},${Math.round(f.y * 100)} ${Math.round(f.w * 100)}x${Math.round(f.h * 100)}%` : f.type;
+  f.type === 'cutout' ? `cutout ${f.matte.id}${f.matte.invert ? ' (inverted)' : ''}` : f.type === 'stabilize' ? `stabilize ${f.tracker}${f.lock ? ' (locked)' : ''}` : f.type === 'pin' ? `pin ${f.asset} on ${f.tracker}` : f.type === 'gain' ? `gain ${f.db} dB` : f.type === 'plugin' ? f.id : f.type === 'lut' ? f.file : f.type === 'blur-region' ? `blur ${Math.round(f.x * 100)},${Math.round(f.y * 100)} ${Math.round(f.w * 100)}x${Math.round(f.h * 100)}%` : f.type;
 
 // ---------------------------------------------------------------------------------------------------------------
 
@@ -100,9 +100,10 @@ export const list: Handler = async (inv) => {
       const decl = E.pluginEffectDecl(f.id);
       const params = decl ? Object.fromEntries(Object.entries(decl.params).map(([k, p]) => [k, f.params?.[k] ?? p.default])) : (f.params ?? {});
       const a = animated(node);
-      return { ...base, enabled: !f.bypass, params, ...(f.mix !== undefined ? { mix: f.mix } : {}), ...(Object.keys(a).length ? { animated: a } : {}), ...(decl ? {} : { problem: 'no loaded plugin provides this effect' }) };
+      return { ...base, enabled: !f.bypass, params, ...(f.matte ? { onlyInside: f.matte } : {}), ...(f.mix !== undefined ? { mix: f.mix } : {}), ...(Object.keys(a).length ? { animated: a } : {}), ...(decl ? {} : { problem: 'no loaded plugin provides this effect' }) };
     }
-    if (f.type === 'lut') return { ...base, enabled: !f.bypass, ...(f.mix !== undefined ? { mix: f.mix } : {}), ...(Object.keys(animated(node)).length ? { animated: animated(node) } : {}) };
+    if (f.type === 'cutout') return { ...base, enabled: !f.bypass, matte: f.matte, ...(project.mattes?.[f.matte.id] ? {} : { problem: `matte ${f.matte.id} does not exist` }) };
+    if (f.type === 'lut') return { ...base, enabled: !f.bypass, ...(f.matte ? { onlyInside: f.matte } : {}), ...(f.mix !== undefined ? { mix: f.mix } : {}), ...(Object.keys(animated(node)).length ? { animated: animated(node) } : {}) };
     if (f.type === 'blur-region') return { ...base, enabled: true, region: { x: f.x, y: f.y, w: f.w, h: f.h }, strength: f.strength ?? 24 };
     if (f.type === 'stabilize' || f.type === 'pin') {
       const { type: _t, node: _n, bypass: _b, ...rest } = f as Record<string, unknown>;
@@ -147,6 +148,18 @@ export const verify: Handler = async (inv) => {
   };
 };
 
+/** `--matte mt_x [--matte-invert] [--feather px] [--choke px]` as the effect's matte use. */
+export function matteUse(inv: Invocation, project: Project, clip: Clip): NonNullable<Extract<Fx, { type: 'cutout' }>['matte']> | undefined {
+  const id = str(inv, 'matte');
+  if (!id) return undefined;
+  const m = project.mattes?.[id];
+  if (!m) throw new CliError('NOT_FOUND', `no matte ${id}`, 2, 'studio matte list');
+  if (m.asset !== clip.asset) throw new CliError('INVALID_ARGS', `matte ${id} was made on ${m.asset}, this clip plays ${clip.asset}`, 2);
+  const feather = num(inv, 'feather');
+  const choke = num(inv, 'choke');
+  return { id, ...(inv.flags['matte-invert'] ? { invert: true } : {}), ...(feather ? { feather } : {}), ...(choke ? { choke } : {}) };
+}
+
 export const add: Handler = async (inv) => {
   const { project, clip } = clipOf(inv);
   const effect = str(inv, 'effect');
@@ -165,6 +178,11 @@ export const add: Handler = async (inv) => {
     fx = { type: 'blur-region', x: v[0]!, y: v[1]!, w: v[2]!, h: v[3]!, ...(num(inv, 'strength') !== undefined ? { strength: num(inv, 'strength')! } : {}) };
   }
   if (inv.flags['bypass'] && (fx.type === 'plugin' || fx.type === 'lut')) (fx as { bypass?: boolean }).bypass = true;
+  const use = matteUse(inv, project, clip);
+  if (use) {
+    if (fx.type !== 'plugin' && fx.type !== 'lut') throw new CliError('INVALID_ARGS', '--matte limits plugin effects and LUTs to a cut-out', 2);
+    fx.matte = use;
+  }
   const mix = num(inv, 'mix');
   if (mix !== undefined) {
     if (fx.type !== 'plugin' && fx.type !== 'lut') throw new CliError('INVALID_ARGS', '--mix applies to plugin effects and LUTs', 2);
@@ -217,6 +235,24 @@ export const set: Handler = async (inv) => {
     if (mix === 1) delete f['mix'];
     else f['mix'] = mix;
   }
+  if (str(inv, 'matte') === 'none') {
+    if (cur.type === 'cutout') throw new CliError('INVALID_ARGS', 'a cutout is its matte; remove the cutout instead', 2);
+    delete f['matte'];
+  } else if (str(inv, 'matte') || num(inv, 'feather') !== undefined || num(inv, 'choke') !== undefined || inv.flags['matte-invert']) {
+    if (cur.type !== 'plugin' && cur.type !== 'lut' && cur.type !== 'cutout') throw new CliError('INVALID_ARGS', `a ${cur.type} effect does not take a matte`, 2);
+    const had = (cur as { matte?: { id: string; invert?: boolean; feather?: number; choke?: number } }).matte;
+    const given = matteUse(inv, project, clip);
+    const id = given?.id ?? had?.id;
+    if (!id) throw new CliError('INVALID_ARGS', 'give --matte mt_xxxx', 2);
+    const next: Record<string, unknown> = { id };
+    const invert = inv.flags['matte-invert'] ? true : had?.invert;
+    const feather = num(inv, 'feather') ?? had?.feather;
+    const choke = num(inv, 'choke') ?? had?.choke;
+    if (invert) next['invert'] = true;
+    if (feather) next['feather'] = feather;
+    if (choke) next['choke'] = choke;
+    f['matte'] = next;
+  }
   if (inv.flags['bypass'] && inv.flags['enable']) throw new CliError('INVALID_ARGS', 'give --bypass or --enable, not both', 2);
   if (inv.flags['bypass']) f['bypass'] = true;
   if (inv.flags['enable']) delete f['bypass'];
@@ -255,7 +291,7 @@ export const move: Handler = async (inv) => {
 export const bypass: Handler = async (inv) => {
   const { project, clip } = clipOf(inv);
   const { index, fx: cur } = pick(clip, str(inv, 'node'));
-  if (cur.type !== 'plugin' && cur.type !== 'lut' && cur.type !== 'stabilize' && cur.type !== 'pin') throw new CliError('INVALID_ARGS', `a ${cur.type} effect cannot be switched off; remove it`, 2);
+  if (cur.type !== 'plugin' && cur.type !== 'lut' && cur.type !== 'stabilize' && cur.type !== 'pin' && cur.type !== 'cutout') throw new CliError('INVALID_ARGS', `a ${cur.type} effect cannot be switched off; remove it`, 2);
   const list = named(project, clip);
   const f = { ...after(list, index) } as Record<string, unknown>;
   if (inv.flags['off']) delete f['bypass'];

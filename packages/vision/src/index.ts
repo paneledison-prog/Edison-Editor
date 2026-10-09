@@ -11,3 +11,4 @@ export * from './cam.js';
 export * from './ba.js';
 export * from './tracks.js';
 export * from './sfm.js';
+export * from './segment.js';

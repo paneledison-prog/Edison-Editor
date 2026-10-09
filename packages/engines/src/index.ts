@@ -22,3 +22,4 @@ export * from './fxanim.js';
 export * from './track.js';
 export * from './trackfx.js';
 export * from './solve.js';
+export * from './matte.js';

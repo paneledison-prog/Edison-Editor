@@ -130,6 +130,14 @@ export function validateProject(p: unknown): Issue[] {
           add('FX_INVALID', `clip ${c.id}: more than one stabilize effect`, `clips.${c.id}.fx`);
         if (f.type === 'stabilize') fxSeen.add('stabilize');
       }
+      const use = f.type === 'cutout' ? f.matte : f.type === 'plugin' || f.type === 'lut' ? f.matte : undefined;
+      if (use || f.type === 'cutout') {
+        const m = use ? proj.mattes?.[use.id] : undefined;
+        if (track.type !== 'video') add('FX_INVALID', `clip ${c.id}: a matte needs a video track`, `clips.${c.id}.fx`);
+        if (!m) add('MISSING_REF', `clip ${c.id}: uses matte ${use?.id}, which does not exist`, `clips.${c.id}.fx`);
+        else if (m.asset !== c.asset)
+          add('FX_INVALID', `clip ${c.id}: matte ${use!.id} was made on ${m.asset}, but this clip plays ${c.asset ?? 'a composition'}`, `clips.${c.id}.fx`);
+      }
       if (f.type === 'lut' && track.type !== 'video' && track.type !== 'graphics')
         add('FX_INVALID', `clip ${c.id}: lut needs a video track`, `clips.${c.id}.fx`);
       if (f.type === 'plugin' && track.type !== 'video' && track.type !== 'graphics')
@@ -217,6 +225,13 @@ export function validateProject(p: unknown): Issue[] {
     if (!a) add('MISSING_REF', `tracker ${id} was made on ${tk.asset}, which does not exist`, `trackers.${id}`);
     else if (a.kind !== 'video') add('FX_INVALID', `tracker ${id}: ${tk.asset} is ${a.kind}, only video can be tracked`, `trackers.${id}`);
     if (!(tk.from <= tk.at && tk.at <= tk.to)) add('FX_INVALID', `tracker ${id}: the reference time ${tk.at} ms is outside ${tk.from}..${tk.to} ms`, `trackers.${id}`);
+  }
+  for (const [id, m] of Object.entries(proj.mattes ?? {})) {
+    const a = proj.assets[m.asset];
+    if (!a) add('MISSING_REF', `matte ${id} was made on ${m.asset}, which does not exist`, `mattes.${id}`);
+    else if (a.kind !== 'video') add('FX_INVALID', `matte ${id}: ${m.asset} is ${a.kind}, only video can be cut out`, `mattes.${id}`);
+    if (!(m.from < m.to)) add('FX_INVALID', `matte ${id}: the range ${m.from}..${m.to} ms is empty`, `mattes.${id}`);
+    for (const k of m.keys) if (k.at < m.from || k.at > m.to) add('FX_INVALID', `matte ${id}: a marked frame at ${k.at} ms is outside ${m.from}..${m.to} ms`, `mattes.${id}`);
   }
   const ids = new Set<string>();
   for (const m of proj.markers) {

@@ -12,6 +12,8 @@ import {
   KeyframeId,
   MarkerId,
   AssetId,
+  Matte,
+  MatteId,
   Tracker,
   TrackerId,
   TrackId,
@@ -142,6 +144,44 @@ export const OPS = {
       delete p.trackers![a.id];
       if (!Object.keys(p.trackers!).length) delete p.trackers;
       return [{ type: 'tracker.add', args: { id: a.id, tracker: snap(prev) } }];
+    },
+  }),
+
+  'matte.add': def({
+    args: z.object({ id: MatteId.optional(), matte: Matte }),
+    resolve: (a, p, ctx) => ({ ...a, id: a.id ?? makeId('mt', new Set(Object.keys(p.mattes ?? {})), ctx.rng) }),
+    apply(p, a) {
+      if (p.mattes?.[a.id!]) throw new OpError('INVALID_ARGS', `matte ${a.id} already exists`);
+      (p.mattes ??= {})[a.id!] = a.matte;
+      return [{ type: 'matte.remove', args: { id: a.id } }];
+    },
+  }),
+  'matte.set': def({
+    args: z.object({ id: MatteId, patch: z.record(z.unknown()) }),
+    apply(p, a) {
+      const prev = p.mattes?.[a.id];
+      if (!prev) throw new OpError('NOT_FOUND', `matte ${a.id} not found`);
+      const next: Record<string, unknown> = { ...prev };
+      const was: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(a.patch)) {
+        was[k] = (prev as Record<string, unknown>)[k] ?? null;
+        if (v === null) delete next[k];
+        else next[k] = v;
+      }
+      const parsed = Matte.safeParse(next);
+      if (!parsed.success) throw new OpError('INVALID_ARGS', `matte ${a.id}: ${parsed.error.issues[0]!.path.join('.')} ${parsed.error.issues[0]!.message}`);
+      p.mattes![a.id] = parsed.data;
+      return [{ type: 'matte.set', args: { id: a.id, patch: was } }];
+    },
+  }),
+  'matte.remove': def({
+    args: z.object({ id: MatteId }),
+    apply(p, a) {
+      const prev = p.mattes?.[a.id];
+      if (!prev) throw new OpError('NOT_FOUND', `matte ${a.id} not found`);
+      delete p.mattes![a.id];
+      if (!Object.keys(p.mattes!).length) delete p.mattes;
+      return [{ type: 'matte.add', args: { id: a.id, matte: snap(prev) } }];
     },
   }),
 

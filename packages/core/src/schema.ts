@@ -90,6 +90,56 @@ export const Tracker = z
   })
   .strict();
 
+/** A cut-out of an object in a video, made from marks the agent gives on some frames and followed through the rest. */
+export const MatteId = z.string().regex(/^mt_[0-9a-hjkmnp-tv-z]{4,10}$/, 'a matte id such as mt_k3f9');
+const Pt2 = z.tuple([z.number().min(-0.5).max(1.5), z.number().min(-0.5).max(1.5)]);
+const MarkShape = z
+  .object({
+    /** points in fractions of the frame: one is a dot, several a stroke, a closed shape is filled */
+    p: z.array(Pt2).min(1).max(400),
+    /** stroke radius as a fraction of the frame width (default 0.006) */
+    r: z.number().min(0.0005).max(0.2).optional(),
+    closed: z.boolean().optional(),
+  })
+  .strict();
+export const MatteSeeds = z
+  .object({
+    /** the object lies inside this box (x, y, w, h, fractions of the frame); outside it is background */
+    box: z.tuple([z.number().min(-0.5).max(1.5), z.number().min(-0.5).max(1.5), z.number().min(0.001).max(2), z.number().min(0.001).max(2)]).optional(),
+    fg: z.array(MarkShape).max(60).optional(),
+    bg: z.array(MarkShape).max(60).optional(),
+    /** a rough closed outline of the object: only the ring `band` wide around it is decided from the picture */
+    outline: z.object({ p: z.array(Pt2).min(3).max(400), band: z.number().min(0.002).max(0.2).optional() }).strict().optional(),
+  })
+  .strict();
+export const Matte = z
+  .object({
+    asset: AssetId,
+    /** the source range cut out, in ms of the asset */
+    from: z.number().int().min(0),
+    to: z.number().int().min(1),
+    /** frames where the object was marked, in ms of the asset; the matte is followed from each to the next */
+    keys: z
+      .array(z.object({ at: z.number().int().min(0), seeds: MatteSeeds, prior: z.enum(['u2net', 'u2netp']).optional() }).strict())
+      .min(1)
+      .max(80),
+    fps: z.number().min(1).max(60).optional(),
+    width: z.number().int().min(160).max(1280).optional(),
+    label: z.string().max(80).optional(),
+  })
+  .strict();
+/** Where a matte is used on a clip: inside it (or outside, inverted), with a soft edge and a grow or shrink. */
+export const MatteUse = z
+  .object({
+    id: MatteId,
+    invert: z.boolean().optional(),
+    /** edge softness in pixels of the output (0..40) */
+    feather: z.number().min(0).max(40).optional(),
+    /** shrinks the matte by this many pixels (negative grows it) */
+    choke: z.number().min(-20).max(20).optional(),
+  })
+  .strict();
+
 export const TrackType = z.enum(['video', 'audio', 'graphics', 'captions']);
 export const Track = z
   .object({
@@ -156,6 +206,8 @@ export const Fx = z.discriminatedUnion('type', [
       node: NodeId.optional(),
       /** how much of the effect shows, 0..1 (default 1): the picture before it and after it, mixed */
       mix: num(0, 1).optional(),
+      /** the effect applies only inside this matte */
+      matte: MatteUse.optional(),
     })
     .strict(),
   // A plugin's video effect; the id and parameters are checked against the plugin's manifest at render time.
@@ -169,6 +221,17 @@ export const Fx = z.discriminatedUnion('type', [
       node: NodeId.optional(),
       /** how much of the effect shows, 0..1 (default 1) */
       mix: num(0, 1).optional(),
+      /** the effect applies only inside this matte */
+      matte: MatteUse.optional(),
+    })
+    .strict(),
+  // Removes everything outside a matte: the clip's picture becomes transparent there, so the tracks below show through.
+  z
+    .object({
+      type: z.literal('cutout'),
+      matte: MatteUse,
+      bypass: z.boolean().optional(),
+      node: NodeId.optional(),
     })
     .strict(),
   // Steadies the picture: the camera path of a tracker, smoothed, undone frame by frame, with a crop that hides the borders.
@@ -316,11 +379,14 @@ export const ProjectSchema = z
     markers: z.array(Marker),
     exports: z.array(Export),
     trackers: z.record(TrackerId, Tracker).optional(),
+    mattes: z.record(MatteId, Matte).optional(),
   })
   .strict();
 
 export type Project = z.infer<typeof ProjectSchema>;
 export type Tracker = z.infer<typeof Tracker>;
+export type Matte = z.infer<typeof Matte>;
+export type MatteSeeds = z.infer<typeof MatteSeeds>;
 export type Asset = z.infer<typeof Asset>;
 export type Track = z.infer<typeof Track>;
 export type Clip = z.infer<typeof Clip>;

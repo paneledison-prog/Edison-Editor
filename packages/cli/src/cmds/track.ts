@@ -226,9 +226,9 @@ export const preview: Handler = async (inv) => {
 // ----- stabilize and pin -------------------------------------------------------------------------------------------------------
 
 /** The source range a clip plays, in ms of its asset. */
-const playedRange = (c: Clip): [number, number] => [Math.round(c.srcIn ?? 0), Math.round((c.srcIn ?? 0) + c.dur * speedOf(c))];
+export const playedRange = (c: Clip): [number, number] => [Math.round(c.srcIn ?? 0), Math.round((c.srcIn ?? 0) + c.dur * speedOf(c))];
 
-function newEntry(project: Project, clip: Clip, fx: Fx, at?: number) {
+export function newEntry(project: Project, clip: Clip, fx: Fx, at?: number) {
   const base = named(project, clip);
   const node = makeId('f', new Set([...takenNodes(project), ...(base.map(nodeOf).filter(Boolean) as string[])]), cryptoRng());
   const list = [...base];

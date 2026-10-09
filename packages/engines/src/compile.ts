@@ -6,6 +6,7 @@ import { EngineError } from './run.js';
 import { blurRegionFilter, hasMotion, zoomFilter } from './zoom.js';
 import { effectLines, pluginEffectDecl, type FxContext } from './plugins.js';
 import { checkClipKeyframes, nodeLines } from './fxanim.js';
+import type { MatteData } from './matte.js';
 import type { TrackData } from './track.js';
 import { PIN_MARGIN, correctionTable, pinQuads, pinWarpLines, stabilizeLines, stabilizePlan, type ClipTiming } from './trackfx.js';
 import type { Preset } from './presets.js';
@@ -138,6 +139,31 @@ export interface CompileInput {
   overlays?: Record<string, { dir: string; fps: number; frames: number }>;
   /** Analysed trackers by id, for the clips' stabilize and pin effects (see ensureTracks). */
   tracks?: Record<string, TrackData>;
+  /** Built mattes by id, for the clips' cutout effects and effects limited to a matte (see ensureMattes). */
+  mattes?: Record<string, MatteData>;
+}
+
+type MatteUse = NonNullable<Extract<Fx, { type: 'cutout' }>['matte']>;
+
+/** The matte's finishing: shrink or grow, soften, flip. Returns filter lines from `from` to `to`. */
+function matteFinish(from: string, to: string, m: MatteUse): string[] {
+  const f: string[] = [];
+  const ch = Math.round(m.choke ?? 0);
+  for (let i = 0; i < Math.abs(ch); i++) f.push(ch > 0 ? 'erosion' : 'dilation');
+  if ((m.feather ?? 0) > 0) f.push(`gblur=sigma=${Math.max(0.3, (m.feather ?? 0) / 2).toFixed(2)}`);
+  if (m.invert) f.push('negate');
+  return [`[${from}]${f.length ? f.join(',') : 'null'}[${to}]`];
+}
+
+/** An effect that shows only inside a matte: the picture and the effected picture are laid together by the matte's opacity. */
+function restrictLines(from: string, to: string, uid: string, inner: (i: string, o: string) => string[], mask: string, m: MatteUse): string[] {
+  return [
+    `[${from}]split=2[${uid}o][${uid}i]`,
+    ...inner(`${uid}i`, `${uid}e`),
+    ...matteFinish(mask, `${uid}m`, m),
+    `[${uid}e][${uid}m]alphamerge[${uid}ea]`,
+    `[${uid}o][${uid}ea]overlay=format=auto:eof_action=pass:repeatlast=0[${to}]`,
+  ];
 }
 
 export function compile(inp: CompileInput): Plan {
@@ -307,6 +333,45 @@ export function compile(inp: CompileInput): Plan {
           `[${inLabel}]${head},scale=${width}:${height}:force_original_aspect_ratio=decrease:${cm},pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=${bg},setsar=1,format=yuv420p,${bf}${zf}setpts=PTS-STARTPTS+${at}/TB[v${nV}]`,
         );
       }
+      // Mattes: each use of a matte (a cutout, or an effect limited to it) takes its own copy of the matte's picture, which is
+      // fitted onto the canvas the way the clip is, so it lines up with the picture it works on.
+      const liveFx = (c.fx ?? []).filter((f) => !('bypass' in f && f.bypass));
+      const matteUses = liveFx.filter((f): f is Extract<Fx, { type: 'cutout' | 'plugin' | 'lut' }> => (f.type === 'cutout' || f.type === 'plugin' || f.type === 'lut') && !!f.matte);
+      const matteCount = new Map<string, number>();
+      for (const f of matteUses) matteCount.set(f.matte!.id, (matteCount.get(f.matte!.id) ?? 0) + 1);
+      const matteLabels = new Map<string, string[]>();
+      const matteTake = (id: string): string => matteLabels.get(id)!.shift()!;
+      if (matteCount.size && a.kind !== 'video') throw new EngineError('INVALID_INPUT', `${c.id}: a matte needs a video clip`);
+      const mLines: string[] = []; // the matte pictures are laid out after the clip's own chain (which later steps extend at its end)
+      [...matteCount].forEach(([id, n], mi) => {
+        const md = inp.mattes?.[id];
+        if (!md) throw new EngineError('INVALID_INPUT', `${c.id}: matte ${id} has not been built`, `studio matte build ${id}`);
+        const base = `v${nV}m${mi}`;
+        const mk = nIn++;
+        const fromMs = md.fromMs;
+        const lastMs = fromMs + ((md.frames - 1) * 1000) / md.fps;
+        const in0 = timing.srcIn;
+        const out0 = timing.srcIn + c.dur * speed;
+        if (in0 < fromMs - 1000 / md.fps || out0 > lastMs + 1000 / md.fps) {
+          const msg = `${c.id}: matte ${id} covers ${Math.round(fromMs)}–${Math.round(lastMs)} ms of the source but the clip plays ${Math.round(in0)}–${Math.round(out0)} ms; outside it the matte's first or last picture is held`;
+          if (!notes.includes(msg)) notes.push(msg);
+        }
+        inputs.push('-ss', sec(Math.max(0, in0 - fromMs)), '-t', sec(c.dur * speed), '-i', join(projectDir, md.file));
+        const lead = in0 < fromMs ? `,tpad=start_duration=${((fromMs - in0) / 1000 / speed).toFixed(3)}:start_mode=clone` : '';
+        let src = `${mk}:v`;
+        const mhead = `setpts=(PTS-STARTPTS)/${speed},fps=${fps}${lead}`;
+        if (stab && steady) {
+          mLines.push(`[${src}]${mhead}[${base}h]`);
+          mLines.push(...stabilizeLines(`${base}h`, `${base}st`, `${base}t`, steady, { w: d.w!, h: d.h! }));
+          src = `${base}st`;
+        }
+        const fit = reframe === 'center-crop' ? `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}` : `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black`;
+        const raw = `${base}r`;
+        mLines.push(`[${src}]${stab && steady ? '' : `${mhead},`}${fit},format=gray,${zf ? `${zf}format=gray,` : ''}setpts=PTS-STARTPTS+${at}/TB[${raw}]`);
+        const names = Array.from({ length: n }, (_, j) => `${base}u${j}`);
+        if (n > 1) mLines.push(`[${raw}]split=${n}${names.map((x) => `[${x}]`).join('')}`);
+        matteLabels.set(id, n > 1 ? names : [raw]);
+      });
       // LUTs run right after the clip's own scale and zoom, before plugin nodes: order of the fx array decides among nodes of
       // the same kind, and a LUT is always first, as camera conversions are on a colourist's first node.
       const fxCtxEarly: FxContext = { W: width, H: height, FPS: fps, SRCFPS: a.probe.fps || fps, SPEED: speed, T0: c.start / 1000 };
@@ -328,7 +393,11 @@ export function compile(inp: CompileInput): Plan {
           const lut = (from: string, to: string) => [
             `[${from}]format=gbrp,lut3d=file='${path.replace(/'/g, "\\'")}':interp=tetrahedral,format=yuv420p[${to}]`,
           ];
-          vLines.push(...nodeLines(c, f, cur, out, `${base}l${i}`, fxCtxEarly, { fps, atSec: c.start / 1000, lut }));
+          vLines.push(
+            ...(f.matte
+              ? restrictLines(cur, out, `${base}lm${i}`, (a2, b2) => nodeLines(c, f, a2, b2, `${base}l${i}`, fxCtxEarly, { fps, atSec: c.start / 1000, lut }), matteTake(f.matte.id), f.matte)
+              : nodeLines(c, f, cur, out, `${base}l${i}`, fxCtxEarly, { fps, atSec: c.start / 1000, lut })),
+          );
           cur = out;
         });
       }
@@ -356,8 +425,8 @@ export function compile(inp: CompileInput): Plan {
       const pfx = live.filter((f) => !isSource(f));
       const sfx = live.filter(isSource);
       for (const f of sfx)
-        if (f.mix !== undefined || (f.node && Object.keys(c.keyframes ?? {}).some((p) => p.startsWith(`fx.${f.node}.`))))
-          throw new EngineError('ENGINE_MISSING', `${c.id}: effect ${f.id} works on the source frames, so it cannot be mixed or keyframed`, 'remove the mix or the keyframes, or use another effect');
+        if (f.mix !== undefined || f.matte || (f.node && Object.keys(c.keyframes ?? {}).some((p) => p.startsWith(`fx.${f.node}.`))))
+          throw new EngineError('ENGINE_MISSING', `${c.id}: effect ${f.id} works on the source frames, so it cannot be mixed, keyframed or limited to a matte`, 'remove the mix, keyframes or matte, or use another effect');
       if (sfx.length) {
         const base = `v${nV}`;
         const firstIdx = vLines.findIndex((l, i) => i >= lineStart && l.includes(`[${k}:v]`));
@@ -380,11 +449,29 @@ export function compile(inp: CompileInput): Plan {
         vLines.push(last.replace(new RegExp(`\\[${base}\\]$`), `[${cur}]`));
         pfx.forEach((f, i) => {
           const out = i === pfx.length - 1 ? base : `${base}fx${i}`;
-          vLines.push(...nodeLines(c, f, cur, out, `${base}f${i}`, fxCtx, { fps, atSec: c.start / 1000 }));
+          vLines.push(
+            ...(f.matte
+              ? restrictLines(cur, out, `${base}fm${i}`, (a2, b2) => nodeLines(c, f, a2, b2, `${base}f${i}`, fxCtx, { fps, atSec: c.start / 1000 }), matteTake(f.matte.id), f.matte)
+              : nodeLines(c, f, cur, out, `${base}f${i}`, fxCtx, { fps, atSec: c.start / 1000 })),
+          );
           if (f.node && Object.keys(c.keyframes ?? {}).some((p) => p.startsWith(`fx.${f.node}.`) && !p.endsWith('.mix'))) {
             const msg = `${c.id}: effect "${f.id}" is animated: it is rendered twice per slice and blended, so it costs about twice as much; temporal filters inside it restart at each sample`;
             if (!notes.includes(msg)) notes.push(msg);
           }
+          cur = out;
+        });
+      }
+      // A cutout makes everything outside the matte transparent, after the effects (which may drop alpha) and before pins.
+      const cuts = liveFx.filter((f): f is Extract<Fx, { type: 'cutout' }> => f.type === 'cutout');
+      if (cuts.length) {
+        const base = `v${nV}`;
+        const last = vLines.pop()!;
+        let cur = `${base}cut`;
+        vLines.push(last.replace(new RegExp(`\\[${base}\\]$`), `[${cur}]`));
+        cuts.forEach((f, i) => {
+          const out = i === cuts.length - 1 ? base : `${base}ct${i}`;
+          vLines.push(...matteFinish(matteTake(f.matte.id), `${base}cm${i}`, f.matte));
+          vLines.push(`[${cur}][${base}cm${i}]alphamerge[${out}]`);
           cur = out;
         });
       }
@@ -418,6 +505,7 @@ export function compile(inp: CompileInput): Plan {
           cur = out;
         });
       }
+      vLines.push(...mLines);
       if (d.w && d.h && t.type === 'video') {
         const kFit = Math.min(width / d.w, height / d.h);
         const kCover = Math.max(width / d.w, height / d.h);

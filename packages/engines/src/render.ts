@@ -17,6 +17,7 @@ import { licenseWarnings } from './library.js';
 import { PREVIEW, getPreset, type Preset } from './presets.js';
 import { probeFile } from './probe.js';
 import { EngineError, lastLine, run, withFilterScripts } from './run.js';
+import { ensureMattes } from './matte.js';
 import { ensureTracks } from './track.js';
 
 export interface RenderOptions {
@@ -263,6 +264,12 @@ export async function render(o: RenderOptions): Promise<RenderReport> {
     clipIds: inWindow,
     placeholder: (id) => trackNotes.push(`tracker ${id} has not been analysed yet; this graph uses a placeholder for it (studio track build ${id})`),
   });
+  const mattes = await ensureMattes(o.project, o.projectDir, {
+    build: !o.explain,
+    log,
+    clipIds: inWindow,
+    placeholder: (id) => trackNotes.push(`matte ${id} has not been built yet; this graph uses a placeholder for it (studio matte build ${id})`),
+  });
   const plan = compile({
     project: o.project,
     projectDir: o.projectDir,
@@ -273,6 +280,7 @@ export async function render(o: RenderOptions): Promise<RenderReport> {
     reframe: o.reframe,
     overlays,
     tracks,
+    mattes,
   });
   const ext = stillMode ? 'png' : preset.ext;
   const baseName =
