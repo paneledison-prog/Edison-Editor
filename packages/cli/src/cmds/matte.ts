@@ -16,6 +16,19 @@ import { num, runSpecs, store, str } from './shared.js';
 const engines = () => import('@studio/engines');
 type Seeds = Matte['keys'][number]['seeds'];
 
+
+/** The edge settings given by flags (`--edge-width --no-refine --hair --smooth --no-decontaminate`), or undefined when none. */
+function edgeFrom(inv: Invocation): Matte['edge'] | undefined {
+  const e: Record<string, unknown> = {};
+  if (num(inv, 'edge-width') !== undefined) e['width'] = Math.round(num(inv, 'edge-width')!);
+  if (inv.flags['no-refine']) e['refine'] = false;
+  if (inv.flags['hair']) e['hair'] = true;
+  if (num(inv, 'smooth') !== undefined) e['smooth'] = num(inv, 'smooth');
+  if (inv.flags['no-smooth']) e['smooth'] = 0;
+  if (inv.flags['no-decontaminate']) e['decontaminate'] = false;
+  return Object.keys(e).length ? (e as Matte['edge']) : undefined;
+}
+
 // ----- the marks ---------------------------------------------------------------------------------------------------------------------------
 
 /** Points as `x,y;x,y;...` (fractions of the frame, or pixels with --px). */
@@ -105,7 +118,8 @@ function summary(d: import('@studio/engines').MatteData) {
   });
   return {
     frames: d.frames,
-    analysis: `${d.w}x${d.h} at ${d.fps} fps`,
+    analysis: `${d.analysis?.w ?? d.w}x${d.analysis?.h ?? d.h} at ${d.fps} fps; matte ${d.w}x${d.h}`,
+    ...(d.edge ? { edge: d.edge } : {}),
     markedFrames: d.keys.map((k) => k.at),
     coveragePct: { min: Math.round(Math.min(...cov) * 1000) / 10, max: Math.round(Math.max(...cov) * 1000) / 10 },
     sample,
@@ -146,6 +160,7 @@ export const add: Handler = async (inv) => {
     ...(num(inv, 'fps') !== undefined ? { fps: num(inv, 'fps') } : {}),
     ...(num(inv, 'width') !== undefined ? { width: num(inv, 'width') } : {}),
     ...(str(inv, 'engine') ? { engine: str(inv, 'engine') } : {}),
+    ...(edgeFrom(inv) ? { edge: edgeFrom(inv) } : {}),
     ...(str(inv, 'label') ? { label: str(inv, 'label') } : {}),
   });
   const id = makeId('mt', new Set(Object.keys(project.mattes ?? {})), cryptoRng());
@@ -348,4 +363,23 @@ export const maskPick: Handler = async (inv) => {
     data: { file: rel, key: 'top left: the frame. Then the segmenter\'s three candidates (tinted), with your points (green = on the object, red = not) and box. Pick one with --pick 0|1|2-style index via `mask add --pick whole|best|first`, or correct the points and look again.', auto: r.auto, candidates: r.candidates, ms: r.ms },
     artifacts: [{ kind: 'image', path: rel }],
   };
+};
+
+/** Changes how the edge of a matte is made (resolution, refining, hair, flicker control, colour cleaning) and builds it again. */
+export const edge: Handler = async (inv) => {
+  const { project } = store(inv).load();
+  const id = mref(project, inv.positionals[0] ?? str(inv, 'matte'));
+  const m = project.mattes![id]!;
+  const given = edgeFrom(inv);
+  if (inv.flags['reset']) {
+    return runSpecs(inv, [{ type: 'matte.set', args: { id, patch: { edge: null } } }], `matte edge ${id} reset`);
+  }
+  if (!given) throw new CliError('INVALID_ARGS', 'give at least one of --edge-width --smooth --no-smooth --no-refine --hair --no-decontaminate (or --reset)', 2);
+  const merged = { ...(m.edge ?? {}), ...given };
+  const next = parsedMatte({ ...m, edge: merged });
+  const ahead = { ...project, mattes: { ...project.mattes, [id]: next } } as Project;
+  let built: Awaited<ReturnType<typeof build>> | undefined;
+  if (!inv.flags['no-build'] && !inv.dryRun) built = await build(inv, ahead, id);
+  const r = runSpecs(inv, [{ type: 'matte.set', args: { id, patch: { edge: merged } } }], `matte edge ${id}`);
+  return { ...r, data: { ...(r.data as object), matte: id, edge: merged, ...(built ? { result: summary(built.data) } : {}) }, ...(built ? { warnings: warningsOf(id, built.data) } : {}) };
 };

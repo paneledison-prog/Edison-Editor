@@ -341,6 +341,7 @@ export function compile(inp: CompileInput): Plan {
       for (const f of matteUses) matteCount.set(f.matte!.id, (matteCount.get(f.matte!.id) ?? 0) + 1);
       const matteLabels = new Map<string, string[]>();
       const matteTake = (id: string): string => matteLabels.get(id)!.shift()!;
+      const fgLabels = new Map<string, string[]>();
       if (matteCount.size && a.kind !== 'video') throw new EngineError('INVALID_INPUT', `${c.id}: a matte needs a video clip`);
       const mLines: string[] = []; // the matte pictures are laid out after the clip's own chain (which later steps extend at its end)
       [...matteCount].forEach(([id, n], mi) => {
@@ -371,6 +372,24 @@ export function compile(inp: CompileInput): Plan {
         const names = Array.from({ length: n }, (_, j) => `${base}u${j}`);
         if (n > 1) mLines.push(`[${raw}]split=${n}${names.map((x) => `[${x}]`).join('')}`);
         matteLabels.set(id, n > 1 ? names : [raw]);
+        // The object's colour with the old background taken out of the edge pixels: laid out like the matte, one copy for each
+        // cutout that uses this matte (it replaces the picture's colour at the edge only, see the cutout below).
+        const nCuts = liveFx.filter((f) => f.type === 'cutout' && f.matte?.id === id).length;
+        if (md.fgFile && nCuts) {
+          const fk = nIn++;
+          inputs.push('-ss', sec(Math.max(0, in0 - fromMs)), '-t', sec(c.dur * speed), '-i', join(projectDir, md.fgFile));
+          let fsrc = `${fk}:v`;
+          if (stab && steady) {
+            mLines.push(`[${fsrc}]${mhead}[${base}fh]`);
+            mLines.push(...stabilizeLines(`${base}fh`, `${base}fst`, `${base}ft`, steady, { w: d.w!, h: d.h! }));
+            fsrc = `${base}fst`;
+          }
+          const fraw = `${base}fr`;
+          mLines.push(`[${fsrc}]${stab && steady ? '' : `${mhead},`}${fit},format=gbrp,${zf ? `${zf}format=gbrp,` : ''}setpts=PTS-STARTPTS+${at}/TB[${fraw}]`);
+          const fnames = Array.from({ length: nCuts }, (_, j) => `${base}fu${j}`);
+          if (nCuts > 1) mLines.push(`[${fraw}]split=${nCuts}${fnames.map((x) => `[${x}]`).join('')}`);
+          fgLabels.set(id, nCuts > 1 ? fnames : [fraw]);
+        }
       });
       // LUTs run right after the clip's own scale and zoom, before plugin nodes: order of the fx array decides among nodes of
       // the same kind, and a LUT is always first, as camera conversions are on a colourist's first node.
@@ -470,8 +489,22 @@ export function compile(inp: CompileInput): Plan {
         vLines.push(last.replace(new RegExp(`\\[${base}\\]$`), `[${cur}]`));
         cuts.forEach((f, i) => {
           const out = i === cuts.length - 1 ? base : `${base}ct${i}`;
-          vLines.push(...matteFinish(matteTake(f.matte.id), `${base}cm${i}`, f.matte));
-          vLines.push(`[${cur}][${base}cm${i}]alphamerge[${out}]`);
+          const fgPic = fgLabels.get(f.matte.id)?.shift();
+          if (fgPic) {
+            // the edge pixels take the object's colour with the old background taken out; the rest of the picture is left as the
+            // effects made it
+            vLines.push(...matteFinish(matteTake(f.matte.id), `${base}cmx${i}`, f.matte));
+            vLines.push(`[${base}cmx${i}]split=3[${base}cm${i}][${base}cb${i}][${base}cc${i}]`);
+            vLines.push(`[${base}cb${i}]dilation,dilation[${base}cd${i}]`);
+            vLines.push(`[${base}cc${i}]erosion,erosion[${base}ce${i}]`);
+            vLines.push(`[${base}cd${i}][${base}ce${i}]blend=all_mode=subtract,gblur=sigma=1[${base}cband${i}]`);
+            vLines.push(`[${cur}]format=gbrp[${base}cp${i}]`);
+            vLines.push(`[${base}cp${i}][${fgPic}][${base}cband${i}]maskedmerge[${base}cq${i}]`);
+            vLines.push(`[${base}cq${i}][${base}cm${i}]alphamerge[${out}]`);
+          } else {
+            vLines.push(...matteFinish(matteTake(f.matte.id), `${base}cm${i}`, f.matte));
+            vLines.push(`[${cur}][${base}cm${i}]alphamerge[${out}]`);
+          }
           cur = out;
         });
       }

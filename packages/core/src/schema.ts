@@ -127,6 +127,22 @@ export const Matte = z
     width: z.number().int().min(160).max(1280).optional(),
     /** what decides the boundary: a saliency model guided by the marks (auto: u2net when it can run), or the marks and colours alone */
     engine: z.enum(['auto', 'colour', 'u2net', 'u2netp', 'sam']).optional(),
+    /** the edge: refined at the picture's own resolution, steadied over time, object colour cleaned of the old background */
+    edge: z
+      .object({
+        /** output width of the matte in px (default the source's, up to 960) */
+        width: z.number().int().min(160).max(3840).optional(),
+        /** decide a band around the boundary again from the full-resolution picture (default on) */
+        refine: z.boolean().optional(),
+        /** a wider band where there is fine detail: hair (default off) */
+        hair: z.boolean().optional(),
+        /** flicker control, 0 (off) to 1 (default 0.7) */
+        smooth: z.number().min(0).max(1).optional(),
+        /** take the old background out of the edge pixels' colour (default on) */
+        decontaminate: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
     label: z.string().max(80).optional(),
   })
   .strict();

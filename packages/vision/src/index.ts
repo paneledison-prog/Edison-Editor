@@ -13,3 +13,4 @@ export * from './tracks.js';
 export * from './sfm.js';
 export * from './segment.js';
 export * from './cuts.js';
+export * from './matting.js';

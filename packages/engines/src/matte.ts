@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Matte, Project } from '@studio/core';
 import {
-  VideoWriter, detectCuts, drawLine, drawPoly, followPrepare, followStep, probeVideo, promptsFromMask, promptsFromSeeds, segmentFromPrompted, readFrames, readSize, segmentFrame, segmentWithModel, startFollowing, tileRgb,
+  VideoWriter, detectCuts, estimateForeground, refineEdge, resizePlane, smoothMattes, drawLine, drawPoly, followPrepare, followStep, probeVideo, promptsFromMask, promptsFromSeeds, segmentFromPrompted, readFrames, readSize, segmentFrame, segmentWithModel, startFollowing, tileRgb,
   type Seeds,
 } from '@studio/vision';
 import { grabFrame } from './grab.js';
@@ -19,7 +19,7 @@ import { requireModel, studioRoot } from './models.js';
 import { EngineError, run } from './run.js';
 import { SamServer } from './sam.js';
 
-export const MATTE_VERSION = 16;
+export const MATTE_VERSION = 17;
 const MAX_FRAMES = 700;
 
 export interface MatteData {
@@ -29,6 +29,12 @@ export interface MatteData {
   asset: string;
   /** the gray video, relative to the project folder */
   file: string;
+  /** the object's colour with the old background taken out of the edge pixels (RGB video, same size), when it was made */
+  fgFile?: string;
+  /** the size the marks were followed at; `w` and `h` are the size of the matte video */
+  analysis?: { w: number; h: number };
+  /** what the edge engine did, and how steady the matte is (flicker 0..1, lower is steadier) */
+  edge?: { refined: boolean; hair: boolean; smoothed: number; decontaminated: boolean; flicker?: { before: number; after: number }; jitter?: { before: number; after: number } };
   fps: number;
   w: number;
   h: number;
@@ -384,20 +390,61 @@ async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer })
     }
   }
 
-  // write the video and the numbers
+  // The edge engine. (1) Flicker control, at the size the marks were followed at. (2) The matte at the picture's own size, with a
+  // band around the boundary decided again from the full-resolution picture, and the object's colour cleaned of the old background.
+  const edgeCfg = m.edge ?? {};
+  const smoothAmt = edgeCfg.smooth ?? 0.7;
+  const refine = edgeCfg.refine !== false;
+  const hair = !!edgeCfg.hair;
+  const decontaminate = edgeCfg.decontaminate !== false;
+  const edgeInfo: NonNullable<MatteData['edge']> = { refined: refine, hair, smoothed: smoothAmt, decontaminated: decontaminate };
+  let work: Float32Array[] = final.map((f) => Float32Array.from(f, (v) => v / 255));
+  if (smoothAmt > 0 && N >= 3) {
+    log(`steadying the matte over time (strength ${smoothAmt})`);
+    const r = smoothMattes(work, frames, w, h, { cuts, fixed: new Set(keys.map((k) => k.frame)), strength: smoothAmt });
+    work = r.alphas;
+    edgeInfo.flicker = { before: Math.round(r.before.flicker * 10000) / 10000, after: Math.round(r.after.flicker * 10000) / 10000 };
+    edgeInfo.jitter = { before: Math.round(r.before.jitter * 10000) / 10000, after: Math.round(r.after.jitter * 10000) / 10000 };
+    log(`flicker ${edgeInfo.flicker.before} -> ${edgeInfo.flicker.after}, jitter ${edgeInfo.jitter.before} -> ${edgeInfo.jitter.after}`);
+  }
+  const outW = Math.max(w, Math.min(info.w, edgeCfg.width ?? 960));
+  const outSize = outW > w ? readSize(info, { width: outW }) : { w, h };
+  const ow = outSize.w;
+  const oh = outSize.h;
   mkdirSync(dirOf(projectDir), { recursive: true });
   const video = matteVideo(projectDir, key);
   const tmp = `${video}.${process.pid}.partial.mkv`;
-  const wr = new VideoWriter(tmp, { w, h, fps });
+  const fgVideo = video.replace(/\.mkv$/, '.fg.mkv');
+  const fgTmp = `${fgVideo}.${process.pid}.partial.mkv`;
+  const wr = new VideoWriter(tmp, { w: ow, h: oh, fps });
+  const wf = decontaminate ? new VideoWriter(fgTmp, { w: ow, h: oh, fps, channels: 3, codec: ['-c:v', 'ffv1', '-level', '3', '-pix_fmt', 'bgr0'] }) : null;
   const coverage: number[] = [];
-  for (let i = 0; i < N; i++) {
-    await wr.write(final[i]!);
-    let s = 0;
-    for (let p = 0; p < final[i]!.length; p++) s += final[i]![p]! / 255;
-    coverage.push(Math.round((s / (w * h)) * 10000) / 10000);
+  const needPictures = refine || decontaminate;
+  if (needPictures) log(`the edge at ${ow}x${oh}${refine ? ' (band decided again from the picture)' : ''}${decontaminate ? ', object colour cleaned of the old background' : ''}`);
+  let idx = 0;
+  const writeOne = async (i: number, pic: Uint8Array | null) => {
+    const a = work[i]!;
+    let cov = 0;
+    for (let p = 0; p < a.length; p++) cov += a[p]!;
+    coverage.push(Math.round((cov / (w * h)) * 10000) / 10000);
+    let big: Float32Array;
+    if (pic && refine) big = refineEdge(pic, ow, oh, a, w, h, { hair });
+    else big = resizePlane(a, w, h, ow, oh);
+    await wr.write(Uint8Array.from(big, (v) => Math.round(Math.min(1, Math.max(0, v)) * 255)));
+    if (wf && pic) await wf.write(estimateForeground(pic, big, ow, oh, 1));
+  };
+  if (needPictures) {
+    for await (const b of readFrames({ file: src, startMs: m.from, durMs: Math.ceil(total * step) + 1, fps, size: { w: ow, h: oh }, channels: 3 })) {
+      if (idx >= N) break;
+      await writeOne(idx++, new Uint8Array(b));
+    }
   }
+  while (idx < N) await writeOne(idx++, null);
   await wr.close();
+  if (wf) await wf.close();
   renameSync(tmp, video);
+  if (wf) renameSync(fgTmp, fgVideo);
+  for (let i = 0; i < N; i++) final[i] = Uint8Array.from(work[i]!, (v) => Math.round(Math.min(1, Math.max(0, v)) * 255));
   const peak = Math.max(...coverage, 1e-9);
   const flagged: MatteData['flagged'] = [...shotNotes];
   const ms = (i: number) => Math.round(m.from + i * step);
@@ -413,9 +460,12 @@ async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer })
     key,
     asset: m.asset,
     file: join('.studio', 'cache', 'matte', `${key}.mkv`),
+    ...(decontaminate ? { fgFile: join('.studio', 'cache', 'matte', `${key}.fg.mkv`) } : {}),
+    analysis: { w, h },
+    edge: edgeInfo,
     fps,
-    w,
-    h,
+    w: ow,
+    h: oh,
     fromMs: m.from,
     frames: N,
     keys: keys.map((k) => ({ at: k.at, frame: k.frame })),
@@ -474,7 +524,10 @@ export async function matteSheet(o: { projectDir: string; project: Project; id: 
   const m = project.mattes![o.id]!;
   const a = project.assets[m.asset]!;
   const src = join(o.projectDir, a.workingCopy?.path ?? a.path);
-  const { w, h } = data;
+  // tiles are at most 480 px wide, whatever size the matte is
+  const tw = Math.min(data.w, 480);
+  const w = tw;
+  const h = Math.round((data.h * tw) / data.w);
   const count = Math.max(2, Math.min(8, o.count ?? 4));
   const chosen = new Set<number>(o.frames ?? []);
   if (!o.frames) {
