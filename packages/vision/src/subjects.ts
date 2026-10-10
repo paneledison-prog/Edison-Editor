@@ -66,7 +66,7 @@ export function rankSubjects(cands: Candidate[], w: number, h: number, o: { minA
     let bestArea = Infinity;
     for (let j = 0; j < i; j++) {
       const big = out[j]!;
-      if (big.area < out[i]!.area * 1.25) continue;
+      if (big.area < out[i]!.area * 1.1) continue;
       let inter = 0;
       for (let p = 0; p < n; p++) if (out[i]!.mask[p] && big.mask[p]) inter++;
       // the part lies inside the whole; the nearest whole (the smallest that holds it) is its parent
@@ -130,6 +130,8 @@ const GLYPHS: Record<string, string> = {
 
 /** Draws a short text of digits (and s, p) with its top-left corner at x, y; a dark outline keeps it readable on any picture. */
 export function drawText(buf: Uint8Array, w: number, h: number, x: number, y: number, text: string, color: Rgb, scale = 3): { w: number; h: number } {
+  x = Math.round(x);
+  y = Math.round(y);
   const put = (px: number, py: number, c: Rgb) => {
     if (px < 0 || py < 0 || px >= w || py >= h) return;
     const o = (py * w + px) * 3;

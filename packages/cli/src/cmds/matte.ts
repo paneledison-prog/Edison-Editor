@@ -531,7 +531,8 @@ export const bgSubjects: Handler = async (inv) => {
       sheet: r.sheet,
       ...(r.each ? { each: r.each } : {}),
       times: r.times,
-      key: `${r.sheet}: the frame at each time, every subject tinted and numbered (white numbers: things; yellow numbers: parts of things). ${r.each ? `${r.each}: each thing cut out on a checkerboard with its number, to see exactly what its mask holds.` : ''}`,
+      ...(r.cuts.length ? { cuts: r.cuts, shots: `the shot changes at ${r.cuts.join(', ')} ms: one moment was looked at in each shot; to keep a thing in every shot name it in each, joined with + (e.g. 3+15)` } : {}),
+      key: `${r.sheet}: the frame at each time, every thing tinted, outlined and numbered in white; parts of things (yellow numbers) are not outlined. ${r.each ? `${r.each}: each thing cut out on a checkerboard with its number, to see exactly what its mask holds.` : ''}`,
       subjects: r.subjects.map(compactSubject),
       next: [
         `studio bg remove --run ${r.run} --keep ${things[0] ? things[0].n : 1} --clip c_xx   (keep those subjects, take everything else out; "1,3" keeps two things, "1+5" says 1 and 5 are the same thing seen at two times)`,

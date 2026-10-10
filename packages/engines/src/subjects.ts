@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Project } from '@studio/core';
-import { colourName, denseFlow, drawMaskOutline, drawText, grayOf, maskToRle, movingBlobs, probeVideo, proposalPrompts, rankSubjects, readSize, SUBJECT_COLOURS, tileRgb, type Candidate } from '@studio/vision';
+import { colourName, denseFlow, detectCuts, readFrames, drawMaskOutline, drawText, grayOf, maskToRle, movingBlobs, probeVideo, proposalPrompts, rankSubjects, readSize, SUBJECT_COLOURS, tileRgb, type Candidate } from '@studio/vision';
 import { removeBackground } from './bgremove.js';
 import { grabFrame } from './grab.js';
 import { SamServer } from './sam.js';
@@ -55,6 +55,8 @@ export interface SubjectsRun {
   width: number;
   height: number;
   times: number[];
+  /** where the shot changes (ms of the asset): a thing must be chosen in every shot it should be kept in */
+  cuts: number[];
   subjects: Subject[];
   /** the numbered picture(s) and the one with each subject cut out */
   sheet: string;
@@ -130,7 +132,26 @@ export async function findSubjects(o: SubjectsOptions): Promise<SubjectsRun> {
   const dur = a.probe.durMs ?? Math.round(info.durMs ?? 0);
   const from = Math.max(0, o.from ?? 0);
   const to = Math.min(dur || Infinity, o.to ?? dur);
-  const times = (o.at?.length ? o.at : to > from + 400 ? [from, Math.round((from + to) / 2), Math.max(from, to - 150)] : [from]).map((t) => Math.round(t));
+  // where to look: given, or one moment in each shot (a cut changes everything), or the start, middle and end of a single shot
+  let shots: number[] = [];
+  if (!o.at?.length && to > from + 400) {
+    const lf: Uint8Array[] = [];
+    const sw = 160;
+    const sh = Math.max(2, Math.round((sw * h) / w / 2) * 2);
+    const lfps = 10;
+    for await (const b of readFrames({ file: src, startMs: from, durMs: to - from, fps: lfps, size: { w: sw, h: sh }, channels: 3 })) lf.push(new Uint8Array(b));
+    shots = lf.length > 2 ? detectCuts(lf, sw, sh).map((c) => Math.round(from + (c * 1000) / lfps)) : [];
+  }
+  const shotStarts = [from, ...shots];
+  const times = (
+    o.at?.length
+      ? o.at
+      : shots.length
+        ? shotStarts.slice(0, 6).map((s0, k) => Math.round((s0 + (shotStarts[k + 1] ?? to)) / 2))
+        : to > from + 400
+          ? [from, Math.round((from + to) / 2), Math.max(from, to - 150)]
+          : [from]
+  ).map((t) => Math.round(t));
   const run = 'sub_' + createHash('sha256').update(JSON.stringify([a.hash, times, w, o.maxThings ?? 12, o.maxParts ?? 6])).digest('hex').slice(0, 4);
   const sam = await SamServer.start(join(o.projectDir, '.studio', 'cache', 'matte', 'sam-subjects'));
   const subjects: Subject[] = [];
@@ -253,14 +274,29 @@ export async function findSubjects(o: SubjectsOptions): Promise<SubjectsRun> {
         if (top) colourOf.set(i, ci - 1);
         if (top) for (let p = 0; p < w * h; p++) if (r.mask[p]) for (let c = 0; c < 3; c++) tint[3 * p + c] = Math.round(rgb[3 * p + c]! * 0.62 + col[c]! * 0.38);
       }
-      // outlines and numbers on top of all tints
+      // outlines (of things; parts only get their number) and numbers on top of all tints, each number where it covers no other
       ci = 0;
+      const placed: [number, number, number, number][] = [];
       for (const { r, i } of order) {
         const top = r.parent < 0;
         const col = SUBJECT_COLOURS[(top ? ci++ : (colourOf.get(r.parent) ?? 0)) % SUBJECT_COLOURS.length]!;
-        drawMaskOutline(tint, w, h, r.mask, top ? col : [255, 255, 255]);
+        if (top) drawMaskOutline(tint, w, h, r.mask, col);
         const s = subjects.find((q) => q.id === idOf.get(i))!;
-        drawText(tint, w, h, Math.max(2, Math.min(w - 40, Math.round(s.point[0] * w) - 8)), Math.max(2, Math.min(h - 20, Math.round(s.point[1] * h) - 8)), s.id, top ? [255, 255, 255] : [255, 255, 0], top ? 3 : 2);
+        const scale = top ? 3 : 2;
+        const tw = s.id.length * 4 * scale;
+        const th = 5 * scale;
+        const spots = [s.point, ...s.prompt.points].map((q) => [Math.max(2, Math.min(w - tw - 2, Math.round(q[0] * w - tw / 2))), Math.max(2, Math.min(h - th - 2, Math.round(q[1] * h - th / 2)))] as [number, number]);
+        const free = (x: number, y: number) => placed.every(([a, b, c, d]) => x + tw + 2 < a || x > a + c + 2 || y + th + 2 < b || y > b + d + 2);
+        let at2 = spots.find(([x, y]) => free(x, y));
+        if (!at2) {
+          // nowhere free on the thing: step down from its point until free
+          const [x, y0] = spots[0]!;
+          let y = y0;
+          while (y < h - th - 2 && !free(x, y)) y += th + 2;
+          at2 = [x, Math.min(y, h - th - 2)];
+        }
+        placed.push([at2[0], at2[1], tw, th]);
+        drawText(tint, w, h, at2[0], at2[1], s.id, top ? [255, 255, 255] : [255, 255, 0], scale);
       }
       drawText(tint, w, h, 4, 4, `${t}`, [255, 255, 255], 2);
       tiles.push(tint);
@@ -296,7 +332,7 @@ export async function findSubjects(o: SubjectsOptions): Promise<SubjectsRun> {
     eachFile = join('renders', `subjects-${run}-each.png`);
     await writePng(es.data, es.w, es.h, join(o.projectDir, eachFile));
   }
-  const out: SubjectsRun = { run, asset: o.asset, width: w, height: h, times, subjects, sheet: sheetFile, ...(eachFile ? { each: eachFile } : {}), ms: Date.now() - t0 };
+  const out: SubjectsRun = { run, asset: o.asset, width: w, height: h, times, cuts: shots, subjects, sheet: sheetFile, ...(eachFile ? { each: eachFile } : {}), ms: Date.now() - t0 };
   writeFileSync(subjectsFile(o.projectDir, run), JSON.stringify(out));
   return out;
 }
