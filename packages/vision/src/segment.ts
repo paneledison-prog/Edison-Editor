@@ -862,6 +862,20 @@ export interface FollowStep {
   hidden?: boolean;
 }
 
+/** Per pixel: how much the colour looks like what was marked as the object at the keyframe, against what was marked as its surroundings (0..1). */
+export function colourEvidence(st: FollowState, rgb: Uint8Array): Float32Array {
+  const n = st.w * st.h;
+  const e = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const r = rgb[3 * i]!;
+    const g = rgb[3 * i + 1]!;
+    const b = rgb[3 * i + 2]!;
+    const a = st.refFg.p(r, g, b);
+    e[i] = a / (a + st.refBg.p(r, g, b) + 1e-9);
+  }
+  return e;
+}
+
 /** Mean colour evidence of the pixels a matte covers: do they look like what was marked at the keyframe, and not like its surroundings? */
 function lookLike(st: FollowState, rgb: Uint8Array, alpha: Float32Array): number {
   let s = 0;

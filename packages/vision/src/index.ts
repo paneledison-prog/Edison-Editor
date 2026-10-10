@@ -15,3 +15,4 @@ export * from './segment.js';
 export * from './cuts.js';
 export * from './matting.js';
 export * from './plate.js';
+export * from './consensus.js';

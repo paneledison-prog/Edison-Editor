@@ -111,6 +111,27 @@ export class SamServer {
     return { prob: Float32Array.from(raw, (v) => v / 255), picked: Number(r['picked']), iou: r['iou'] as number[], area: r['area'] as number[], ms: Number(r['ms']) };
   }
 
+  /** Many prompts on one embedded frame, all three candidates of each (what a candidate is: see `SamPrompt.pick`). */
+  async proposals(id: string, w: number, h: number, prompts: Pick<SamPrompt, 'points' | 'labels' | 'box'>[]): Promise<{ prob: Float32Array; iou: number; prompt: number; candidate: number }[]> {
+    const sharp = (await import('sharp')).default;
+    const out = join(this.tmp, `prop${this.n++}`);
+    const r = await this.send({ cmd: 'proposals', id, prompts: prompts.map((p) => ({ points: p.points ?? [], labels: p.labels ?? [], box: p.box ?? null })), out });
+    if (!r['ok']) throw new EngineError('ENGINE_FAILED', `the segmenter failed on prompts: ${String(r['error'])}`);
+    const results = r['results'] as { iou: number[] }[];
+    const got: { prob: Float32Array; iou: number; prompt: number; candidate: number }[] = [];
+    try {
+      for (let pi = 0; pi < results.length; pi++)
+        for (let k = 0; k < (results[pi]!.iou.length || 3); k++) {
+          const raw = await sharp(join(out, `${pi}_${k}.png`)).greyscale().raw().toBuffer();
+          if (raw.length !== w * h) throw new EngineError('ENGINE_FAILED', 'the segmenter returned a mask of the wrong size');
+          got.push({ prob: Float32Array.from(raw, (v) => v / 255), iou: results[pi]!.iou[k] ?? 0, prompt: pi, candidate: k });
+        }
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+    return got;
+  }
+
   async close(): Promise<void> {
     try {
       this.child.stdin.end(JSON.stringify({ cmd: 'quit' }) + '\n');
