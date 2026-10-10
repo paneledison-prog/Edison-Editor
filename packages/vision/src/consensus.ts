@@ -36,6 +36,10 @@ export interface ConsensusOptions {
   evidence?: Float32Array;
   /** per pixel, 1 where the colour is one the object never had (its palette gives it next to no probability) */
   never?: Uint8Array;
+  /** the object's velocity in the frames before (px a frame, in the flow's direction, as `Consensus.velocity` gave it) */
+  memory?: { u: number; v: number };
+  /** false: a dead stop is not read as hidden (the caller knows better) */
+  shrinking?: boolean;
 }
 
 export interface Consensus {
@@ -49,6 +53,10 @@ export interface Consensus {
   how: 'consensus' | 'best' | 'prediction' | 'hidden';
   /** the object's motion against the background's (px per frame), when the flow was given: below about 1.2 the motion tells nothing and was not used */
   motionSeparation?: number;
+  /** the object's velocity here (px a frame, in the flow's direction), to remember for the next frame; only when it moves against the background */
+  velocity?: { u: number; v: number };
+  /** the object's motion stopped dead in one frame where the motion put it: something stands in front of it */
+  abrupt?: boolean;
   /** what was decided about each proposal (for looking into a result) */
   trace?: { cx: number; cy: number; share: number; precision: number; looks: number; moves: string; verdict: string; motion?: number[] }[];
 }
@@ -181,6 +189,7 @@ export function consensusMask(predicted: Float32Array, props: Proposal[], w: num
   let mA: Affine | null = null;
   let mB: Affine | null = null;
   let separation: number | undefined;
+  let abrupt = false;
   let mcx = 0;
   let mcy = 0;
   if (o.flow) {
@@ -217,6 +226,17 @@ export function consensusMask(predicted: Float32Array, props: Proposal[], w: num
           sep += Math.hypot(mA.a[0]! + mA.a[1]! * x + mA.a[2]! * y - (mB.a[0]! + mB.a[1]! * x + mB.a[2]! * y), mA.b[0]! + mA.b[1]! * x + mA.b[2]! * y - (mB.b[0]! + mB.b[1]! * x + mB.b[2]! * y));
         }
         separation = sep / inner.length;
+        // The object was moving (its velocity is remembered from the frames before) and where the motion put it everything now
+        // stands still with the background: it did not stop dead in one frame, something stands in front of it. Its proposals
+        // are judged against the remembered motion, so that what hides it is seen as not the object.
+        if (o.memory && o.shrinking !== false) {
+          const memSep = Math.hypot(o.memory.u - mB.a[0]!, o.memory.v - mB.b[0]!);
+          if (memSep >= 1.2 && separation < 0.35 * memSep) {
+            mA = { a: [o.memory.u, 0, 0], b: [o.memory.v, 0, 0] };
+            separation = memSep;
+            abrupt = true;
+          }
+        }
         if (separation < 1.2) (mA = null, (mB = null));
       }
     }
@@ -302,7 +322,7 @@ export function consensusMask(predicted: Float32Array, props: Proposal[], w: num
   // The object's motion is known and differs from the background's, and every thing found where the object should be moves with the
   // background (a coat it went behind, the ground it is not on): the object is not in the picture here.
   if (mA && mB && accepted.length === 0 && trace.some((t) => t.moves === 'background' && t.verdict === 'foreign')) {
-    return { alpha: new Float32Array(n), coverage: 0, accepted: 0, foreign: nForeign, how: 'hidden', trace, ...(separation !== undefined ? { motionSeparation: separation } : {}) };
+    return { alpha: new Float32Array(n), coverage: 0, accepted: 0, foreign: nForeign, how: 'hidden', abrupt, trace, ...(separation !== undefined ? { motionSeparation: separation } : {}) };
   }
   if (accepted.length && coverage >= 0.5) {
     // the object: the accepted proposals, and the middle of the prediction where they left a hole, except what is another thing
@@ -335,7 +355,7 @@ export function consensusMask(predicted: Float32Array, props: Proposal[], w: num
       for (let k = 1; k < c.sizes.length; k++) if (c.sizes[k]! > c.sizes[big]!) big = k;
       for (let i = 0; i < n; i++) if (out[i] && c.id[i] !== big && c.sizes[c.id[i]!]! < 0.15 * c.sizes[big]!) out[i] = 0;
     }
-    return { alpha: out, coverage, accepted: accepted.length, foreign: nForeign, how: 'consensus', trace, ...(separation !== undefined ? { motionSeparation: separation } : {}) };
+    return { alpha: out, coverage, accepted: accepted.length, foreign: nForeign, how: 'consensus', trace, ...(mA && mB && !abrupt ? { velocity: { u: mA.a[0]!, v: mA.b[0]! } } : {}), ...(separation !== undefined ? { motionSeparation: separation } : {}) };
   }
   if (best && best.iou >= 0.5) {
     for (let i = 0; i < n; i++) out[i] = best.m[i]!;
@@ -356,7 +376,7 @@ export function proposalPrompts(predicted: Float32Array, w: number, h: number, c
       const x = i % w, y = Math.floor(i / w);
       x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); cnt++;
     }
-  if (cnt < 0.002 * n) return [];
+  if (cnt < Math.max(20, 0.0002 * n)) return [];
   let inner = morph(m, w, h, Math.max(2, Math.round(0.008 * w)), false);
   if (!area(inner)) inner = m;
   // farthest-point sampling over the inner pixels (every 3rd pixel is enough): spreads the points over every part of the object

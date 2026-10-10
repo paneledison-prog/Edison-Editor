@@ -79,6 +79,38 @@ describe('consensus of proposals', () => {
     expect(iou(c.alpha, joined)).toBeGreaterThan(0.9);
   });
 
+  it('an object that was moving and goes behind something still is not shown there (not the thing in front of it)', () => {
+    // the object moved 8 px a frame up to here; now a still thing of the same colours stands where it went
+    const prev = scene(140);
+    const cover = scene(-200); // no object in the picture: the still neighbour alone
+    // the still occluder: a disc where the object would be
+    const occ = new Float32Array(W * H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if ((x - 148) ** 2 + (y - 90) ** 2 <= 44 ** 2) occ[y * W + x] = 1;
+    const cur = new Uint8Array(cover.rgb);
+    const prevRgb = new Uint8Array(cover.rgb); // the occluder stands still: the same pixels in both frames
+    for (let i = 0; i < W * H; i++)
+      if (occ[i]) {
+        const t = ((i * 2654435761) >>> 0) % 97; // its own texture, the same in both frames
+        cur[3 * i] = prevRgb[3 * i] = 60 + t;
+        cur[3 * i + 1] = prevRgb[3 * i + 1] = 50 + t;
+        cur[3 * i + 2] = prevRgb[3 * i + 2] = 40 + t;
+      }
+    void prev;
+    const gp = grayOf(prevRgb, W, H);
+    const gc = grayOf(cur, W, H);
+    const flow = denseFlow(gc, gp, { levels: 4, iters: 3, radius: 5 });
+    const predicted = scene(148).obj; // where the object's motion puts it
+    const props: Proposal[] = [{ prob: occ, iou: 0.9 }, { prob: cover.nb, iou: 0.9 }];
+    const evidence = new Float32Array(W * H).fill(0.8);
+    const moving = consensusMask(predicted, props, W, H, { flow, frames: { prev: gp, cur: gc }, evidence, memory: { u: -8, v: 0 }, shrinking: true });
+    console.log(`CONSENSUS object behind a still thing: ${moving.how}${moving.abrupt ? ' (its motion stopped dead in one frame)' : ''}`);
+    expect(moving.how).toBe('hidden');
+    expect(moving.alpha.every((v) => v === 0)).toBe(true);
+    // without knowing it was moving, nothing tells the still thing from a still object: it is not called hidden
+    const still = consensusMask(predicted, props, W, H, { flow, frames: { prev: gp, cur: gc }, evidence });
+    expect(still.how).not.toBe('hidden');
+  });
+
   it('with no proposal that fits, the carried matte stands', () => {
     const cur = scene(148);
     const far = new Float32Array(W * H);

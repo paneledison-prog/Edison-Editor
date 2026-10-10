@@ -20,7 +20,7 @@ import { EngineError, run } from './run.js';
 import { SamServer } from './sam.js';
 import { VitMatteServer } from './vitmatte.js';
 
-export const MATTE_VERSION = 34;
+export const MATTE_VERSION = 40;
 /** a followed matte whose pixels look less than this much like the marked object (colour evidence 0..1) is not shown */
 const MIN_CONFIDENCE = 0.3;
 const MAX_FRAMES = 700;
@@ -403,6 +403,9 @@ async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer; t
       return out;
     }
     const st = startFollowing(frames[keys[ki]!.frame]!, w, h, states[ki]!);
+    let vel: { u: number; v: number } | undefined; // the object's velocity in the frames before
+    let pending: number | undefined; // a frame where the object's motion stopped dead, not yet confirmed by the next
+    let behind = false; // confirmed: it is behind something
     for (const i of idx) {
       let r;
       if (sam && modelKey[ki]) {
@@ -415,7 +418,28 @@ async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer; t
           const t1 = Date.now();
           const props = await sam.proposals(`f${i}`, w, h, prompts);
           const t2 = Date.now();
-          const c = consensusMask(pre.warped, props, w, h, { flow: pre.flow, frames: { prev: st.gray, cur: pre.gray }, evidence: colourEvidence(st, frames[i]!), never: neverSeen(st, frames[i]!) });
+          const copt = { flow: pre.flow, frames: { prev: st.gray, cur: pre.gray }, evidence: colourEvidence(st, frames[i]!), never: neverSeen(st, frames[i]!) };
+          let c = consensusMask(pre.warped, props, w, h, { ...copt, ...(vel ? { memory: vel } : {}) });
+          const stopped = c.how === 'hidden' && !!c.abrupt;
+          if (stopped && !behind) {
+            if (pending === undefined) {
+              // one frame alone is not enough (a walker's motion stutters with each step): this frame is taken as seen, and the
+              // next decides
+              pending = i;
+              c = consensusMask(pre.warped, props, w, h, copt);
+            } else {
+              // two in a row: it went behind something one frame ago
+              out.set(pending, new Uint8Array(w * h));
+              hidden.add(pending);
+              lastHid.add(pending);
+              note(pending, 'hidden');
+              behind = true;
+            }
+          }
+          if (!stopped) (pending = undefined, (behind = false));
+          // the velocity is remembered through a dead stop (pending or behind), and forgotten when the object slows down for real
+          if (!stopped) vel = c.velocity;
+          if (process.env['STUDIO_DEBUG_FOLLOW'] && c.how === 'hidden') log(`frame ${i}: hidden${c.abrupt ? ' (its motion stopped dead: something in front of it)' : ''}`);
           if (c.how === 'hidden') {
             // the object's motion says it is behind something here: nothing is shown, and the state waits for it to come back
             st.rgb = frames[i]!;
