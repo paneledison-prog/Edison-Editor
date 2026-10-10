@@ -471,7 +471,10 @@ export function compile(inp: CompileInput): Plan {
           if (!notes.includes(msg)) notes.push(msg);
         }
       }
-      const pfx = live.filter((f) => !isSource(f));
+      // effects on the cut-out element run after the cutout (below); the rest before it
+      const pfx = live.filter((f) => !isSource(f) && !f.after);
+      const afterFx = live.filter((f) => !isSource(f) && !!f.after);
+      for (const f of afterFx) if (f.matte) throw new EngineError('INVALID_INPUT', `${c.id}: effect ${f.id} is on the cut-out element (after), so it cannot also be limited to a matte`, 'drop --matte, or put it before the cutout');
       const sfx = live.filter(isSource);
       for (const f of sfx)
         if (f.mix !== undefined || f.matte || (f.node && Object.keys(c.keyframes ?? {}).some((p) => p.startsWith(`fx.${f.node}.`))))
@@ -534,6 +537,27 @@ export function compile(inp: CompileInput): Plan {
           } else {
             vLines.push(...matteFinish(matteTake(f.matte.id), `${base}cm${i}`, f.matte));
             vLines.push(`[${cur}][${base}cm${i}]alphamerge[${out}]`);
+          }
+          cur = out;
+        });
+      }
+      // Effects on the cut-out element: they see its transparency. One that makes transparency of its own (a drop shadow, a
+      // glow) is used as it is; any other acts on the picture and the element keeps the shape the cutout gave it.
+      if (afterFx.length) {
+        const base = `v${nV}`;
+        const last = vLines.pop()!;
+        let cur = `${base}aft`;
+        vLines.push(last.replace(new RegExp(`\\[${base}\\]$`), `[${cur}]`));
+        afterFx.forEach((f, i) => {
+          const out = i === afterFx.length - 1 ? base : `${base}af${i}`;
+          const graph = String((pluginEffectDecl(f.id) as { graph?: string } | undefined)?.graph ?? '');
+          const ownAlpha = /format=(yuva\w+|rgba|argb|bgra|abgr)\[out\]\s*$/.test(graph.trim());
+          if (ownAlpha || !cuts.length) vLines.push(...nodeLines(c, f, cur, out, `${base}a${i}`, fxCtx, { fps, atSec: c.start / 1000 }));
+          else {
+            const u = `${base}ak${i}`;
+            vLines.push(`[${cur}]split=2[${u}p][${u}s]`, `[${u}s]alphaextract[${u}al]`);
+            vLines.push(...nodeLines(c, f, `${u}p`, `${u}e`, `${base}a${i}`, fxCtx, { fps, atSec: c.start / 1000 }));
+            vLines.push(`[${u}e]format=yuv420p[${u}ef]`, `[${u}ef][${u}al]alphamerge[${out}]`);
           }
           cur = out;
         });

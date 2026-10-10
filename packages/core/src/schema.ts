@@ -258,6 +258,11 @@ export const Fx = z.discriminatedUnion('type', [
       mix: num(0, 1).optional(),
       /** the effect applies only inside this matte */
       matte: MatteUse.optional(),
+      /**
+       * on the cut-out element: the effect runs after the clip's cutout, so it sees the element's transparency (a drop shadow,
+       * a glow around it); a colour effect then acts inside the element's shape only
+       */
+      after: z.boolean().optional(),
     })
     .strict(),
   // Removes everything outside a matte: the clip's picture becomes transparent there, so the tracks below show through.

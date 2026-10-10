@@ -1637,6 +1637,7 @@ export const COMMANDS: CmdMeta[] = [
       n('mix', 'how much of the effect shows, 0..1 (default 1)'),
       s('matte', 'apply the effect only inside this matte (studio matte add makes one)'),
       b('matte-invert', 'apply it everywhere except inside the matte'),
+      b('after-cutout', 'on a cut-out element: run after the cutout, so the effect sees its transparency (drop-shadow, glow around it); a colour effect then acts inside its shape only'),
       n('feather', 'soften the matte edge, px (0..40)'),
       n('choke', 'shrink the matte edge by px (negative grows it)'),
       n('at', 'position in the stack (default: end)'),

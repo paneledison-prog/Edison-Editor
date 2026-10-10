@@ -218,6 +218,27 @@ describe('layers', () => {
       expect(back).toBeLessThan(12);
       expect(left).toBeGreaterThan(back * 2);
       expect(objE).toBeLessThan(12);
+
+      // an effect on the element after its cutout sees its transparency: a drop shadow falls on what is below it
+      ok(await run(['fx', 'add', '--clip', el.clip, '--effect', 'drop-shadow', '--params', '{"dx":12,"dy":12,"blur":2,"opacity":0.9}', '--after-cutout', '--project', p.dir]));
+      const rs = ok(await run(['render', '--still', String(ms), '--out', 'shadow', '--width', String(WW), '--force', '--project', p.dir]));
+      let sh: Uint8Array | undefined;
+      for await (const b of readFrames({ file: join(p.dir, rs.output ?? 'renders/shadow.png'), size: { w: WW, h: HH }, channels: 3 })) sh = new Uint8Array(b);
+      // just outside the moved element, down and to the right (where its shadow falls and it is not)
+      let dark = 0, nd = 0;
+      for (let y = 2; y < HH - 14; y++)
+        for (let x = 2; x < WW - 14; x++) {
+          const i = y * WW + x;
+          if (!(g[i]! > 0.99) || x + DX + 8 >= WW - 2) continue;
+          const j = (y + 8) * WW + x + DX + 8; // inside the shadow's offset
+          if (g[(y + 8) * WW + x + 8]! > 0.01) continue; // still on the element itself
+          for (let c = 0; c < 3; c++) dark += img![3 * j + c]! - sh![3 * j + c]!;
+          nd += 3;
+        }
+      const darker = dark / Math.max(1, nd);
+      console.log(`LAYERS drop shadow after the cutout: ${darker.toFixed(1)} levels darker where the shadow falls (${nd / 3} pixels)`);
+      expect(nd).toBeGreaterThan(50);
+      expect(darker).toBeGreaterThan(20);
     }, 900_000);
   });
 });

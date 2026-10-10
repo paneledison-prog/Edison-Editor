@@ -183,6 +183,12 @@ export const add: Handler = async (inv) => {
     if (fx.type !== 'plugin' && fx.type !== 'lut') throw new CliError('INVALID_ARGS', '--matte limits plugin effects and LUTs to a cut-out', 2);
     fx.matte = use;
   }
+  if (inv.flags['after-cutout']) {
+    if (fx.type !== 'plugin') throw new CliError('INVALID_ARGS', '--after-cutout applies to plugin effects', 2);
+    if (fx.matte) throw new CliError('INVALID_ARGS', '--after-cutout and --matte do not go together: on the cut-out element the effect already sees only the element', 2);
+    if (!(clip.fx ?? []).some((f) => f.type === 'cutout')) throw new CliError('INVALID_ARGS', `${clip.id} has no cutout: --after-cutout is for a cut-out element`, 2, 'studio bg layers ... or studio cutout --clip ... first');
+    fx.after = true;
+  }
   const mix = num(inv, 'mix');
   if (mix !== undefined) {
     if (fx.type !== 'plugin' && fx.type !== 'lut') throw new CliError('INVALID_ARGS', '--mix applies to plugin effects and LUTs', 2);
