@@ -142,6 +142,13 @@ export function validateProject(p: unknown): Issue[] {
         add('FX_INVALID', `clip ${c.id}: lut needs a video track`, `clips.${c.id}.fx`);
       if (f.type === 'plugin' && track.type !== 'video' && track.type !== 'graphics')
         add('FX_INVALID', `clip ${c.id}: plugin effect ${f.id} needs a video track`, `clips.${c.id}.fx`);
+      if (f.type === 'crop') {
+        if (track.type !== 'video' && track.type !== 'graphics') add('FX_INVALID', `clip ${c.id}: crop needs a video track`, `clips.${c.id}.fx`);
+        if (fxSeen.has('crop')) add('FX_INVALID', `clip ${c.id}: more than one crop effect`, `clips.${c.id}.fx`);
+        fxSeen.add('crop');
+        if ((f.left ?? 0) + (f.right ?? 0) > 0.99 || (f.top ?? 0) + (f.bottom ?? 0) > 0.99)
+          add('FX_INVALID', `clip ${c.id}: the crop leaves nothing of the picture (left + right and top + bottom must stay under 0.99)`, `clips.${c.id}.fx`);
+      }
       if (f.type === 'blur-region') {
         if (track.type !== 'video' && track.type !== 'graphics')
           add('FX_INVALID', `clip ${c.id}: blur-region needs a video track`, `clips.${c.id}.fx`);

@@ -110,7 +110,7 @@ export function hasFrameMotion(c: Clip): boolean {
  * Where the layer is in each output frame: the affine map from the clip's picture (canvas pixels, centres at i + 0.5) to the
  * canvas, as [a, b, c, d, e, f] with x' = a x + b y + c, y' = d x + e y + f. `k` = (project pixels to render pixels) for dx, dy.
  */
-export function layerMaps(c: Clip, frames: number, fps: number, canvas: { w: number; h: number }, k: { x: number; y: number }): number[][] {
+export function layerMaps(c: Clip, frames: number, fps: number, canvas: { w: number; h: number; x?: number; y?: number }, k: { x: number; y: number }): number[][] {
   const pts = {
     dx: propPoints(c, 'dx', 0),
     dy: propPoints(c, 'dy', 0),
@@ -126,8 +126,8 @@ export function layerMaps(c: Clip, frames: number, fps: number, canvas: { w: num
     const t = i / fps;
     const s = valueAt(pts.size, t);
     const r = (valueAt(pts.rot, t) * Math.PI) / 180;
-    const Ax = valueAt(pts.ax, t) * canvas.w;
-    const Ay = valueAt(pts.ay, t) * canvas.h;
+    const Ax = (canvas.x ?? 0) + valueAt(pts.ax, t) * canvas.w;
+    const Ay = (canvas.y ?? 0) + valueAt(pts.ay, t) * canvas.h;
     const Dx = valueAt(pts.dx, t) * k.x;
     const Dy = valueAt(pts.dy, t) * k.y;
     const cs = Math.cos(r) * s;

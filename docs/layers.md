@@ -51,6 +51,25 @@ the picture's own 4:2:0 format), then cut back to the canvas; what it no longer 
 The existing `scale`, `x`, `y` (zoom into the picture, the frame stays filled) still work and come first. On a clip with any layer
 property, `rot` turns about the anchor after the cutout instead of inside the frame.
 
+## Cropping a layer (`studio layer crop`)
+```
+studio layer crop --clip c_e1 --left 0.1 --right 0.1             # a tenth of the picture cut from each side
+studio layer crop --clip c_e1 --top 120 --px --feather 6         # 120 px of the picture from the top, soft edge
+studio layer crop --clip c_e1 --t 0 --left 0                     # keyframes: from nothing ...
+studio layer crop --clip c_e1 --t 800 --left 0.5 --ease expo.out # ... to half of it, a wipe
+studio layer crop --clip c_e1 --reset                            # gone, with its keyframes
+```
+* Each side is the part of the clip's picture cut from it (a fraction of the picture's width or height, or pixels of the picture
+  with `--px`); what is cut is transparent and shows the tracks below. `--feather` softens the cut edges inward (px).
+* It is an effect on the clip (`crop`, one per clip): `fx bypass` compares, `fx remove` / `project undo` take it back; `layer list`
+  shows it. Its sides can be keyframed (`fx.<node>.left` ...); a constant over keyframes is refused, as for `layer move`.
+* It works on the picture as it sits in the frame: after zoom and pan, after the cutout (a cut-out element is cropped as cut out,
+  and its drop shadow or glow after the cutout follows the cropped shape), before placement (a cropped layer moves, sizes and
+  turns cropped). For a letterboxed picture the fractions are of the picture, not of the frame; for an image on a graphics track,
+  of the image.
+* A picture that does not fill the frame (a 4:3 clip in a 16:9 project) is transparent in its bars, so the tracks below show at its
+  sides, as for a cropped one. On the lowest track this looks as before (the project background is below it).
+
 ## Effects on elements
 `studio fx add --clip <element> --effect E` puts an effect on that element only, and says where it went (`placed`):
 * **After the cutout** (seeing the element's transparency), by default for effects that move or mix pixels, add light or cast a
@@ -106,6 +125,17 @@ property, `rot` turns about the anchor after the cutout instead of inside the fr
   off, all 34 renders are identical to the picture without them; before and after the cutout the picture is the same to the
   level; nothing outside the element changes; on the background, nothing on the element changes. A qualifier aimed at his navy
   shirt changes the shirt by 24 levels and the rest of him by 2.6.
+* **Crop** (`tests/crop.test.ts`, a test pattern over blue, 320 x 180): what is cut is the blue below to the level and what is
+  kept the picture to the level (0 levels either way, a pixel of margin at each line for 4:2:0 colour); switched off, the picture
+  without it exactly; a feather of 8 px rises from 2% of the picture at the cut line to 99% two feathers in; a left side keyframed
+  from 0 to 0.5 over 1 s cuts at x 80 at 0.5 s; cropped then moved 40 px: 0 levels from the pattern moved and the blue; a cut-out
+  square cropped to its right half: the cut half and the drop shadow under it are gone, the rest is as before (0 levels); a 4:3
+  picture in the 16:9 frame cut by half is cut at the middle of the picture, not of the frame. On the benchmark shot: the element
+  cropped with a soft edge, a shadow and a glow after the cutout, a wipe (the top side keyframed 0 to 0.6) and the background
+  cropped top and bottom, looked at on a sheet; a still with a crop 0.84 s.
+* **An export to another shape** (the split shot to vertical 9:16, the picture fitted): the middle of the vertical frame is the
+  16:9 render to the level (0.00 on average). Before, a layer's move and anchor were scaled by each axis of the output (a move
+  down of 20 px became 80): 5.0 levels on average, 9.8% of the pixels more than 20 levels off, the person 80 px too low.
 * **Over time** (24 frames, the same shot): with motion blur, glitch, glow or a drop shadow on the element, and with the element
   travelling 300 px and turning 20 degrees while it glows and casts a shadow, the picture away from it equals the background
   alone in every frame (0.6 levels on average: video compression). Slow motion on the element (speed 0.5, `slowmo`): its shape

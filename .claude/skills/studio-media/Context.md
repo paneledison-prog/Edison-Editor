@@ -119,10 +119,11 @@ Easing names: `linear`, `hold`, `<family>.<in|out|inOut>` for `quad cubic quart 
 
 **A clip's video chain, in order:** stabilize (on the source frames; `slowmo` too, on the matte's pictures as well) → fit to the
 canvas → zoom and pan → `erase` (clean plate) → on a cut-out element, its edge colours cleaned and what the cutout hides filled
-with its own colours → LUT → plugin effects → `cutout` (transparent outside the matte) → plugin effects marked `after` (they see
-the element's transparency, each by its kind: blur and warps move its edge, glow and shadows fall around it, colour stays inside;
-`fx add` puts effects there by default when they need it) → pins → layer placement (`dx dy size rot ax ay`) → composited over the
-tracks below (later tracks on top). Every effect is an entry on the clip, never baked into the source: `fx bypass` / `fx remove` /
+with its own colours → LUT → plugin effects → `cutout` (transparent outside the matte) → `crop` (the picture's sides cut away;
+a picture that does not fill the frame is transparent in its bars) → plugin effects marked `after` (they see the element's
+transparency, each by its kind: blur and warps move its edge, glow and shadows fall around it, colour stays inside; `fx add` puts
+effects there by default when they need it) → pins → layer placement (`dx dy size rot ax ay`) → composited over the tracks below
+(later tracks on top). Every effect is an entry on the clip, never baked into the source: `fx bypass` / `fx remove` /
 `project undo` take it back.
 
 **Layers of a shot** (`studio bg layers`, docs/layers.md): each kept thing is a copy of the shot on its own track with a `cutout` by

@@ -314,6 +314,22 @@ export const Fx = z.discriminatedUnion('type', [
       node: NodeId.optional(),
     })
     .strict(),
+  // Crops the clip's picture: what lies beyond the four cut lines (fractions of the picture cut from each side; keyframable as
+  // fx.<node>.left/top/right/bottom) is transparent, so the tracks below show through. `feather` softens the cut edges inward (px
+  // of the output). Applied after the cutout and before the effects that see the element's transparency and the placement, so a
+  // cropped layer moves, casts its shadow and glows as cropped.
+  z
+    .object({
+      type: z.literal('crop'),
+      left: num(0, 1).optional(),
+      top: num(0, 1).optional(),
+      right: num(0, 1).optional(),
+      bottom: num(0, 1).optional(),
+      feather: num(0, 200).optional(),
+      bypass: z.boolean().optional(),
+      node: NodeId.optional(),
+    })
+    .strict(),
   z.object({ type: z.literal('gain'), db: num(-60, 40), node: NodeId.optional() }).strict(),
   z.object({ type: z.literal('highpass'), hz: num(20, 500) }).strict(),
   z

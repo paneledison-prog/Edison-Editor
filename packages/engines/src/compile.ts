@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { displaySize, speedOf, type Clip, type Fx, type Project } from '@studio/core';
 import { MAX_AUDIO_SPEED, clipAudioChain, dbToLin } from './audiofx.js';
 import { EngineError } from './run.js';
-import { blurRegionFilter, hasFrameMotion, hasLayer, hasMotion, layerIsStill, layerMaps, zoomFilter } from './zoom.js';
+import { blurRegionFilter, expr, hasFrameMotion, hasLayer, hasMotion, layerIsStill, layerMaps, pointsOf, zoomFilter } from './zoom.js';
 import { effectAlpha, effectLines, pluginEffectDecl, type FxContext } from './plugins.js';
 import { checkClipKeyframes, nodeLines } from './fxanim.js';
 import type { MatteData } from './matte.js';
@@ -615,6 +615,46 @@ export function compile(inp: CompileInput): Plan {
           cur = out;
         });
       }
+      // Crop, and the bars of a picture that does not fill the frame: beyond the cut lines the picture is transparent, so the tracks
+      // below show through (a 4:3 clip over another shows it at its sides, as a smaller picture should). The lines are fractions of
+      // the clip's picture as it sits in the frame (fitted, zoomed; an image on a graphics track: the image itself); keyframed
+      // ones move over time. The mask is a white frame with a black panel slid in from each side (an overlay's position follows
+      // time; a drawn box's does not), softened inward by the feather, and multiplied into the picture's opacity, so a cut-out
+      // element is cropped as cut out.
+      const crop = liveFx.find((f): f is Extract<Fx, { type: 'crop' }> => f.type === 'crop');
+      const gfxImage = t.type === 'graphics' && a.kind === 'image';
+      const fit = d.w && d.h ? (reframe === 'center-crop' ? Math.max(width / d.w, height / d.h) : Math.min(width / d.w, height / d.h)) : 0;
+      const fr = gfxImage ? { w: width, h: height, x: 0, y: 0 } : fit ? { w: d.w! * fit, h: d.h! * fit, x: (width - d.w! * fit) / 2, y: (height - d.h! * fit) / 2 } : undefined;
+      const bars = !gfxImage && reframe !== 'center-crop' && reframe !== 'blur' && !!fr && (fr.w < width - 1 || fr.h < height - 1);
+      if (crop && !fr) throw new EngineError('INVALID_INPUT', `${c.id}: the size of ${c.asset} is not known, so it cannot be cropped`, 'studio ingest it again');
+      if (fr && (crop || bars)) {
+        const base = `v${nV}`;
+        const last = vLines.pop()!;
+        const cur = `${base}crin`;
+        vLines.push(last.replace(new RegExp(`\\[${base}\\]$`), `[${cur}]`));
+        const fe = crop?.feather ?? 0;
+        // a side as an expression of the clip's own time t (s): its keyframes, else its value
+        const edge = (name: 'left' | 'top' | 'right' | 'bottom') => {
+          const kfs = crop?.node ? c.keyframes?.[`fx.${crop.node}.${name}`] : undefined;
+          return kfs?.length ? `(${expr(pointsOf(kfs, crop![name] ?? 0))})` : String(crop?.[name] ?? 0);
+        };
+        const u = `${base}cr`;
+        const dur = sec(c.dur + 2000 / fps);
+        const n = (v: number) => (Math.round(v * 1000) / 1000).toString();
+        vLines.push(
+          `color=c=white:s=${width}x${height}:r=${fps}:d=${dur},format=gbrp[${u}w]`,
+          `color=c=black:s=${width}x${height}:r=${fps}:d=${dur},format=gbrp,split=4[${u}b0][${u}b1][${u}b2][${u}b3]`,
+          `[${u}w][${u}b0]overlay=x='-W+${n(fr.x + fe)}+${edge('left')}*${n(fr.w)}':y=0:eval=frame:format=gbrp[${u}m0]`,
+          `[${u}m0][${u}b1]overlay=x='${n(fr.x + fr.w - fe)}-${edge('right')}*${n(fr.w)}':y=0:eval=frame:format=gbrp[${u}m1]`,
+          `[${u}m1][${u}b2]overlay=x=0:y='-H+${n(fr.y + fe)}+${edge('top')}*${n(fr.h)}':eval=frame:format=gbrp[${u}m2]`,
+          `[${u}m2][${u}b3]overlay=x=0:y='${n(fr.y + fr.h - fe)}-${edge('bottom')}*${n(fr.h)}':eval=frame:format=gbrp,format=gray${fe > 0 ? `,gblur=sigma=${n(fe / 2)}` : ''},setpts=PTS-STARTPTS+${at}/TB[${u}m]`,
+          `[${cur}]format=yuva420p,split=2[${u}p][${u}s]`,
+          `[${u}s]alphaextract[${u}a]`,
+          // an image on a graphics track keeps its own size: the mask is laid over it at that size
+          ...(gfxImage ? [`[${u}m][${u}a]scale2ref=w=iw:h=ih[${u}ms][${u}ar]`, `[${u}ar][${u}ms]blend=all_mode=multiply[${u}am]`] : [`[${u}a][${u}m]blend=all_mode=multiply[${u}am]`]),
+          `[${u}p][${u}am]alphamerge[${base}]`,
+        );
+      }
       // Effects on the cut-out element see its transparency; each as its kind needs (`alpha` in the effect's declaration):
       //   own     it makes its transparency from the one it is given (a drop shadow): used as it is;
       //   spread  it moves or mixes pixels (blur, warp, glitch): run on the premultiplied picture (what the cutout hid is black,
@@ -692,7 +732,11 @@ export function compile(inp: CompileInput): Plan {
       // A layer: the finished picture (cut out, effects, pins) is placed on the canvas by its own motion, about its anchor; what
       // it no longer covers is transparent and shows the tracks below.
       if (hasLayer(c)) {
-        const maps = layerMaps(c, timing.frames, fps, { w: width, h: height }, { x: width / p.meta.width, y: height / p.meta.height });
+        // the project canvas as it sits in the output (scaled the same way on both axes, centred: an export to another shape fits
+        // or covers it), so dx dy are project pixels and the anchor a point of the project canvas whatever the output's shape
+        const cs = reframe === 'center-crop' ? Math.max(width / p.meta.width, height / p.meta.height) : Math.min(width / p.meta.width, height / p.meta.height);
+        const box = { w: p.meta.width * cs, h: p.meta.height * cs, x: (width - p.meta.width * cs) / 2, y: (height - p.meta.height * cs) / 2 };
+        const maps = layerMaps(c, timing.frames, fps, box, { x: cs, y: cs });
         if (!layerIsStill(maps)) {
           const base = `v${nV}`;
           const last = vLines.pop()!;

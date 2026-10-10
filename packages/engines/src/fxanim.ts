@@ -15,6 +15,7 @@ export interface Animatable {
 /** The numeric parameters of an effect that a keyframe may drive, with ranges. Empty for an effect with none. */
 export function animatableParams(fx: { type: string; id?: string }): Record<string, Animatable> {
   if (fx.type === 'gain') return { db: { min: -60, max: 40, default: 0 } };
+  if (fx.type === 'crop') return Object.fromEntries(['left', 'top', 'right', 'bottom'].map((k) => [k, { min: 0, max: 0.99, default: 0 }]));
   if (fx.type === 'plugin' || fx.type === 'lut') {
     const out: Record<string, Animatable> = { mix: { min: 0, max: 1, default: 1 } };
     if (fx.type === 'plugin') {

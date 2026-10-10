@@ -8,8 +8,8 @@ import { CliError } from '../args.js';
 import type { Handler, Invocation } from '../main.js';
 import { num, parseJson, runSpecs, store, str } from './shared.js';
 
-type Video = Extract<Fx, { type: 'plugin' | 'lut' | 'blur-region' | 'stabilize' | 'pin' | 'cutout' | 'erase' }>;
-export const isVideo = (f: Fx): f is Video => f.type === 'plugin' || f.type === 'lut' || f.type === 'blur-region' || f.type === 'stabilize' || f.type === 'pin' || f.type === 'cutout' || f.type === 'erase';
+type Video = Extract<Fx, { type: 'plugin' | 'lut' | 'blur-region' | 'stabilize' | 'pin' | 'cutout' | 'erase' | 'crop' }>;
+export const isVideo = (f: Fx): f is Video => f.type === 'plugin' || f.type === 'lut' || f.type === 'blur-region' || f.type === 'stabilize' || f.type === 'pin' || f.type === 'cutout' || f.type === 'erase' || f.type === 'crop';
 export const nodeOf = (f: Fx): string | undefined => (f as { node?: string }).node;
 
 const engines = () => import('@studio/engines');
@@ -82,7 +82,7 @@ async function check(f: Fx) {
 }
 
 export const label = (f: Fx): string =>
-  f.type === 'cutout' ? `cutout ${f.matte.id}${f.matte.invert ? ' (inverted)' : ''}` : f.type === 'erase' ? `erase ${f.matte.id}` : f.type === 'stabilize' ? `stabilize ${f.tracker}${f.lock ? ' (locked)' : ''}` : f.type === 'pin' ? `pin ${f.asset} on ${f.tracker}` : f.type === 'gain' ? `gain ${f.db} dB` : f.type === 'plugin' ? f.id : f.type === 'lut' ? f.file : f.type === 'blur-region' ? `blur ${Math.round(f.x * 100)},${Math.round(f.y * 100)} ${Math.round(f.w * 100)}x${Math.round(f.h * 100)}%` : f.type;
+  f.type === 'cutout' ? `cutout ${f.matte.id}${f.matte.invert ? ' (inverted)' : ''}` : f.type === 'erase' ? `erase ${f.matte.id}` : f.type === 'stabilize' ? `stabilize ${f.tracker}${f.lock ? ' (locked)' : ''}` : f.type === 'pin' ? `pin ${f.asset} on ${f.tracker}` : f.type === 'gain' ? `gain ${f.db} dB` : f.type === 'plugin' ? f.id : f.type === 'lut' ? f.file : f.type === 'blur-region' ? `blur ${Math.round(f.x * 100)},${Math.round(f.y * 100)} ${Math.round(f.w * 100)}x${Math.round(f.h * 100)}%` : f.type === 'crop' ? `crop ${['left', 'top', 'right', 'bottom'].map((k) => `${k} ${Math.round(((f as unknown as Record<string, number | undefined>)[k] ?? 0) * 1000) / 10}%`).join(', ')}${f.feather ? `, feather ${f.feather} px` : ''}` : f.type;
 
 // ---------------------------------------------------------------------------------------------------------------
 
@@ -250,7 +250,7 @@ export const set: Handler = async (inv) => {
   const f = { ...after(list, index) } as Record<string, unknown>;
   const patch = paramsOf(inv);
   if (patch !== undefined) {
-    if (cur.type === 'stabilize' || cur.type === 'pin') {
+    if (cur.type === 'stabilize' || cur.type === 'pin' || cur.type === 'crop') {
       // their settings are fields of the effect itself (smooth, lock, maxZoom, opacity, quad ...); null clears one
       for (const [k, v] of Object.entries(patch)) {
         if (k === 'type' || k === 'node') throw new CliError('INVALID_ARGS', `${k} cannot be changed`, 2);
@@ -343,7 +343,7 @@ export const move: Handler = async (inv) => {
 export const bypass: Handler = async (inv) => {
   const { project, clip } = clipOf(inv);
   const { index, fx: cur } = pick(clip, str(inv, 'node'));
-  if (cur.type !== 'plugin' && cur.type !== 'lut' && cur.type !== 'stabilize' && cur.type !== 'pin' && cur.type !== 'cutout' && cur.type !== 'erase') throw new CliError('INVALID_ARGS', `a ${cur.type} effect cannot be switched off; remove it`, 2);
+  if (cur.type !== 'plugin' && cur.type !== 'lut' && cur.type !== 'stabilize' && cur.type !== 'pin' && cur.type !== 'cutout' && cur.type !== 'erase' && cur.type !== 'crop') throw new CliError('INVALID_ARGS', `a ${cur.type} effect cannot be switched off; remove it`, 2);
   const list = named(project, clip);
   const f = { ...after(list, index) } as Record<string, unknown>;
   if (inv.flags['off']) delete f['bypass'];
