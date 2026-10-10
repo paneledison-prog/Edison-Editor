@@ -19,6 +19,14 @@ Read `docs/background-removal.md`.
 * Read `result.quality` and `needsALook`, look at `preview`, then `studio bg check mt_x` before rendering. Fix with `mask key ... --neg/--point --add`, `--absent`, `matte edge --hair`. Render a still over a coloured track below to see the edges.
 * Report the numbers (`consensusPct`, `fallbackFrames`, frames looked at) and say which frames you did not look at.
 
+## Layers: moving things in a shot (`studio bg layers`, `studio layer`) — for "move him", "make him smaller", "put her on the left", "effect only on the person"
+Read `docs/layers.md`.
+* Split the shot: `bg subjects` (look at the sheets), then `bg layers --run sub_x --keep 3,7 --clip c_xx`. Each kept thing becomes an element (its own clip and track, cut out); the shot stays below as the background with those things erased (rebuilt from other frames), so moving an element never leaves a copy behind. Read `background.neverVisiblePct` and the mattes' quality in the answer.
+* Place with `layer move` (dx dy in project pixels, size and rot about the element's anchor, opacity); animate with `--t MS` keyframes (two calls: from, to). Do not use `scale`/`x`/`y` for this: those zoom into the picture.
+* Effects on one element: `fx add --clip <element> ...`; add `--after-cutout` for effects that need its transparency (drop-shadow, glow). The background clip takes background-only effects (blur for depth, grade).
+* The layers of a shot are linked: `tl move` / `tl trim` / `tl split` on one acts on all; `layer move` acts on one.
+* Always render stills where things moved (`render --still MS`) and look at where an element was and where it went, before saying it is done; say which frames you looked at.
+
 ## Object Mask Tool (`studio mask`)
 * To cut out or remove one specific object (a person, a phone, a bottle, a logo), select it by pointing: `studio mask pick --asset a_xx --at MS --point "x,y" --neg "x,y" --box x,y,w,h` shows the segmenter's three candidates on one frame and stores nothing; then `studio mask add` with the same marks, `studio mask preview`, and `studio mask key ... --add` where it drifts or includes the wrong thing. Prefer a box plus one or two points; several far-apart positive points confuse the model.
 * Use the result like any matte: `studio cutout --clip c_xx --matte mt_xxxx [--invert]`, or `fx ... --matte`.

@@ -26,7 +26,7 @@ Read in this order the first time in a session:
 | Colour grading, looks, keying, blur, light, distortion (the built-in colour plugin) | `rules/14-color-grading.md` |
 | Animated design: posters, titles, logo and UI animation, explainer scenes (the separate design editor) | `rules/13-design-and-animation.md` |
 | Several independent jobs at once (up to 5 media and 5 design workspaces, one subagent each) | `rules/15-parallel-workspaces.md` |
-| Tracking, stabilizing shaky footage, pinning graphics, 3D camera solve, removing a video's background or cutting an object out of a video (Roto Brush / Magic Mask style) | `rules/16-tracking-and-cutouts.md` |
+| Tracking, stabilizing shaky footage, pinning graphics, 3D camera solve, removing a video's background, cutting an object out of a video (Roto Brush / Magic Mask style), splitting a shot into layers and moving the people or things in it | `rules/16-tracking-and-cutouts.md` |
 | Speed, memory, bundle size | `rules/10-performance.md` |
 | UI work or tokens | `rules/11-ui-design-system.md` |
 
