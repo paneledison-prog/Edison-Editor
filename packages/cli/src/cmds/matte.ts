@@ -126,13 +126,28 @@ function summary(d: import('@studio/engines').MatteData) {
     sample,
     ...(d.drift.length ? { agreementAtMarkedFrames: d.drift.map((x) => ({ from: x.from, to: x.to, direction: x.direction, iou: x.iou })) } : { agreementAtMarkedFrames: 'one marked frame: nothing to compare following against; mark a second frame where the object has moved to measure it' }),
     ...(d.flagged.length ? { checkThese: d.flagged } : {}),
+    ...(d.quality ? { quality: d.quality.summary } : {}),
+    ...(d.stats.members ? { union: d.stats.members } : {}),
     ms: d.stats.ms,
   };
+}
+
+/** The frames of a matte most worth looking at: carried by motion alone, hidden, in pieces, or changing area suddenly (worst first). */
+function needsLook(d: import('@studio/engines').MatteData, max = 8): number[] {
+  const q = d.quality?.frames;
+  if (!q) return d.flagged.map((f) => f.frame).slice(0, max);
+  const rank = q.map((f, i) => ({ i, score: (f.how === 'prediction' ? 3 : f.how === 'best' ? 2 : f.how === 'hidden' ? 2 : 0) + (f.islands > 0 ? 2 : 0) + Math.min(2, f.areaChangePct / 15) + (f.keptOut > 0 ? 0.3 : 0) })).filter((r) => r.score >= 1);
+  rank.sort((a, b) => b.score - a.score);
+  // spread them: no two within 3 frames of each other
+  const out: number[] = [];
+  for (const r of rank) if (out.length < max && out.every((o) => Math.abs(o - r.i) > 3)) out.push(r.i);
+  return out.sort((a, b) => a - b);
 }
 const warningsOf = (id: string, d: import('@studio/engines').MatteData): string[] => {
   const w: string[] = [];
   for (const x of d.drift) if (x.iou < 0.9) w.push(`matte ${id}: following from ${x.from} ms ${x.direction === 'forward' ? 'forward' : 'backward'} reaches the marked frame at ${x.to} ms with only ${Math.round(x.iou * 100)}% agreement; look with studio matte preview and add marks in between`);
   if (d.flagged.length) w.push(`matte ${id}: ${d.flagged.length} frame(s) to check, first at ${d.flagged[0]!.ms} ms (${d.flagged[0]!.why})`);
+  if (d.quality && d.quality.summary.fallbackFrames > 0) w.push(`matte ${id}: ${d.quality.summary.fallbackFrames} frame(s) were carried by motion alone (the segmenter's masks did not fit); look at them: studio bg check ${id}`);
   if (Math.max(...d.coverage) < 0.002) w.push(`matte ${id} covers almost nothing; the marks may be on the wrong place (look with studio matte preview ${id})`);
   return w;
 };
@@ -470,4 +485,231 @@ export const erasePreview: Handler = async (inv) => {
   const rel = `renders/erase-${id}.png`;
   const r = await E.plateSheet({ projectDir: inv.dir, project, data: d, matteData: md, out: join(inv.dir, rel), count: num(inv, 'frames'), ...(frames ? { frames } : {}) });
   return { data: { file: rel, frames: r.frames, key: 'three tiles per frame: the picture, the removed area tinted, and the picture with the object rebuilt from other frames' }, artifacts: [{ kind: 'image', path: rel }] };
+};
+
+
+// ----- background removal: find the subjects, say which to keep, check the result --------------------------------------------------------------
+
+const compactSubject = (x: import('@studio/engines').Subject) => ({
+  id: x.id,
+  at: x.at,
+  ...(x.top ? {} : { partOf: x.partOf }),
+  areaPct: x.areaPct,
+  bbox: x.bbox,
+  point: x.point,
+  colour: x.colour,
+  shape: x.shape,
+  salience: x.salience,
+  moves: x.moving ? `moves against the background (${x.speedPctPerSec}% of the width per second)` : 'still against the background',
+  ...(x.touches.length ? { touchesEdge: x.touches } : {}),
+  quality: x.quality,
+});
+
+/** `studio bg subjects`: what is in the shot, numbered, with what is needed to say which to keep. */
+export const bgSubjects: Handler = async (inv) => {
+  const { project } = store(inv).load();
+  const a = videoAsset(project, str(inv, 'asset'));
+  const E = await engines();
+  const at = str(inv, 'at')?.split(',').map(Number).filter(Number.isFinite);
+  const t0 = Date.now();
+  const r = await E.findSubjects({
+    projectDir: inv.dir,
+    project,
+    asset: str(inv, 'asset')!,
+    ...(at?.length ? { at } : {}),
+    ...(num(inv, 'from') !== undefined ? { from: num(inv, 'from')! } : {}),
+    ...(num(inv, 'to') !== undefined ? { to: num(inv, 'to')! } : {}),
+    ...(num(inv, 'width') !== undefined ? { width: num(inv, 'width')! } : {}),
+    ...(num(inv, 'max') !== undefined ? { maxThings: num(inv, 'max')! } : {}),
+    log: inv.log,
+  });
+  void a;
+  const things = r.subjects.filter((x) => x.top);
+  return {
+    data: {
+      run: r.run,
+      sheet: r.sheet,
+      ...(r.each ? { each: r.each } : {}),
+      times: r.times,
+      key: `${r.sheet}: the frame at each time, every subject tinted and numbered (white numbers: things; yellow numbers: parts of things). ${r.each ? `${r.each}: each thing cut out on a checkerboard with its number, to see exactly what its mask holds.` : ''}`,
+      subjects: r.subjects.map(compactSubject),
+      next: [
+        `studio bg remove --run ${r.run} --keep ${things[0] ? things[0].n : 1} --clip c_xx   (keep those subjects, take everything else out; "1,3" keeps two things, "1+5" says 1 and 5 are the same thing seen at two times)`,
+        `studio bg remove --run ${r.run} --keep ... --remove ...   (--remove names things that must go even where they touch what is kept)`,
+        'Look at the sheet first: a mask may hold only part of a person (a part is listed with partOf), or two things joined.',
+      ],
+      wallMs: Date.now() - t0,
+    },
+    artifacts: [{ kind: 'image', path: r.sheet }, ...(r.each ? [{ kind: 'image', path: r.each }] : [])],
+  };
+};
+
+/** `1,3` or `1+5,3` (or with an s in front): groups of subject ids; a group is one thing, seen in more than one place. */
+function keepGroups(text: string): string[][] {
+  return text
+    .split(',')
+    .map((g) => g.trim())
+    .filter(Boolean)
+    .map((g) => g.split('+').map((x) => (x.trim().startsWith('s') ? x.trim() : `s${x.trim()}`)));
+}
+
+/** `studio bg remove`: keep the chosen subjects, take out the rest of every frame. */
+export const bgRemove: Handler = async (inv) => {
+  const { project } = store(inv).load();
+  const E = await engines();
+  const clipId = str(inv, 'clip');
+  const clip = clipId ? clipOf(inv).clip : undefined;
+  let run = str(inv, 'run');
+  const aid = clip?.asset ?? str(inv, 'asset') ?? (run ? E.loadSubjects(inv.dir, run).asset : undefined);
+  const a = videoAsset(project, aid);
+  const assetId = aid!;
+  const [pFrom, pTo] = clip ? playedRange(clip) : [0, a.probe.durMs ?? 0];
+  const from = Math.round(num(inv, 'from') ?? Math.max(0, pFrom - (clip ? 200 : 0)));
+  const to = Math.round(num(inv, 'to') ?? Math.min(a.probe.durMs ?? pTo + 200, pTo + (clip ? 200 : 0)));
+  const notes: string[] = [];
+  let keep = str(inv, 'keep');
+  let found: Awaited<ReturnType<typeof E.findSubjects>>;
+  if (!run) {
+    if (!inv.flags['auto']) throw new CliError('INVALID_ARGS', 'say what to keep: --run sub_xxxx --keep 1,3 (studio bg subjects --asset ' + aid + ' lists the subjects), or --auto to keep the most prominent one', 2);
+    inv.log('looking for the main subject');
+    found = await E.findSubjects({ projectDir: inv.dir, project, asset: assetId, from, to, log: inv.log });
+    run = found.run;
+  } else found = E.loadSubjects(inv.dir, run);
+  if (found.asset !== assetId) throw new CliError('INVALID_ARGS', `subjects ${run} were found on ${found.asset}, not ${assetId}`, 2);
+  const byId = new Map(found.subjects.map((x) => [x.id, x]));
+  if (!keep) {
+    if (!inv.flags['auto']) throw new CliError('INVALID_ARGS', '--keep is required: the numbers of the subjects to keep, e.g. --keep 1,3', 2, `studio bg subjects --asset ${assetId}`);
+    // the most prominent thing at the first moment: salient, large, moving
+    const first = found.subjects.filter((x) => x.top && x.at === found.times[0]);
+    const score = (x: (typeof first)[number]) => 0.5 * x.salience + 0.35 * Math.sqrt(x.areaPct / 100) + (x.moving ? 0.15 : 0) - (x.touches.length >= 3 ? 0.2 : 0);
+    first.sort((x, y) => score(y) - score(x));
+    if (!first.length) throw new CliError('INVALID_ARGS', 'no subject was found in this shot', 2, 'look at the frame: studio inspect frame');
+    keep = first[0]!.n.toString();
+    notes.push(`--auto kept ${first[0]!.id} (${first[0]!.colour}, ${first[0]!.areaPct}% of the frame, salience ${first[0]!.salience}${first[0]!.moving ? ', moving' : ''}); the others were ${first.slice(1).map((x) => `${x.id} (${x.colour}, ${x.areaPct}%)`).join(', ') || 'none'}`);
+  }
+  const groups = keepGroups(keep);
+  const removeIds = new Set(str(inv, 'remove') ? keepGroups(str(inv, 'remove')!).flat() : []);
+  for (const id of [...groups.flat(), ...removeIds]) if (!byId.has(id)) throw new CliError('NOT_FOUND', `no subject ${id} in ${run}`, 2, `the ids are ${[...byId.keys()].join(' ')}`);
+  for (const id of removeIds) if (groups.flat().includes(id)) throw new CliError('INVALID_ARGS', `${id} is both kept and removed`, 2);
+  const keptAll = new Set(groups.flat());
+  const taken = new Set(Object.keys(project.mattes ?? {}));
+  const specs: { type: string; args: Record<string, unknown> }[] = [];
+  const memberIds: string[] = [];
+  const mattes: Record<string, Matte> = {};
+  const edge = edgeFrom(inv);
+  for (const g of groups) {
+    const subs = g.map((id) => byId.get(id)!);
+    // one marked frame per moment the group's subjects were found at; the other things there are marked as not the object
+    const byAt = new Map<number, typeof subs>();
+    for (const x of subs) byAt.set(x.at, [...(byAt.get(x.at) ?? []), x]);
+    const keys = [...byAt.entries()]
+      .sort((x, y) => x[0] - y[0])
+      .map(([at, xs]) => {
+        // the chosen subject's own mask (when two parts make one thing at this moment, their masks together)
+        const w0 = xs[0]!.mask.w;
+        const h0 = xs[0]!.mask.h;
+        const union = new Uint8Array(w0 * h0);
+        for (const x of xs) {
+          let at2 = 0;
+          let v = 0;
+          for (const run of x.mask.rle) {
+            if (v) for (let q = at2; q < Math.min(union.length, at2 + run); q++) union[q] = 1;
+            at2 += run;
+            v ^= 1;
+          }
+        }
+        const mask = E.maskToRle(union, w0, h0);
+        // things named with --remove that were found at this moment: dots on them mark them as not the object, wherever the mask itself is not already
+        const bg = found.subjects
+          .filter((o) => removeIds.has(o.id) && o.at === at)
+          .flatMap((o) => o.prompt.points.filter((q) => !union[Math.min(h0 - 1, Math.floor(q[1] * h0)) * w0 + Math.min(w0 - 1, Math.floor(q[0] * w0))]).map((q) => ({ p: [q] as [number, number][] })));
+        return { at: Math.min(Math.max(at, from), to - 1), seeds: { mask, ...(bg.length ? { bg } : {}) } };
+      });
+    const matte = parsedMatte({
+      asset: assetId, from, to, keys, engine: 'sam',
+      ...(num(inv, 'fps') !== undefined ? { fps: num(inv, 'fps') } : {}),
+      ...(num(inv, 'width') !== undefined ? { width: num(inv, 'width') } : {}),
+      ...(edge ? { edge } : {}),
+      label: `bg remove: keep ${g.join('+')}`,
+    });
+    const id = makeId('mt', taken, cryptoRng());
+    taken.add(id);
+    mattes[id] = matte;
+    memberIds.push(id);
+    specs.push({ type: 'matte.add', args: { id, matte } });
+  }
+  let finalId = memberIds[0]!;
+  if (memberIds.length > 1) {
+    finalId = makeId('mt', taken, cryptoRng());
+    const u = parsedMatte({ asset: assetId, from, to, keys: [], union: memberIds, ...(edge ? { edge } : {}), label: `bg remove: keep ${groups.map((g) => g.join('+')).join(', ')}` });
+    mattes[finalId] = u;
+    specs.push({ type: 'matte.add', args: { id: finalId, matte: u } });
+  }
+  const ahead = { ...project, mattes: { ...(project.mattes ?? {}), ...mattes } } as Project;
+  let built: Awaited<ReturnType<typeof build>> | undefined;
+  if (!inv.flags['no-build'] && !inv.dryRun) built = await build(inv, ahead, finalId);
+  let node: string | undefined;
+  if (clip) {
+    const feather = num(inv, 'feather');
+    const choke = num(inv, 'choke');
+    const fx: Fx = { type: 'cutout', matte: { id: finalId, ...(feather ? { feather } : {}), ...(choke ? { choke } : {}) } };
+    const { list: stack, node: nd } = newEntry(project, clip, fx);
+    node = nd;
+    specs.push(...fxSpecs(clip, stack));
+  }
+  const r = runSpecs(inv, specs, `bg remove ${assetId}`);
+  let preview: string | undefined;
+  if (built && !inv.dryRun) {
+    const look = needsLook(built.data, 4);
+    const rel = `renders/bg-${finalId}.png`;
+    await E.matteSheet({ projectDir: inv.dir, project: ahead, id: finalId, data: built.data, out: join(inv.dir, rel), frames: [...new Set([0, Math.floor((built.data.frames - 1) / 2), built.data.frames - 1, ...look])].slice(0, 8) });
+    preview = rel;
+  }
+  const kept = groups.map((g) => g.map((id) => byId.get(id)!)).map((xs) => xs.map((x) => `${x.id} (${x.colour}, ${x.areaPct}%${x.top ? '' : ', a part'})`).join(' + '));
+  return {
+    ...r,
+    data: {
+      ...(r.data as object),
+      matte: finalId,
+      ...(memberIds.length > 1 ? { members: memberIds } : {}),
+      ...(node ? { cutout: { clip: clip!.id, node } } : {}),
+      kept,
+      ...(removeIds.size ? { removedExplicitly: [...removeIds] } : {}),
+      leftOut: found.subjects.filter((x) => x.top && !keptAll.has(x.id)).map((x) => `${x.id} (${x.colour}, ${x.areaPct}%)`),
+      ...(notes.length ? { notes } : {}),
+      ...(built ? { result: summary(built.data), wallMs: built.wallMs } : { result: `not built (studio matte build ${finalId})` }),
+      ...(built ? { needsALook: needsLook(built.data).map((f) => ({ frame: f, ms: Math.round(built!.data.fromMs + (f * 1000) / built!.data.fps), how: built!.data.quality?.frames[f]?.how })) } : {}),
+      ...(preview ? { preview } : {}),
+      next: [`studio bg check ${finalId}   (the frames most likely to be wrong, on one sheet)`, `studio mask key ${memberIds[0]!} --at MS --neg "x,y" --add   (a neighbour joined: mark it where it did; --absent where the object is not in the picture)`, node && clip ? `studio fx set --clip ${clip.id} --node ${node} --feather 1.5   (soften the edge)` : `studio cutout --clip c_xx --matte ${finalId}`],
+    },
+    ...(built ? { warnings: warningsOf(finalId, built.data) } : {}),
+    ...(preview ? { artifacts: [{ kind: 'image', path: preview }] } : {}),
+  };
+};
+
+/** `studio bg check`: how clean a matte is, and a sheet of the frames most likely to be wrong. */
+export const bgCheck: Handler = async (inv) => {
+  const { project } = store(inv).load();
+  const id = mref(project, inv.positionals[0] ?? str(inv, 'matte'));
+  const E = await engines();
+  const d = E.loadMatte(inv.dir, project, id);
+  if (!d) throw new CliError('NOT_FOUND', `matte ${id} has not been built`, 2, `studio matte build ${id}`);
+  const frames = needsLook(d, num(inv, 'frames') !== undefined ? Math.max(2, Math.min(8, Math.round(num(inv, 'frames')!))) : 6);
+  const base = [0, d.frames - 1];
+  const rel = `renders/bg-check-${id}.png`;
+  const list = [...new Set([...frames, ...(frames.length < 3 ? base : [])])].slice(0, 8);
+  const r = await E.matteSheet({ projectDir: inv.dir, project, id, data: d, out: join(inv.dir, rel), frames: list });
+  const q = d.quality;
+  return {
+    data: {
+      matte: id,
+      result: summary(d),
+      frames: list.map((f) => ({ frame: f, ms: Math.round(d.fromMs + (f * 1000) / d.fps), ...(q?.frames[f] ?? {}) })),
+      file: rel,
+      tiles: r.frames.length,
+      key: 'two tiles per frame: the picture with the matte tinted and outlined, and the cut-out on a checkerboard. The frames are the ones most likely to be wrong (carried by motion alone, in pieces, or changing area suddenly), in time order.',
+      next: ['a neighbour joined the object: studio mask key MT --at MS --neg "x,y" --add', 'the object is hidden or out of the picture: studio mask key MT --at MS --absent', 'the edge is rough: studio matte edge MT --hair   or   --edge-model vitmatte'],
+    },
+    artifacts: [{ kind: 'image', path: rel }],
+  };
 };

@@ -26,3 +26,4 @@ export * from './matte.js';
 export * from './sam.js';
 export * from './vitmatte.js';
 export * from './plate.js';
+export * from './subjects.js';

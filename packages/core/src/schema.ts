@@ -110,6 +110,8 @@ export const MatteSeeds = z
     bg: z.array(MarkShape).max(60).optional(),
     /** a rough closed outline of the object: only the ring `band` wide around it is decided from the picture */
     outline: z.object({ p: z.array(Pt2).min(3).max(400), band: z.number().min(0.002).max(0.2).optional() }).strict().optional(),
+    /** the object's exact mask, run-length coded (alternating runs over the rows, starting with zeros): what `bg subjects` found */
+    mask: z.object({ w: z.number().int().min(16).max(1280), h: z.number().int().min(16).max(1280), rle: z.array(z.number().int().min(0)).min(1).max(40000) }).strict().optional(),
   })
   .strict();
 export const Matte = z
@@ -120,9 +122,10 @@ export const Matte = z
     to: z.number().int().min(1),
     /** frames where the object was marked, in ms of the asset; the matte is followed from each to the next */
     keys: z
-      .array(z.object({ at: z.number().int().min(0), seeds: MatteSeeds, prior: z.enum(['u2net', 'u2netp']).optional(), pick: z.enum(['auto', 'whole', 'smallest', 'best', 'first']).optional(), /** the object is not in the picture here (hidden, or out of frame): the matte is empty at this frame */ absent: z.boolean().optional() }).strict())
-      .min(1)
+      .array(z.object({ at: z.number().int().min(0), seeds: MatteSeeds, prior: z.enum(['u2net', 'u2netp']).optional(), pick: z.enum(['auto', 'whole', 'smallest', 'best', 'first']).optional(), /** one of the segmenter's three candidates by number, instead of pick (what `bg subjects` lists) */ index: z.number().int().min(0).max(2).optional(), /** the object is not in the picture here (hidden, or out of frame): the matte is empty at this frame */ absent: z.boolean().optional() }).strict())
       .max(80),
+    /** a matte that is the union of other mattes made on the same asset (several things kept, each followed on its own); it has no marked frames of its own */
+    union: z.array(MatteId).min(2).max(12).optional(),
     fps: z.number().min(1).max(60).optional(),
     width: z.number().int().min(160).max(1280).optional(),
     /** what decides the boundary: a saliency model guided by the marks (auto: u2net when it can run), or the marks and colours alone */
@@ -147,7 +150,8 @@ export const Matte = z
       .optional(),
     label: z.string().max(80).optional(),
   })
-  .strict();
+  .strict()
+  .refine((m) => (m.union ? m.keys.length === 0 : m.keys.length >= 1), { message: 'a matte has marked frames, or is the union of other mattes (and then has none of its own)' });
 /** Where a matte is used on a clip: inside it (or outside, inverted), with a soft edge and a grow or shrink. */
 export const MatteUse = z
   .object({

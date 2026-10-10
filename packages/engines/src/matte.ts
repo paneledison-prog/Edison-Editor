@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Matte, Project } from '@studio/core';
 import {
-  VideoWriter, colourEvidence, neverSeen, consensusMask, proposalPrompts, detectCuts, estimateForeground, flowsOf, morph, refineEdge, resizePlane, smoothMattes, smoothMattesBytes, drawLine, drawPoly, followPrepare, followStep, probeVideo, promptsFromMask, promptsFromSeeds, segmentFromPrompted, readFrames, readSize, segmentFrame, segmentWithModel, startFollowing, tileRgb,
+  VideoWriter, components, rleToMask, colourEvidence, neverSeen, consensusMask, proposalPrompts, detectCuts, estimateForeground, flowsOf, morph, refineEdge, resizePlane, smoothMattes, smoothMattesBytes, drawLine, drawPoly, followPrepare, followStep, probeVideo, promptsFromMask, promptsFromSeeds, segmentFromPrompted, readFrames, readSize, segmentFrame, segmentWithModel, startFollowing, tileRgb,
   type Seeds,
 } from '@studio/vision';
 import { grabFrame } from './grab.js';
@@ -24,6 +24,12 @@ export const MATTE_VERSION = 34;
 /** a followed matte whose pixels look less than this much like the marked object (colour evidence 0..1) is not shown */
 const MIN_CONFIDENCE = 0.3;
 const MAX_FRAMES = 700;
+
+export interface MatteQuality {
+  /** per analysed frame: how the matte was decided, and what the cleaning took out */
+  frames: { how: 'key' | 'consensus' | 'best' | 'prediction' | 'colour' | 'hidden' | 'union'; /** other things (a neighbour, something passing in front) kept out of the matte */ keptOut: number; /** specks removed (px at the analysis size) */ specks: number; /** pieces left besides the main one */ islands: number; /** change of the matte's area from the frame before (% of its peak) */ areaChangePct: number }[];
+  summary: { consensusPct: number; fallbackFrames: number; framesWithNeighboursKeptOut: number; specksRemoved: number; framesWithIslands: number; worstAreaChangePct: number };
+}
 
 export interface MatteData {
   v: number;
@@ -50,9 +56,11 @@ export interface MatteData {
   coverage: number[];
   uncertain: number[];
   flagged: { frame: number; ms: number; why: string }[];
+  /** how each frame was made and how clean it is, for judging a matte without looking at every frame */
+  quality?: MatteQuality;
   /** following from one marked frame reaches the next: how well the result agrees with the marks there (IoU) */
   drift: { from: number; to: number; direction: 'forward' | 'backward'; iou: number }[];
-  stats: { ms: number; keys: number; prior: string[]; /** what decided the boundary: a saliency model guided by the marks, or the marks and colours alone */ engine: string; engineNote?: string };
+  stats: { ms: number; keys: number; prior: string[]; /** a union: its members */ members?: string[]; /** what decided the boundary: a saliency model guided by the marks, or the marks and colours alone */ engine: string; engineNote?: string };
 }
 
 export function matteKey(project: Project, id: string): string {
@@ -60,8 +68,10 @@ export function matteKey(project: Project, id: string): string {
   if (!m) throw new EngineError('INVALID_INPUT', `no matte ${id}`, 'studio matte list');
   const a = project.assets[m.asset]!;
   const { label: _l, ...def } = m;
+  // a union is made from its members: what they are made from is part of what it is
+  const members = (m.union ?? []).map((u) => matteKey(project, u));
   return createHash('sha256')
-    .update(JSON.stringify([MATTE_VERSION, a.hash, a.workingCopy?.path ?? a.path, def]))
+    .update(JSON.stringify([MATTE_VERSION, a.hash, a.workingCopy?.path ?? a.path, def, members]))
     .digest('hex')
     .slice(0, 20);
 }
@@ -206,6 +216,7 @@ export function pruneEmbeddingCache(projectDir: string, keep: string[], maxBytes
 
 /** Builds (or reads from the cache) the matte video of a matte. */
 export async function buildMatte(o: MatteBuildOptions): Promise<{ data: MatteData; cached: boolean }> {
+  if (o.project.mattes?.[o.id]?.union) return buildUnion(o);
   const holder: { sam?: SamServer; tag?: string } = {};
   try {
     return await buildMatteCore(o, holder);
@@ -309,10 +320,20 @@ async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer; t
       }
     }
     let seg: ReturnType<typeof segmentFrame>;
+    if ((k.seeds as Seeds).mask) {
+      // the exact mask that was found and chosen (`studio bg subjects`): no prompts to the segmenter that could disturb it; marks still correct it
+      const exact = rleToMask((k.seeds as Seeds).mask!, w, h);
+      seg = segmentFromPrompted(frames[k.frame]!, w, h, k.seeds as Seeds, exact);
+      modelKey.push(!!sam);
+      keyAlpha.push(toBytes(seg.alpha));
+      states.push(seg);
+      log(`marked frame ${k.at} ms: the chosen subject's own mask, ${Math.round((100 * keyAlpha[keyAlpha.length - 1]!.reduce((t, v) => t + (v > 127 ? 1 : 0), 0)) / (w * h))}% of the picture`);
+      continue;
+    }
     if (sam) {
       const pr = promptsFromSeeds(w, h, k.seeds as Seeds);
       if (!pr.points.length && !pr.box) throw new EngineError('INVALID_INPUT', `matte ${id} at ${k.at} ms: the segmenter needs a point on the object, a box, or an outline`, 'studio mask add --point x,y   or   --box x,y,w,h');
-      const got = await sam.decode(`f${k.frame}`, w, h, { ...pr, ...(k.pick ? { pick: k.pick } : {}) });
+      const got = await sam.decode(`f${k.frame}`, w, h, { ...pr, ...(k.index !== undefined ? { index: k.index } : k.pick ? { pick: k.pick } : {}) });
       seg = segmentFromPrompted(frames[k.frame]!, w, h, k.seeds as Seeds, got.prob);
       modelKey.push(true);
       keyAlpha.push(toBytes(seg.alpha));
@@ -364,6 +385,13 @@ async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer; t
   const final: Uint8Array[] = new Array(N);
   const unc: number[] = new Array(N).fill(0);
   const hidden = new Set<number>(); // frames where the followed matte did not look like the marked object
+  const howRank = ['key', 'consensus', 'colour', 'best', 'prediction', 'hidden'] as const;
+  const how: (typeof howRank[number] | undefined)[] = new Array(N).fill(undefined);
+  const keptOut: number[] = new Array(N).fill(0);
+  const note = (i: number, h: typeof howRank[number], k = 0) => {
+    if (how[i] === undefined || howRank.indexOf(h) >= howRank.indexOf(how[i]!)) how[i] = h;
+    keptOut[i] = Math.max(keptOut[i]!, k);
+  };
   const drift: MatteData['drift'] = [];
   /** follows from a marked frame over frame indices `idx` (in order) */
   let lastHid = new Set<number>(); // the frames the last call of follow found the object not to be in
@@ -392,7 +420,8 @@ async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer; t
           if (process.env['STUDIO_DEBUG_FOLLOW'] === '2') log(`TRACE ${i} ${JSON.stringify(c.trace)}`);
           if (process.env['STUDIO_DEBUG_FOLLOW']) log(`frame ${i}: ${c.how}, ${c.accepted} proposals accepted, ${c.foreign} foreign, coverage ${c.coverage.toFixed(2)}, motion separation ${c.motionSeparation?.toFixed(1) ?? 'n/a'} px`);
           prior = c.alpha;
-        }
+          note(i, c.how, c.foreign);
+        } else note(i, 'colour');
         r = followStep(st, frames[i]!, { pre, minConfidence: MIN_CONFIDENCE, ...(prior ? { prior } : {}) });
       } else {
         const pr = modelKey[ki] ? prior.get(i) : undefined;
@@ -400,7 +429,7 @@ async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer; t
       }
       out.set(i, toBytes(r.alpha));
       unc[i] = Math.max(unc[i]!, r.uncertain);
-      if (r.hidden) (hidden.add(i), lastHid.add(i));
+      if (r.hidden) (hidden.add(i), lastHid.add(i), note(i, 'hidden'));
     }
     return out;
   };
@@ -461,6 +490,16 @@ async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer; t
   const decontaminate = edgeCfg.decontaminate !== false;
   const edgeInfo: NonNullable<MatteData['edge']> = { refined: refine, hair, smoothed: smoothAmt, decontaminated: decontaminate };
   let work: Float32Array[] = final.map((f) => Float32Array.from(f, (v) => v / 255));
+  // Specks: pieces of the picture far smaller than the object that were joined to nothing are glitches, not the object. Marked
+  // frames are the person's word and stay as they are.
+  const specks: number[] = new Array(N).fill(0);
+  {
+    const marked = new Set(keys.map((k) => k.frame));
+    for (let i = 0; i < N; i++) {
+      if (marked.has(i)) continue;
+      specks[i] = despeckle(work[i]!, w, h);
+    }
+  }
   if (smoothAmt > 0 && N >= 3) {
     log(`steadying the matte over time (strength ${smoothAmt})`);
     const r = smoothMattes(work, frames, w, h, { cuts, fixed: new Set(keys.map((k) => k.frame)), strength: smoothAmt });
@@ -576,12 +615,46 @@ async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer; t
     else if (coverage[i]! < 0.0005 && coverage[i - 1]! >= 0.0005) flagged.push({ frame: i, ms: ms(i), why: 'the matte became empty' });
     else if (unc[i]! > 0.4) flagged.push({ frame: i, ms: ms(i), why: `the boundary stayed undecided (${Math.round(unc[i]! * 100)}% of the re-decided band is neither inside nor outside)` });
   }
+  // how clean each frame is, and the frames where the matte was carried by motion alone
+  const qFrames: MatteQuality['frames'] = [];
+  const keyFrames = new Set(keys.map((k) => k.frame));
+  for (let i = 0; i < N; i++) {
+    const bin = Uint8Array.from(work[i]!, (v) => (v > 0.5 ? 1 : 0));
+    const cc = components(bin, w, h);
+    const big = cc.sizes.slice(1).sort((x, y) => y - x);
+    const islands = big.slice(1).filter((x) => x >= 0.003 * w * h).length;
+    const area = coverage[i]!;
+    qFrames.push({ how: keyFrames.has(i) ? 'key' : (how[i] ?? 'colour'), keptOut: keptOut[i]!, specks: specks[i]!, islands, areaChangePct: i ? Math.round((100 * Math.abs(area - coverage[i - 1]!)) / peak) : 0 });
+  }
+  const followed = qFrames.filter((q) => q.how !== 'key');
+  const quality: MatteQuality = {
+    frames: qFrames,
+    summary: {
+      consensusPct: followed.length ? Math.round((100 * followed.filter((q) => q.how === 'consensus').length) / followed.length) : 100,
+      fallbackFrames: followed.filter((q) => q.how === 'best' || q.how === 'prediction').length,
+      framesWithNeighboursKeptOut: qFrames.filter((q) => q.keptOut > 0).length,
+      specksRemoved: qFrames.reduce((s2, q) => s2 + q.specks, 0),
+      framesWithIslands: qFrames.filter((q) => q.islands > 0).length,
+      worstAreaChangePct: Math.max(0, ...qFrames.map((q) => q.areaChangePct)),
+    },
+  };
+  {
+    // runs of frames carried by motion alone: the segmenter's masks did not fit, so nothing corrected the matte there
+    const fb = qFrames.map((q, i) => (q.how === 'best' || q.how === 'prediction' ? i : -1)).filter((i) => i >= 0);
+    for (let k = 0; k < fb.length && flagged.length < 18; ) {
+      let e = k;
+      while (e + 1 < fb.length && fb[e + 1] === fb[e]! + 1) e++;
+      flagged.push({ frame: fb[k]!, ms: ms(fb[k]!), why: `for ${e - k + 1} frame(s) from here none of the segmenter's masks fitted where the object's motion put it, so the matte was carried by motion alone and may drift; look, and mark the object again (studio mask key)` });
+      k = e + 1;
+    }
+  }
   const data: MatteData = {
     v: MATTE_VERSION,
     id,
     key,
     asset: m.asset,
     file: join('.studio', 'cache', 'matte', `${key}.mkv`),
+    quality,
     ...(decontaminate ? { fgFile: join('.studio', 'cache', 'matte', `${key}.fg.mkv`) } : {}),
     analysis: { w, h },
     edge: edgeInfo,
@@ -597,6 +670,146 @@ async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer; t
     flagged,
     drift: drift.map((d) => ({ ...d, iou: Math.round(d.iou * 1000) / 1000 })),
     stats: { ms: Date.now() - t0, keys: keys.length, prior: priors, engine: sam ? 'sam2.1-tiny' : prior.size && modelKey.some(Boolean) ? model! : 'colour', ...(engineNote ? { engineNote } : {}) },
+  };
+  const metaTmp = `${matteMeta(projectDir, key)}.${process.pid}.tmp`;
+  writeFileSync(metaTmp, JSON.stringify(data));
+  renameSync(metaTmp, matteMeta(projectDir, key));
+  return { data, cached: false };
+}
+
+/** Removes the pieces of a matte that are far smaller than its main piece (in place); returns how many pixels went. */
+function despeckle(a: Float32Array, w: number, h: number): number {
+  const bin = new Uint8Array(a.length);
+  for (let i = 0; i < a.length; i++) bin[i] = a[i]! > 0.5 ? 1 : 0;
+  const c = components(bin, w, h);
+  if (c.sizes.length <= 2) return 0;
+  const biggest = Math.max(...c.sizes.slice(1));
+  const keep = Math.max(12, 0.015 * biggest);
+  let gone = 0;
+  for (let i = 0; i < a.length; i++)
+    if (c.id[i] && c.sizes[c.id[i]!]! < keep) {
+      a[i] = 0;
+      gone++;
+    } else if (!c.id[i] && a[i]! > 0 && a[i]! <= 0.5) {
+      // the soft fringe of a removed piece goes with it: it has no component of its own, so it is cleared where nothing is next to it
+      continue;
+    }
+  return gone;
+}
+
+function mergeQuality(members: MatteData[]): MatteQuality {
+  const qs = members.map((d) => d.quality).filter((q): q is MatteQuality => !!q);
+  const n = Math.max(...qs.map((q) => q.frames.length));
+  const frames: MatteQuality['frames'] = Array.from({ length: n }, (_, i) => {
+    const at = qs.map((q) => q.frames[i]).filter((f): f is MatteQuality['frames'][number] => !!f);
+    return { how: 'union' as const, keptOut: at.reduce((s, f) => s + f.keptOut, 0), specks: at.reduce((s, f) => s + f.specks, 0), islands: at.reduce((s, f) => s + f.islands, 0), areaChangePct: Math.max(...at.map((f) => f.areaChangePct)) };
+  });
+  return {
+    frames,
+    summary: {
+      consensusPct: Math.round(qs.reduce((s, q) => s + q.summary.consensusPct, 0) / qs.length),
+      fallbackFrames: qs.reduce((s, q) => s + q.summary.fallbackFrames, 0),
+      framesWithNeighboursKeptOut: Math.max(...qs.map((q) => q.summary.framesWithNeighboursKeptOut)),
+      specksRemoved: qs.reduce((s, q) => s + q.summary.specksRemoved, 0),
+      framesWithIslands: Math.max(...qs.map((q) => q.summary.framesWithIslands)),
+      worstAreaChangePct: Math.max(...qs.map((q) => q.summary.worstAreaChangePct)),
+    },
+  };
+}
+
+/**
+ * A union of mattes: several things kept, each followed on its own (one matte per thing), put together at the finished size: the
+ * opacity of the union is the highest of its members' at each pixel, and the object's colour is the one of the member that is
+ * most opaque there.
+ */
+async function buildUnion(o: MatteBuildOptions): Promise<{ data: MatteData; cached: boolean }> {
+  const { projectDir, project, id } = o;
+  const log = o.log ?? (() => undefined);
+  const m = project.mattes![id]!;
+  const key = matteKey(project, id);
+  if (!o.force) {
+    const have = loadMatte(projectDir, project, id);
+    if (have) return { data: have, cached: true };
+  }
+  const t0 = Date.now();
+  const members: MatteData[] = [];
+  for (const u of m.union!) {
+    const mm = project.mattes?.[u];
+    if (!mm) throw new EngineError('INVALID_INPUT', `matte ${id}: its member ${u} does not exist`, 'studio matte list');
+    if (mm.asset !== m.asset) throw new EngineError('INVALID_INPUT', `matte ${id}: member ${u} was made on ${mm.asset}, not ${m.asset}`);
+    log(`union ${id}: member ${u}`);
+    members.push((await buildMatte({ ...o, id: u, force: o.force && false })).data);
+  }
+  const first = members[0]!;
+  for (const d of members) if (d.w !== first.w || d.h !== first.h || d.frames !== first.frames || d.fps !== first.fps || d.fromMs !== first.fromMs) throw new EngineError('INVALID_INPUT', `matte ${id}: its members must cover the same range at the same size and rate (${d.id} differs from ${first.id})`, 'make them with the same --from/--to/--fps/--width (studio bg remove does)');
+  const { w, h, fps, frames: N } = first;
+  const withFg = members.every((d) => d.fgFile);
+  mkdirSync(dirOf(projectDir), { recursive: true });
+  const video = matteVideo(projectDir, key);
+  const tmp = `${video}.${process.pid}.partial.mkv`;
+  const fgVideo = video.replace(/\.mkv$/, '.fg.mkv');
+  const fgTmp = `${fgVideo}.${process.pid}.partial.mkv`;
+  const readers = members.map((d) => readFrames({ file: join(projectDir, d.file), size: { w, h }, channels: 1 })[Symbol.asyncIterator]());
+  const fgReaders = withFg ? members.map((d) => readFrames({ file: join(projectDir, d.fgFile!), size: { w, h }, channels: 3 })[Symbol.asyncIterator]()) : [];
+  const wr = new VideoWriter(tmp, { w, h, fps });
+  const wf = withFg ? new VideoWriter(fgTmp, { w, h, fps, channels: 3, codec: ['-c:v', 'ffv1', '-level', '3', '-pix_fmt', 'bgr0'] }) : null;
+  const coverage: number[] = [];
+  for (let i = 0; i < N; i++) {
+    const as: Uint8Array[] = [];
+    for (const r of readers) as.push(new Uint8Array((await r.next()).value ?? new Uint8Array(w * h)));
+    const out = new Uint8Array(w * h);
+    const who = new Uint8Array(w * h);
+    let sum = 0;
+    for (let p = 0; p < w * h; p++) {
+      let best = 0;
+      for (let k = 0; k < as.length; k++) if (as[k]![p]! > as[best]![p]!) best = k;
+      out[p] = as[best]![p]!;
+      who[p] = best;
+      sum += out[p]!;
+    }
+    coverage.push(Math.round((sum / 255 / (w * h)) * 10000) / 10000);
+    await wr.write(out);
+    if (wf) {
+      const fgs: Uint8Array[] = [];
+      for (const r of fgReaders) fgs.push(new Uint8Array((await r.next()).value ?? new Uint8Array(w * h * 3)));
+      const o3 = new Uint8Array(w * h * 3);
+      for (let p = 0; p < w * h; p++) {
+        const f = fgs[who[p]!]!;
+        o3[3 * p] = f[3 * p]!;
+        o3[3 * p + 1] = f[3 * p + 1]!;
+        o3[3 * p + 2] = f[3 * p + 2]!;
+      }
+      await wf.write(o3);
+    }
+  }
+  await wr.close();
+  if (wf) await wf.close();
+  renameSync(tmp, video);
+  if (wf) renameSync(fgTmp, fgVideo);
+  const flagged: MatteData['flagged'] = [];
+  for (const d of members) for (const f of d.flagged) if (flagged.length < 20) flagged.push({ ...f, why: `${d.id}: ${f.why}` });
+  const data: MatteData = {
+    v: MATTE_VERSION,
+    id,
+    key,
+    asset: m.asset,
+    file: join('.studio', 'cache', 'matte', `${key}.mkv`),
+    ...(withFg ? { fgFile: join('.studio', 'cache', 'matte', `${key}.fg.mkv`) } : {}),
+    ...(first.analysis ? { analysis: first.analysis } : {}),
+    ...(first.edge ? { edge: first.edge } : {}),
+    fps,
+    w,
+    h,
+    fromMs: first.fromMs,
+    frames: N,
+    keys: [],
+    ...(first.cuts ? { cuts: first.cuts } : {}),
+    coverage,
+    uncertain: first.uncertain.map((_, i) => Math.max(...members.map((d) => d.uncertain[i] ?? 0))),
+    flagged,
+    drift: members.flatMap((d) => d.drift),
+    stats: { ms: Date.now() - t0, keys: members.reduce((s2, d) => s2 + d.stats.keys, 0), prior: [], engine: first.stats.engine, members: members.map((d) => d.id) },
+    ...(members.some((d) => d.quality) ? { quality: mergeQuality(members) } : {}),
   };
   const metaTmp = `${matteMeta(projectDir, key)}.${process.pid}.tmp`;
   writeFileSync(metaTmp, JSON.stringify(data));

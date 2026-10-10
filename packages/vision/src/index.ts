@@ -16,3 +16,4 @@ export * from './cuts.js';
 export * from './matting.js';
 export * from './plate.js';
 export * from './consensus.js';
+export * from './subjects.js';

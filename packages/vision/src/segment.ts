@@ -32,6 +32,50 @@ export interface Seeds {
    * (default 0.025), as far off as the outline may be.
    */
   outline?: { p: [number, number][]; band?: number };
+  /** the object's exact mask (what `bg subjects` found), run-length coded; the strokes above still correct it */
+  mask?: SeedMask;
+}
+
+/** A binary mask as alternating run lengths over the rows read one after another, starting with a run of zeros. */
+export interface SeedMask {
+  w: number;
+  h: number;
+  rle: number[];
+}
+
+export function maskToRle(m: Uint8Array, w: number, h: number): SeedMask {
+  const rle: number[] = [];
+  let cur = 0;
+  let run = 0;
+  for (let i = 0; i < m.length; i++) {
+    const v = m[i] ? 1 : 0;
+    if (v === cur) run++;
+    else {
+      rle.push(run);
+      cur = v;
+      run = 1;
+    }
+  }
+  rle.push(run);
+  return { w, h, rle };
+}
+
+/** The mask as a 0/1 plane at the size asked for (nearest neighbour when that differs from the size it was made at). */
+export function rleToMask(r: SeedMask, w: number, h: number): Float32Array {
+  const src = new Uint8Array(r.w * r.h);
+  let at = 0;
+  let v = 0;
+  for (const run of r.rle) {
+    if (v) src.fill(1, at, Math.min(src.length, at + run));
+    at += run;
+    v ^= 1;
+  }
+  const out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    const sy = Math.min(r.h - 1, Math.floor(((y + 0.5) * r.h) / h));
+    for (let x = 0; x < w; x++) out[y * w + x] = src[sy * r.w + Math.min(r.w - 1, Math.floor(((x + 0.5) * r.w) / w))]!;
+  }
+  return out;
 }
 
 export const LABEL_FG = 1;
