@@ -156,7 +156,7 @@ function EffectsEditor({ project, clipId, editable, onEdit }: { project: Project
       label,
     );
   };
-  const canSwitch = (f: FxEntry) => ['plugin', 'lut', 'stabilize', 'pin', 'cutout'].includes(f.type);
+  const canSwitch = (f: FxEntry) => ['plugin', 'lut', 'stabilize', 'pin', 'cutout', 'erase'].includes(f.type);
   return (
     <div data-testid="effects">
       <dt>Effects</dt>

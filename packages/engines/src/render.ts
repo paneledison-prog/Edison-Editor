@@ -18,6 +18,7 @@ import { PREVIEW, getPreset, type Preset } from './presets.js';
 import { probeFile } from './probe.js';
 import { EngineError, lastLine, run, withFilterScripts } from './run.js';
 import { ensureMattes } from './matte.js';
+import { ensurePlates } from './plate.js';
 import { ensureTracks } from './track.js';
 
 export interface RenderOptions {
@@ -270,6 +271,12 @@ export async function render(o: RenderOptions): Promise<RenderReport> {
     clipIds: inWindow,
     placeholder: (id) => trackNotes.push(`matte ${id} has not been built yet; this graph uses a placeholder for it (studio matte build ${id})`),
   });
+  const plates = await ensurePlates(o.project, o.projectDir, {
+    build: !o.explain,
+    log,
+    clipIds: inWindow,
+    placeholder: (id) => trackNotes.push(`the clean plate ${id} has not been built yet; this graph uses a placeholder for it (studio erase build)`),
+  });
   const plan = compile({
     project: o.project,
     projectDir: o.projectDir,
@@ -281,6 +288,7 @@ export async function render(o: RenderOptions): Promise<RenderReport> {
     overlays,
     tracks,
     mattes,
+    plates,
   });
   const ext = stillMode ? 'png' : preset.ext;
   const baseName =

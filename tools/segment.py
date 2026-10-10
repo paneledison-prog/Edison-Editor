@@ -8,7 +8,7 @@ Reads one JSON object per line on stdin and answers one JSON line on stdout.
   {"cmd":"embed","id":"f12","in":"frame.png"}
       Runs the image encoder once and keeps the embedding (memory and DIR/<id>.npz), so any number of prompts on the
       same frame afterwards cost milliseconds.
-  {"cmd":"decode","id":"f12","points":[[x,y],...],"labels":[1,0,...],"box":[x0,y0,x1,y1],"pick":"auto|whole|best|first","out":"mask.png"}
+  {"cmd":"decode","id":"f12","points":[[x,y],...],"labels":[1,0,...],"box":[x0,y0,x1,y1],"pick":"auto|whole|smallest|best|first","out":"mask.png"}
       Coordinates are pixels of the embedded image. Writes an 8-bit grayscale PNG (probability, same size as the image)
       and answers with the three candidate masks' predicted quality and area and the one that was written.
   {"cmd":"quit"}
@@ -146,6 +146,10 @@ def main():
                     k = best
                 elif pick == "whole":
                     k = int(np.argmax(areas))
+                elif pick == "smallest":
+                    # the smallest candidate that keeps every point asked to be inside and none asked to be outside (one object, not its neighbours)
+                    ok = [kk for kk in range(m.shape[0]) if all((m[kk][min(255, max(0, int(py / h * 256))), min(255, max(0, int(px / w * 256)))] > 0) == (lb == 1) for (px, py), lb in zip(pts, lab))]
+                    k = min(ok or range(m.shape[0]), key=lambda kk: areas[kk])
                 elif pick == "best":
                     k = int(np.argmax(iou))
                 else:

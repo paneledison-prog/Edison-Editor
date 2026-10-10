@@ -8,6 +8,7 @@ import { clipSpec, motionStill, prepare } from './motion.js';
 import { PREVIEW } from './presets.js';
 import { EngineError, ffmpeg } from './run.js';
 import { ensureMattes } from './matte.js';
+import { ensurePlates } from './plate.js';
 import { ensureTracks } from './track.js';
 
 export interface PreviewResult {
@@ -82,6 +83,7 @@ export async function previewFrame(
     const here = new Set(project.clips.filter((c) => c.start < window[1] && c.start + c.dur > window[0]).map((c) => c.id));
     const tracks = await ensureTracks(project, projectDir, { build: false, clipIds: here });
     const mattes = await ensureMattes(project, projectDir, { build: false, clipIds: here });
+    const plates = await ensurePlates(project, projectDir, { build: false, clipIds: here });
     const plan = compile({
       project,
       projectDir,
@@ -92,6 +94,7 @@ export async function previewFrame(
       overlays,
       tracks,
       mattes,
+      plates,
     });
     const partial = out + '.partial.png';
     rmSync(partial, { force: true });

@@ -34,6 +34,8 @@ export interface PlanarOptions {
   refine: boolean;
   maxPoints?: number;
   minPoints?: number;
+  /** pixels to leave out of the region (something that moves in front of it): for the reference (`-1`) and for each later frame, by its index in `frames` */
+  exclude?: (i: number) => Uint8Array | undefined;
 }
 
 /** Marks the pixels inside a convex quad (analysis pixels). */
@@ -234,6 +236,9 @@ export async function* trackPlane(ref: Gray, quad: Quad, frames: AsyncIterable<G
   const maxPts = o.maxPoints ?? 140;
   const minPts = o.minPoints ?? 10;
   const mask = quadMask(w, h, quad);
+  const ex0 = o.exclude?.(-1);
+  if (ex0) for (let i = 0; i < mask.length; i++) if (ex0[i]) mask[i] = 0;
+  let frameNo = -1;
   const seeds = detectCorners(ref, { max: maxPts, minDist: Math.max(4, Math.round(Math.min(w, h) / 40)), border: 10, mask });
   let pref: Pt[] = cornerPoints(seeds);
   let pcur: Pt[] = pref.map((p) => [p[0], p[1]]);
@@ -244,6 +249,7 @@ export async function* trackPlane(ref: Gray, quad: Quad, frames: AsyncIterable<G
   let lastRefined = 0;
   let sinceRedetect = 0;
   for await (const img of frames as AsyncIterable<Gray>) {
+    frameNo++;
     const cur = buildPyr(img, 4, false);
     // predicted positions: assume the camera keeps moving as it just did
     const step = mul3(H, inv3(Hprev) ?? I3);
@@ -295,6 +301,8 @@ export async function* trackPlane(ref: Gray, quad: Quad, frames: AsyncIterable<G
     if (nextCur.length < maxPts * 0.7 || sinceRedetect >= 20 || !ok) {
       const q = warpQuad(quad, Hn);
       const m2 = quadMask(w, h, q);
+      const exn = o.exclude?.(frameNo);
+      if (exn) for (let i = 0; i < m2.length; i++) if (exn[i]) m2[i] = 0;
       const fresh = detectCorners(img, { max: maxPts, minDist: Math.max(4, Math.round(Math.min(w, h) / 40)), border: 10, mask: m2 });
       const Hi = inv3(Hn);
       const minD = Math.max(4, Math.round(Math.min(w, h) / 40));

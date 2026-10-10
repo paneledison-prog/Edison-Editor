@@ -25,3 +25,4 @@ export * from './solve.js';
 export * from './matte.js';
 export * from './sam.js';
 export * from './vitmatte.js';
+export * from './plate.js';

@@ -120,7 +120,7 @@ export const Matte = z
     to: z.number().int().min(1),
     /** frames where the object was marked, in ms of the asset; the matte is followed from each to the next */
     keys: z
-      .array(z.object({ at: z.number().int().min(0), seeds: MatteSeeds, prior: z.enum(['u2net', 'u2netp']).optional(), pick: z.enum(['auto', 'whole', 'best', 'first']).optional() }).strict())
+      .array(z.object({ at: z.number().int().min(0), seeds: MatteSeeds, prior: z.enum(['u2net', 'u2netp']).optional(), pick: z.enum(['auto', 'whole', 'smallest', 'best', 'first']).optional() }).strict())
       .min(1)
       .max(80),
     fps: z.number().min(1).max(60).optional(),
@@ -250,6 +250,18 @@ export const Fx = z.discriminatedUnion('type', [
     .object({
       type: z.literal('cutout'),
       matte: MatteUse,
+      bypass: z.boolean().optional(),
+      node: NodeId.optional(),
+    })
+    .strict(),
+  // Erases an object: inside the matte the picture is replaced by the background as it was seen in other frames of the shot
+  // (a clean plate made from the frames, never invented). `pad` grows the removed area by this many px of the picture's width / 1000.
+  z
+    .object({
+      type: z.literal('erase'),
+      matte: MatteUse,
+      /** how far past the matte the removed area reaches, in thousandths of the picture's width (default 8) */
+      pad: num(0, 60).optional(),
       bypass: z.boolean().optional(),
       node: NodeId.optional(),
     })

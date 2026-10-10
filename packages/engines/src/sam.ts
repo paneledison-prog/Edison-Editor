@@ -22,7 +22,7 @@ export interface SamPrompt {
   /** x0, y0, x1, y1 */
   box?: [number, number, number, number];
   /** which of the model's three candidates: whole (the largest), best (its own quality guess), first (the one made for several prompts) */
-  pick?: 'auto' | 'whole' | 'best' | 'first';
+  pick?: 'auto' | 'whole' | 'smallest' | 'best' | 'first';
   /** a candidate by index, overriding pick */
   index?: number;
 }

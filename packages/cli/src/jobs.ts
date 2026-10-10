@@ -21,7 +21,7 @@ const HEAVY = new Set([
   'motion.still', 'motion.render', 'plugins.check',
   'color.apply', 'color.still', 'color.scopes', 'color.analyze', 'color.auto', 'color.match',
   'design.render', 'design.still',
-  'track.add', 'track.build', 'track.set', 'track.preview', 'track.solve', 'stabilize', 'pin', 'matte.add', 'matte.key', 'matte.unkey', 'matte.build', 'matte.preview', 'cutout',
+  'track.add', 'track.build', 'track.set', 'track.preview', 'track.solve', 'stabilize', 'pin', 'matte.add', 'matte.key', 'matte.unkey', 'matte.build', 'matte.preview', 'cutout', 'erase', 'erase.build', 'erase.preview', 'mask.add', 'mask.key', 'mask.build', 'mask.pick', 'mask.preview', 'mask.edge', 'matte.edge',
   'inspect.frame', 'inspect.sheet', 'inspect.waveform', 'inspect.loudness', 'inspect.silence', 'inspect.black', 'inspect.qc',
 ]);
 export function isHeavy(name: string, flags: Record<string, unknown>): boolean {

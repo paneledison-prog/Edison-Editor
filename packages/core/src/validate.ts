@@ -130,8 +130,8 @@ export function validateProject(p: unknown): Issue[] {
           add('FX_INVALID', `clip ${c.id}: more than one stabilize effect`, `clips.${c.id}.fx`);
         if (f.type === 'stabilize') fxSeen.add('stabilize');
       }
-      const use = f.type === 'cutout' ? f.matte : f.type === 'plugin' || f.type === 'lut' ? f.matte : undefined;
-      if (use || f.type === 'cutout') {
+      const use = f.type === 'cutout' || f.type === 'erase' ? f.matte : f.type === 'plugin' || f.type === 'lut' ? f.matte : undefined;
+      if (use || f.type === 'cutout' || f.type === 'erase') {
         const m = use ? proj.mattes?.[use.id] : undefined;
         if (track.type !== 'video') add('FX_INVALID', `clip ${c.id}: a matte needs a video track`, `clips.${c.id}.fx`);
         if (!m) add('MISSING_REF', `clip ${c.id}: uses matte ${use?.id}, which does not exist`, `clips.${c.id}.fx`);

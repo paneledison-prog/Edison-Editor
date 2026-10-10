@@ -5,7 +5,7 @@
  * keyed by the source and the definition, so it is derived and can always be rebuilt.
  */
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Matte, Project } from '@studio/core';
@@ -177,17 +177,43 @@ const iouBytes = (a: Uint8Array, b: Uint8Array): number => {
   return u ? i / u : 1;
 };
 
+
+/**
+ * The segmenter's encodings of the frames are about 8 MB a frame, kept so that changing marks does not encode again. Kept up to
+ * `maxBytes` in all (the least recently used folders go first); whatever is removed is simply encoded again when needed.
+ */
+export function pruneEmbeddingCache(projectDir: string, keep: string[], maxBytes = 1.2e9): { removed: string[]; bytes: number } {
+  const root = dirOf(projectDir);
+  if (!existsSync(root)) return { removed: [], bytes: 0 };
+  const sizeOf = (dir: string) => readdirSync(dir).reduce((s, f) => s + (statSync(join(dir, f)).size || 0), 0);
+  const dirs = readdirSync(root)
+    .filter((n) => n.startsWith('sam-'))
+    .map((n) => ({ n, p: join(root, n), t: statSync(join(root, n)).mtimeMs, b: sizeOf(join(root, n)) }))
+    .sort((a, b) => a.t - b.t);
+  let total = dirs.reduce((s, d) => s + d.b, 0);
+  const removed: string[] = [];
+  for (const d of dirs) {
+    if (total <= maxBytes) break;
+    if (keep.includes(d.n)) continue;
+    rmSync(d.p, { recursive: true, force: true });
+    total -= d.b;
+    removed.push(d.n);
+  }
+  return { removed, bytes: total };
+}
+
 /** Builds (or reads from the cache) the matte video of a matte. */
 export async function buildMatte(o: MatteBuildOptions): Promise<{ data: MatteData; cached: boolean }> {
-  const holder: { sam?: SamServer } = {};
+  const holder: { sam?: SamServer; tag?: string } = {};
   try {
     return await buildMatteCore(o, holder);
   } finally {
     await holder.sam?.close();
+    if (holder.sam) pruneEmbeddingCache(o.projectDir, [holder.tag ?? '']);
   }
 }
 
-async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer }): Promise<{ data: MatteData; cached: boolean }> {
+async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer; tag?: string }): Promise<{ data: MatteData; cached: boolean }> {
   const { projectDir, project, id } = o;
   const log = o.log ?? (() => undefined);
   const m = project.mattes?.[id];
@@ -248,6 +274,7 @@ async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer })
   // the promptable segmenter (Object Mask Tool): every frame is encoded once (cached), then asked with prompts
   let sam: SamServer | undefined;
   if (want === 'sam') {
+    holder.tag = `sam-${tag}`;
     sam = holder.sam = await SamServer.start(join(dirOf(projectDir), `sam-${tag}`));
     let encMs = 0;
     for (let i = 0; i < N; i++) {
@@ -538,7 +565,7 @@ export function mattesUsed(project: Project, clipIds?: Set<string>): string[] {
   const ids = new Set<string>();
   for (const c of project.clips) {
     if (clipIds && !clipIds.has(c.id)) continue;
-    for (const f of c.fx ?? []) if ((f.type === 'cutout' || f.type === 'plugin' || f.type === 'lut') && f.matte && !f.bypass) ids.add(f.matte.id);
+    for (const f of c.fx ?? []) if ((f.type === 'cutout' || f.type === 'erase' || f.type === 'plugin' || f.type === 'lut') && f.matte && !f.bypass) ids.add(f.matte.id);
   }
   return [...ids];
 }

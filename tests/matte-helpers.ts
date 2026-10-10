@@ -21,7 +21,7 @@ export function renderObjectShot(
   N: number,
   w: number,
   h: number,
-  o: { seed?: number; occluder?: boolean; similar?: boolean; noise?: number; speed?: number } = {},
+  o: { seed?: number; occluder?: boolean; similar?: boolean; noise?: number; speed?: number; /** the background alone: what is behind the object */ noObject?: boolean } = {},
 ): ObjectShot {
   const bgTex = texture(w + 120, h + 80, 71 + (o.seed ?? 0));
   const fgTex = texture(256, 256, 91 + (o.seed ?? 0));
@@ -65,6 +65,7 @@ export function renderObjectShot(
             if (Math.hypot(px, py) < rr) cov++;
           }
         cov /= 9;
+        if (o.noObject) cov = 0;
         let col = bg;
         if (cov > 0) {
           const dx = x - cx;

@@ -185,7 +185,7 @@ export const key: Handler = async (inv) => {
   if (at === undefined) throw new CliError('INVALID_ARGS', '--at is required: the frame (ms of the asset) you are marking', 2);
   const seeds = seedsFrom(inv, sizeOf(project, m.asset));
   const prior = str(inv, 'prior');
-  const pick = str(inv, 'pick') as 'auto' | 'whole' | 'best' | 'first' | undefined;
+  const pick = str(inv, 'pick') as 'auto' | 'whole' | 'smallest' | 'best' | 'first' | undefined;
   if (!seeds && !prior) throw new CliError('INVALID_ARGS', `give the marks: ${MARKS_HELP}`, 2);
   const info = project.assets[m.asset]!.probe.fps ?? 30;
   const near = Math.max(1, Math.round(500 / Math.min(60, m.fps ?? Math.min(30, info))));
@@ -383,4 +383,86 @@ export const edge: Handler = async (inv) => {
   if (!inv.flags['no-build'] && !inv.dryRun) built = await build(inv, ahead, id);
   const r = runSpecs(inv, [{ type: 'matte.set', args: { id, patch: { edge: merged } } }], `matte edge ${id}`);
   return { ...r, data: { ...(r.data as object), matte: id, edge: merged, ...(built ? { result: summary(built.data) } : {}) }, ...(built ? { warnings: warningsOf(id, built.data) } : {}) };
+};
+
+// ----- erase: take an object out of the picture, with the background rebuilt from the other frames ---------------------------------------
+
+const platesSummary = (d: import('@studio/engines').PlateData) => ({
+  frames: d.frames,
+  size: `${d.w}x${d.h} at ${d.fps} fps`,
+  removedAreaPct: { max: Math.max(...d.holePct), mean: Math.round((d.holePct.reduce((x, y) => x + y, 0) / d.holePct.length) * 10) / 10 },
+  filledFromOtherFramesPct: Math.round((d.filled.reduce((x, y) => x + y, 0) / d.filled.length) * 1000) / 10,
+  neverVisiblePct: Math.round((d.spread.reduce((x, y) => x + y, 0) / d.spread.length) * 1000) / 10,
+  camera: d.registration,
+  ...(d.flagged.length ? { checkThese: d.flagged } : {}),
+  ms: d.stats.ms,
+});
+const plateWarnings = (d: import('@studio/engines').PlateData): string[] => {
+  const w: string[] = [];
+  const spread = d.spread.reduce((x, y) => x + y, 0) / d.spread.length;
+  if (spread > 0.05) w.push(`erase ${d.matte}: ${Math.round(spread * 100)}% of the removed area is never visible in another frame of the shot, so that part is smeared in from its surroundings, not real background; move the object less, or mark a shorter range where it moves away`);
+  if (d.registration.lost.length) w.push(`erase ${d.matte}: the camera could not be followed in ${d.registration.lost.length} frame(s); the plate there may not line up`);
+  if (d.flagged.length) w.push(`erase ${d.matte}: ${d.flagged.length} frame(s) to check, first at ${d.flagged[0]!.ms} ms (${d.flagged[0]!.why})`);
+  return w;
+};
+
+/** Takes an object out of the clip: inside the matte the picture is the background as other frames of the shot saw it. */
+export const erase: Handler = async (inv) => {
+  const { project, clip } = clipOf(inv);
+  const aid = clip.asset!;
+  const a = videoAsset(project, aid);
+  const specs: { type: string; args: Record<string, unknown> }[] = [];
+  let id = str(inv, 'matte');
+  let ahead = project;
+  if (id) {
+    mref(project, id);
+    if (project.mattes![id]!.asset !== aid) throw new CliError('INVALID_ARGS', `matte ${id} was made on ${project.mattes![id]!.asset}, this clip plays ${aid}`, 2);
+  } else {
+    const i = dotsToMarks(inv);
+    const seeds = seedsFrom(i, sizeOf(project, aid));
+    if (!seeds) throw new CliError('INVALID_ARGS', `give --matte mt_xxxx, or point at what to remove: ${MARKS_HELP}`, 2, 'studio mask pick --asset a_xx --at MS --point x,y shows what the segmenter takes');
+    const [from, to] = playedRange(clip);
+    const at = Math.round(num(inv, 'at') ?? from);
+    const matte = parsedMatte({ asset: aid, from: Math.max(0, from - 200), to: Math.min(a.probe.durMs ?? to + 200, to + 200), keys: [{ at, seeds }], engine: str(inv, 'engine') ?? 'sam', ...(edgeFrom(inv) ? { edge: edgeFrom(inv) } : {}), label: `erase ${clip.id}` });
+    id = makeId('mt', new Set(Object.keys(project.mattes ?? {})), cryptoRng());
+    ahead = { ...project, mattes: { ...(project.mattes ?? {}), [id]: matte } } as Project;
+    specs.push({ type: 'matte.add', args: { id, matte } });
+  }
+  const pad = num(inv, 'pad');
+  const feather = num(inv, 'feather');
+  const fx: Fx = { type: 'erase', matte: { id, ...(feather !== undefined ? { feather } : {}) }, ...(pad !== undefined ? { pad } : {}) } as Fx;
+  const { list: stack, node } = newEntry(project, clip, fx);
+  const E = await engines();
+  let built: Awaited<ReturnType<typeof E.buildPlate>> | undefined;
+  if (!inv.flags['no-build'] && !inv.dryRun) built = await E.buildPlate({ projectDir: inv.dir, project: ahead, matte: id, ...(pad !== undefined ? { pad } : {}), log: inv.log });
+  const r = runSpecs(inv, [...specs, ...fxSpecs(clip, stack)], `erase ${clip.id}`);
+  return {
+    ...r,
+    data: { ...(r.data as object), node, matte: id, ...(built ? { plate: platesSummary(built.data), next: [`studio erase preview ${id}   (the picture, the removed area tinted, and the rebuilt picture)`, `studio render --still <ms> --out check`, `studio fx set --clip ${clip.id} --node ${node} --feather 3   (soften the seam)`] } : { plate: `not built (studio erase build ${id})` }) },
+    ...(built ? { warnings: plateWarnings(built.data) } : {}),
+  };
+};
+
+export const eraseBuild: Handler = async (inv) => {
+  const { project } = store(inv).load();
+  const id = mref(project, inv.positionals[0] ?? str(inv, 'matte'));
+  const E = await engines();
+  const pad = num(inv, 'pad');
+  const r = await E.buildPlate({ projectDir: inv.dir, project, matte: id, ...(pad !== undefined ? { pad } : {}), force: !!inv.flags['force'], log: inv.log });
+  return { data: { matte: id, cached: r.cached, plate: platesSummary(r.data) }, warnings: plateWarnings(r.data) };
+};
+
+export const erasePreview: Handler = async (inv) => {
+  const { project } = store(inv).load();
+  const id = mref(project, inv.positionals[0] ?? str(inv, 'matte'));
+  const E = await engines();
+  const pad = num(inv, 'pad') ?? E.DEFAULT_PAD;
+  const d = E.loadPlate(inv.dir, project, id, pad);
+  if (!d) throw new CliError('NOT_FOUND', `no clean plate for ${id} yet`, 2, `studio erase build ${id}`);
+  const md = E.loadMatte(inv.dir, project, id)!;
+  const times = str(inv, 'at')?.split(',').map(Number).filter(Number.isFinite);
+  const frames = times?.map((t) => Math.round(((t - d.fromMs) * d.fps) / 1000));
+  const rel = `renders/erase-${id}.png`;
+  const r = await E.plateSheet({ projectDir: inv.dir, project, data: d, matteData: md, out: join(inv.dir, rel), count: num(inv, 'frames'), ...(frames ? { frames } : {}) });
+  return { data: { file: rel, frames: r.frames, key: 'three tiles per frame: the picture, the removed area tinted, and the picture with the object rebuilt from other frames' }, artifacts: [{ kind: 'image', path: rel }] };
 };

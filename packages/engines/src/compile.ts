@@ -7,6 +7,8 @@ import { blurRegionFilter, hasMotion, zoomFilter } from './zoom.js';
 import { effectLines, pluginEffectDecl, type FxContext } from './plugins.js';
 import { checkClipKeyframes, nodeLines } from './fxanim.js';
 import type { MatteData } from './matte.js';
+import type { PlateData } from './plate.js';
+import { plateId } from './plate.js';
 import type { TrackData } from './track.js';
 import { PIN_MARGIN, correctionTable, pinQuads, pinWarpLines, stabilizeLines, stabilizePlan, type ClipTiming } from './trackfx.js';
 import type { Preset } from './presets.js';
@@ -141,6 +143,8 @@ export interface CompileInput {
   tracks?: Record<string, TrackData>;
   /** Built mattes by id, for the clips' cutout effects and effects limited to a matte (see ensureMattes). */
   mattes?: Record<string, MatteData>;
+  /** Built clean plates by `mt_xxxx@pad`, for the clips' erase effects (see ensurePlates). */
+  plates?: Record<string, PlateData>;
 }
 
 type MatteUse = NonNullable<Extract<Fx, { type: 'cutout' }>['matte']>;
@@ -336,12 +340,13 @@ export function compile(inp: CompileInput): Plan {
       // Mattes: each use of a matte (a cutout, or an effect limited to it) takes its own copy of the matte's picture, which is
       // fitted onto the canvas the way the clip is, so it lines up with the picture it works on.
       const liveFx = (c.fx ?? []).filter((f) => !('bypass' in f && f.bypass));
-      const matteUses = liveFx.filter((f): f is Extract<Fx, { type: 'cutout' | 'plugin' | 'lut' }> => (f.type === 'cutout' || f.type === 'plugin' || f.type === 'lut') && !!f.matte);
+      const matteUses = liveFx.filter((f): f is Extract<Fx, { type: 'cutout' | 'erase' | 'plugin' | 'lut' }> => (f.type === 'cutout' || f.type === 'erase' || f.type === 'plugin' || f.type === 'lut') && !!f.matte);
       const matteCount = new Map<string, number>();
       for (const f of matteUses) matteCount.set(f.matte!.id, (matteCount.get(f.matte!.id) ?? 0) + 1);
       const matteLabels = new Map<string, string[]>();
       const matteTake = (id: string): string => matteLabels.get(id)!.shift()!;
       const fgLabels = new Map<string, string[]>();
+      const plateLabels: string[] = []; // one per erase effect, in order
       if (matteCount.size && a.kind !== 'video') throw new EngineError('INVALID_INPUT', `${c.id}: a matte needs a video clip`);
       const mLines: string[] = []; // the matte pictures are laid out after the clip's own chain (which later steps extend at its end)
       [...matteCount].forEach(([id, n], mi) => {
@@ -372,25 +377,50 @@ export function compile(inp: CompileInput): Plan {
         const names = Array.from({ length: n }, (_, j) => `${base}u${j}`);
         if (n > 1) mLines.push(`[${raw}]split=${n}${names.map((x) => `[${x}]`).join('')}`);
         matteLabels.set(id, n > 1 ? names : [raw]);
-        // The object's colour with the old background taken out of the edge pixels: laid out like the matte, one copy for each
-        // cutout that uses this matte (it replaces the picture's colour at the edge only, see the cutout below).
-        const nCuts = liveFx.filter((f) => f.type === 'cutout' && f.matte?.id === id).length;
-        if (md.fgFile && nCuts) {
+        // Other pictures that belong to the matte (the object's colour with the old background taken out of the edge pixels; the
+        // clean plates of erase effects) are laid out like the matte, so they line up with the picture they work on.
+        const layout = (file: string, tag: string, copies: number): string[] => {
           const fk = nIn++;
-          inputs.push('-ss', sec(Math.max(0, in0 - fromMs)), '-t', sec(c.dur * speed), '-i', join(projectDir, md.fgFile));
+          inputs.push('-ss', sec(Math.max(0, in0 - fromMs)), '-t', sec(c.dur * speed), '-i', join(projectDir, file));
           let fsrc = `${fk}:v`;
           if (stab && steady) {
-            mLines.push(`[${fsrc}]${mhead}[${base}fh]`);
-            mLines.push(...stabilizeLines(`${base}fh`, `${base}fst`, `${base}ft`, steady, { w: d.w!, h: d.h! }));
-            fsrc = `${base}fst`;
+            mLines.push(`[${fsrc}]${mhead}[${base}${tag}h]`);
+            mLines.push(...stabilizeLines(`${base}${tag}h`, `${base}${tag}st`, `${base}${tag}t`, steady, { w: d.w!, h: d.h! }));
+            fsrc = `${base}${tag}st`;
           }
-          const fraw = `${base}fr`;
+          const fraw = `${base}${tag}r`;
           mLines.push(`[${fsrc}]${stab && steady ? '' : `${mhead},`}${fit},format=gbrp,${zf ? `${zf}format=gbrp,` : ''}setpts=PTS-STARTPTS+${at}/TB[${fraw}]`);
-          const fnames = Array.from({ length: nCuts }, (_, j) => `${base}fu${j}`);
-          if (nCuts > 1) mLines.push(`[${fraw}]split=${nCuts}${fnames.map((x) => `[${x}]`).join('')}`);
-          fgLabels.set(id, nCuts > 1 ? fnames : [fraw]);
-        }
+          const names2 = Array.from({ length: copies }, (_, j) => `${base}${tag}u${j}`);
+          if (copies > 1) mLines.push(`[${fraw}]split=${copies}${names2.map((x) => `[${x}]`).join('')}`);
+          return copies > 1 ? names2 : [fraw];
+        };
+        const nCuts = liveFx.filter((f) => f.type === 'cutout' && f.matte?.id === id).length;
+        if (md.fgFile && nCuts) fgLabels.set(id, layout(md.fgFile, 'f', nCuts));
+        liveFx.forEach((f, fi) => {
+          if (f.type !== 'erase' || f.matte.id !== id) return;
+          const pl = inp.plates?.[plateId(id, f.pad)];
+          if (!pl) throw new EngineError('INVALID_INPUT', `${c.id}: the clean plate for ${id} has not been built`, `studio erase build ${id}`);
+          plateLabels[fi] = layout(pl.file, `p${fi}`, 1)[0]!;
+        });
       });
+      // Erase comes first of all the effects: the plate is the source's own picture rebuilt, so nothing may have been done to the
+      // picture it is laid over (grades and the like come after, and act on the cleaned picture).
+      const erases = liveFx.map((f, fi) => ({ f, fi })).filter((x): x is { f: Extract<Fx, { type: 'erase' }>; fi: number } => x.f.type === 'erase');
+      if (erases.length) {
+        const base = `v${nV}`;
+        const last = vLines.pop()!;
+        let cur = `${base}erin`;
+        vLines.push(last.replace(new RegExp(`\\[${base}\\]$`), `[${cur}]`));
+        erases.forEach(({ f, fi }, i) => {
+          const out = i === erases.length - 1 ? base : `${base}er${i}`;
+          // the removed area is the matte grown a little (as far as the plate was filled, less a margin), softened at the edge
+          const grow = Math.min(16, Math.max(0, Math.round(((f.pad ?? 8) / 1000) * width * 0.75)));
+          vLines.push(...matteFinish(matteTake(f.matte.id), `${base}ex${i}`, { ...f.matte, choke: -grow + (f.matte.choke ?? 0), feather: f.matte.feather ?? 2 }));
+          vLines.push(`[${plateLabels[fi]!}][${base}ex${i}]alphamerge[${base}ea${i}]`);
+          vLines.push(`[${cur}][${base}ea${i}]overlay=format=auto:eof_action=pass:repeatlast=0[${out}]`);
+          cur = out;
+        });
+      }
       // LUTs run right after the clip's own scale and zoom, before plugin nodes: order of the fx array decides among nodes of
       // the same kind, and a LUT is always first, as camera conversions are on a colourist's first node.
       const fxCtxEarly: FxContext = { W: width, H: height, FPS: fps, SRCFPS: a.probe.fps || fps, SPEED: speed, T0: c.start / 1000 };
