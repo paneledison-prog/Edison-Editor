@@ -43,12 +43,23 @@ Measurements are of the rendered frame (every layer and node), downscaled to 160
 * Measured per effect (24 frames at 1280x720, this container, one run, FFmpeg process included): most are 65 to 700 ms; `qualifier` 1.1 s, `light-rays` 1.0 s, `slowmo` 2.6 s, `denoise-strong` 13.3 s. Heavy effects are labelled and a render warns when one is used.
 * Stability is tested, not assumed: the test suite runs every effect with every parameter at its minimum, maximum and each enum value, on a picture with and without alpha (about 340 runs, none may fail), checks parameters are validated before any render, and checks neutral settings leave the picture unchanged. A bad parameter is refused with its allowed range; a failing graph is a render error with FFmpeg's reason, never a crash of the app or the editor.
 
+## On cut-out elements and colour families
+
+* A grade, look or LUT on a cut-out element (`docs/layers.md`) gives the same picture whether it runs before or after the
+  cutout (measured on the benchmark shot: 0 levels apart for all 11 colour effects), reaches the element's outermost pixels, and
+  changes nothing outside it; on the background clip it acts on the background only.
+* `hue-sat`: `strength` (default 1) decides how fully colours that are not pure take the change. A 90 degree turn at strength 1
+  moves pure red fully but yellow-green and muted colours hardly at all; `target a` with `strength 100` turns every hue
+  (measured on the benchmark background: 3 levels on average at strength 1, 15 at strength 100).
+* `qualifier`: the colours it selects take the hue shift fully, muted ones included (a navy shirt shifted by -150 degrees lands
+  at hue 72; before, the shift was applied at FFmpeg's default strength and a muted colour stayed where it was).
+
 ## Not built
 
-* **AI tools:** Magic Mask, Roto Brush, Depth Map, Face Refinement, Relight, AI noise reduction. Studio has no AI models for these. `studio image bgremove` (U2-Net) cuts out a still image subject; there is nothing like it for moving video.
+* **AI tools:** Depth Map, Face Refinement, Relight, AI noise reduction. Selecting and following an object in video (Magic Mask, Roto Brush) is not a colour node: `studio bg remove` and `studio mask` cut it out (`docs/background-removal.md`, `docs/masks.md`), and a grade then goes on the cut-out element or is limited to its matte (`fx add --matte`).
 * **Tracking:** windows and qualifiers are static for the whole clip.
 * **Colour Warper** (the grid) and freeform Hue vs Hue / Hue vs Sat / Lum vs Sat curves: `hue-sat` does the same job one colour family at a time, with fixed family widths.
 * **Camera log and RAW:** no vendor transforms ship. `colorspace` handles Rec.601/709/2020; bring your own `.cube` LUT for a camera's log curve.
-* **Displacement Map from a second layer**, **Motion Tile**, **two-pass Warp Stabilizer**: not built (`stabilize` is single pass).
+* **Displacement Map from a second layer**, **Motion Tile**: not built. The `stabilize` colour-plugin effect is single pass; `studio stabilize --clip` is the tracked, smoothed one (`docs/tracking.md`).
 * **Lens blur** is an approximation (a focus area, brightened highlights, blur outside), not a depth-based bokeh. `light-rays`, `light-sweep`, `glow` and `film-look` are look effects, not simulations of any commercial plugin.
 * Scopes and `auto` are measured on encoded values, not linear light or a calibrated display.

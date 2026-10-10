@@ -169,6 +169,18 @@ describe('colour plugin: what each effect does to the picture', () => {
     expect(near(px(qi, bar(5), 60), px(src, bar(5), 60), 10)).toBe(false);
   });
 
+  it('the qualifier turns a muted colour too (a navy shirt), not only pure ones', () => {
+    // navy: hue about 220 degrees, saturation 0.55, value 0.36; shifted by -150 degrees it must land far from blue
+    const src = `color=c=0x2a3a5c:s=${W}x${H}:r=24:d=1`;
+    const q = run('qualifier', { hue: 220, hueWidth: 25, satMin: 0.3, valMin: 0.05, shift: -150 }, { src, out: out('q-navy') });
+    const [r, g, b] = px(q, W / 2, H / 2) as [number, number, number];
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const hue = max === min ? 0 : max === r ? (60 * ((g - b) / (max - min)) + 360) % 360 : max === g ? 60 * ((b - r) / (max - min)) + 120 : 60 * ((r - g) / (max - min)) + 240;
+    console.log(`QUALIFIER navy 0x2a3a5c shifted -150: ${r},${g},${b} (hue ${Math.round(hue)} degrees)`);
+    expect(Math.abs(((hue - 220 + 540) % 360) - 180)).toBeGreaterThan(80);
+  });
+
   it('window grades inside only, with a soft edge', () => {
     const src = `color=c=0x606060:s=${W}x${H}:r=24:d=1`;
     const f = run('window', { exposure: 1, feather: 0.1 }, { src, out: out('w') });

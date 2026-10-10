@@ -101,6 +101,11 @@ property, `rot` turns about the anchor after the cutout instead of inside the fr
   * a colour effect (grain, vignette, keyer, lumetri) gives the same picture before and after the cutout (0 levels); an exposure
     change reaches the element's outermost pixel ring fully (before: 69% of it, an outline of ungraded colour);
   * each still 0.8 to 1.1 s (denoise-strong after the cutout 2.8 s: it runs twice, on the picture and on the opacity).
+* **Every filter on a split shot** (the same shot; lumetri, primary, zones, curves, hue-sat, qualifier, window, tritone,
+  colorspace, channel mixer, film look, and a LUT; on the element before and after its cutout, and on the background): switched
+  off, all 34 renders are identical to the picture without them; before and after the cutout the picture is the same to the
+  level; nothing outside the element changes; on the background, nothing on the element changes. A qualifier aimed at his navy
+  shirt changes the shirt by 24 levels and the rest of him by 2.6.
 * **Over time** (24 frames, the same shot): with motion blur, glitch, glow or a drop shadow on the element, and with the element
   travelling 300 px and turning 20 degrees while it glows and casts a shadow, the picture away from it equals the background
   alone in every frame (0.6 levels on average: video compression). Slow motion on the element (speed 0.5, `slowmo`): its shape
