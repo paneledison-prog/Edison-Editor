@@ -1,6 +1,6 @@
 # Cut-outs (Roto Brush / Magic Mask style) for the agent
 
-To select an object by pointing at it (points on it, points off it, a box), use the Object Mask Tool: `docs/masks.md`.
+To remove a video's background (keep chosen people or things, take out the rest), use `studio bg`: `docs/background-removal.md`. To select an object by pointing at it (points on it, points off it, a box), use the Object Mask Tool: `docs/masks.md`.
 
 No green screen, no generative AI. The agent looks at a frame, says where the object is, Studio cuts it out of that frame and follows it through the shot.
 

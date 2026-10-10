@@ -12,6 +12,13 @@ Rules
 * Heavy commands (track, solve, matte, stabilize, pin, cutout) go through the job governor; use `--project` and `--agent` as in rule 15.
 * Limits to state in a report: synthetic-footage evidence only, planar camera model for stabilization, focal estimate can be a few percent off, mattes are soft-band alpha.
 
+## Removing a video's background (`studio bg`) — the default for "remove the background" / "keep only the person"
+Read `docs/background-removal.md`.
+* `studio bg subjects --asset a_xx` first, then LOOK at both sheets it writes (`renders/subjects-<run>.png` numbered, `...-each.png` each thing alone). Choose by what you see, not by the JSON alone: a mask may hold only a face (`partOf`), or two things joined. Use the facts to decide (`moves`, `salience`, `areaPct`, `colour`, `touchesEdge`).
+* `studio bg remove --run sub_x --keep N --clip c_xx`. Several things: `--keep 3,7`. The same thing in two shots or moments, or two parts of one thing: `--keep 3+15`. Things that must go even where they touch what is kept: `--remove 5`. Not in the picture before/after a time: `--visible-from MS` / `--visible-until MS`. A clip with cuts needs a subject in every shot (the run lists one moment per shot).
+* Read `result.quality` and `needsALook`, look at `preview`, then `studio bg check mt_x` before rendering. Fix with `mask key ... --neg/--point --add`, `--absent`, `matte edge --hair`. Render a still over a coloured track below to see the edges.
+* Report the numbers (`consensusPct`, `fallbackFrames`, frames looked at) and say which frames you did not look at.
+
 ## Object Mask Tool (`studio mask`)
 * To cut out or remove one specific object (a person, a phone, a bottle, a logo), select it by pointing: `studio mask pick --asset a_xx --at MS --point "x,y" --neg "x,y" --box x,y,w,h` shows the segmenter's three candidates on one frame and stores nothing; then `studio mask add` with the same marks, `studio mask preview`, and `studio mask key ... --add` where it drifts or includes the wrong thing. Prefer a box plus one or two points; several far-apart positive points confuse the model.
 * Use the result like any matte: `studio cutout --clip c_xx --matte mt_xxxx [--invert]`, or `fx ... --matte`.

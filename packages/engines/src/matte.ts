@@ -20,7 +20,7 @@ import { EngineError, run } from './run.js';
 import { SamServer } from './sam.js';
 import { VitMatteServer } from './vitmatte.js';
 
-export const MATTE_VERSION = 40;
+export const MATTE_VERSION = 41;
 /** a followed matte whose pixels look less than this much like the marked object (colour evidence 0..1) is not shown */
 const MIN_CONFIDENCE = 0.3;
 const MAX_FRAMES = 700;
@@ -323,6 +323,15 @@ async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer; t
     if ((k.seeds as Seeds).mask) {
       // the exact mask that was found and chosen (`studio bg subjects`): no prompts to the segmenter that could disturb it; marks still correct it
       const exact = rleToMask((k.seeds as Seeds).mask!, w, h);
+      if (sam) {
+        // gaps between the chosen parts (a hand and the phone it holds) are closed where the segmenter's masks around them fit the
+        // chosen mask; nothing of what was chosen is taken away
+        const pr = proposalPrompts(exact, w, h);
+        if (pr.length) {
+          const c = consensusMask(exact, await sam.proposals(`f${k.frame}`, w, h, pr), w, h);
+          if (c.how === 'consensus') for (let p = 0; p < exact.length; p++) if (c.alpha[p]! > 0.5) exact[p] = 1;
+        }
+      }
       seg = segmentFromPrompted(frames[k.frame]!, w, h, k.seeds as Seeds, exact);
       modelKey.push(!!sam);
       keyAlpha.push(toBytes(seg.alpha));
