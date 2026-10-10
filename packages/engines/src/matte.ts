@@ -20,7 +20,9 @@ import { EngineError, run } from './run.js';
 import { SamServer } from './sam.js';
 import { VitMatteServer } from './vitmatte.js';
 
-export const MATTE_VERSION = 18;
+export const MATTE_VERSION = 21;
+/** a followed matte whose pixels look less than this much like the marked object (colour evidence 0..1) is not shown */
+const MIN_CONFIDENCE = 0.3;
 const MAX_FRAMES = 700;
 
 export interface MatteData {
@@ -289,6 +291,14 @@ async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer; t
   const keyAlpha: Uint8Array[] = [];
   const states: ReturnType<typeof segmentFrame>[] = [];
   for (const k of keys) {
+    if (k.absent) {
+      // a frame where the person says the object is not there: an empty matte, nothing to follow from it
+      keyAlpha.push(new Uint8Array(w * h));
+      states.push(undefined as unknown as ReturnType<typeof segmentFrame>);
+      modelKey.push(false);
+      log(`marked frame ${k.at} ms: the object is not here`);
+      continue;
+    }
     let prior: Float32Array | undefined;
     if (k.prior) {
       try {
@@ -353,10 +363,17 @@ async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer; t
   }
   const final: Uint8Array[] = new Array(N);
   const unc: number[] = new Array(N).fill(0);
+  const hidden = new Set<number>(); // frames where the followed matte did not look like the marked object
   const drift: MatteData['drift'] = [];
   /** follows from a marked frame over frame indices `idx` (in order) */
+  let lastHid = new Set<number>(); // the frames the last call of follow found the object not to be in
   const follow = async (ki: number, idx: number[]): Promise<Map<number, Uint8Array>> => {
+    lastHid = new Set<number>();
     const out = new Map<number, Uint8Array>();
+    if (keys[ki]!.absent) {
+      for (const i of idx) out.set(i, new Uint8Array(w * h));
+      return out;
+    }
     const st = startFollowing(frames[keys[ki]!.frame]!, w, h, states[ki]!);
     for (const i of idx) {
       let r;
@@ -365,13 +382,14 @@ async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer; t
         const pre = followPrepare(st, frames[i]!);
         const pr = promptsFromMask(pre.warped, w, h);
         const got = pr ? await sam.decode(`f${i}`, w, h, { ...pr, pick: 'first' }) : null;
-        r = followStep(st, frames[i]!, { pre, ...(got ? { prior: got.prob } : {}) });
+        r = followStep(st, frames[i]!, { pre, minConfidence: MIN_CONFIDENCE, ...(got ? { prior: got.prob } : {}) });
       } else {
         const pr = modelKey[ki] ? prior.get(i) : undefined;
-        r = followStep(st, frames[i]!, pr ? { prior: toFloat(pr) } : {});
+        r = followStep(st, frames[i]!, { minConfidence: MIN_CONFIDENCE, ...(pr ? { prior: toFloat(pr) } : {}) });
       }
       out.set(i, toBytes(r.alpha));
       unc[i] = Math.max(unc[i]!, r.uncertain);
+      if (r.hidden) (hidden.add(i), lastHid.add(i));
     }
     return out;
   };
@@ -403,18 +421,23 @@ async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer; t
       const ia = keys[ki]!.frame;
       const ib = keys[ki + 1]!.frame;
       const fw = await follow(ki, range(ia + 1, ib, 1));
+      const hf = lastHid;
       const bw = await follow(ki + 1, range(ib - 1, ia, -1));
-      drift.push({ from: keys[ki]!.at, to: keys[ki + 1]!.at, direction: 'forward', iou: iouBytes(fw.get(ib)!, keyAlpha[ki + 1]!) });
-      drift.push({ from: keys[ki + 1]!.at, to: keys[ki]!.at, direction: 'backward', iou: iouBytes(bw.get(ia)!, keyAlpha[ki]!) });
+      const hb = lastHid;
+      if (!keys[ki]!.absent && !keys[ki + 1]!.absent) {
+        drift.push({ from: keys[ki]!.at, to: keys[ki + 1]!.at, direction: 'forward', iou: iouBytes(fw.get(ib)!, keyAlpha[ki + 1]!) });
+        drift.push({ from: keys[ki + 1]!.at, to: keys[ki]!.at, direction: 'backward', iou: iouBytes(bw.get(ia)!, keyAlpha[ki]!) });
+      }
       for (let i = ia + 1; i < ib; i++) {
-        const wb = (i - ia) / (ib - ia);
+        // where one side did not find the object the other side decides; where neither did, it is not there
+        const wb = hf.has(i) && !hb.has(i) ? 1 : hb.has(i) && !hf.has(i) ? 0 : (i - ia) / (ib - ia);
         const f = fw.get(i)!;
         const bb = bw.get(i)!;
         const o2 = new Uint8Array(w * h);
         for (let p = 0; p < o2.length; p++) o2[p] = Math.round(f[p]! * (1 - wb) + bb[p]! * wb);
         final[i] = o2;
       }
-      log(`between ${keys[ki]!.at} and ${keys[ki + 1]!.at} ms: following reaches the next marked frame with IoU ${drift[drift.length - 2]!.iou.toFixed(3)} (forward), ${drift[drift.length - 1]!.iou.toFixed(3)} (backward)`);
+      if (!keys[ki]!.absent && !keys[ki + 1]!.absent) log(`between ${keys[ki]!.at} and ${keys[ki + 1]!.at} ms: following reaches the next marked frame with IoU ${drift[drift.length - 2]!.iou.toFixed(3)} (forward), ${drift[drift.length - 1]!.iou.toFixed(3)} (backward)`);
     }
   }
 
@@ -525,6 +548,16 @@ async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer; t
   for (let i = 0; i < N; i++) final[i] = Uint8Array.from(work[i]!, (v) => Math.round(Math.min(1, Math.max(0, v)) * 255));
   const peak = Math.max(...coverage, 1e-9);
   const flagged: MatteData['flagged'] = [...shotNotes];
+  {
+    // runs of frames where the object was not found: said once, at the start of each run
+    const hs = [...hidden].sort((x, y) => x - y);
+    for (let k = 0; k < hs.length && flagged.length < 14; ) {
+      let e = k;
+      while (e + 1 < hs.length && hs[e + 1] === hs[e]! + 1) e++;
+      flagged.push({ frame: hs[k]!, ms: Math.round(m.from + hs[k]! * step), why: `from here for ${e - k + 1} frame(s) the followed matte did not look like the marked object (hidden, out of the picture, or lost), so nothing is shown; mark it again where it is back (studio mask key)` });
+      k = e + 1;
+    }
+  }
   const ms = (i: number) => Math.round(m.from + i * step);
   for (let i = 1; i < N && flagged.length < 14; i++) {
     const jump = Math.abs(coverage[i]! - coverage[i - 1]!) / peak;

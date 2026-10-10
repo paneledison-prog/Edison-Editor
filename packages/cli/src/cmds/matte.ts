@@ -186,12 +186,17 @@ export const key: Handler = async (inv) => {
   const seeds = seedsFrom(inv, sizeOf(project, m.asset));
   const prior = str(inv, 'prior');
   const pick = str(inv, 'pick') as 'auto' | 'whole' | 'smallest' | 'best' | 'first' | undefined;
-  if (!seeds && !prior) throw new CliError('INVALID_ARGS', `give the marks: ${MARKS_HELP}`, 2);
+  const absent = !!inv.flags['absent'];
+  if (!seeds && !prior && !absent) throw new CliError('INVALID_ARGS', `give the marks: ${MARKS_HELP}, or --absent when the object is not in the picture at that time`, 2);
   const info = project.assets[m.asset]!.probe.fps ?? 30;
   const near = Math.max(1, Math.round(500 / Math.min(60, m.fps ?? Math.min(30, info))));
   const keys = m.keys.map((k) => ({ ...k }));
   const i = keys.findIndex((k) => Math.abs(k.at - at) <= near);
-  if (i >= 0) {
+  if (absent) {
+    const ak = { at: i >= 0 ? keys[i]!.at : Math.round(at), seeds: {} as Seeds, absent: true as const };
+    if (i >= 0) keys[i] = ak;
+    else keys.push(ak);
+  } else if (i >= 0) {
     const old = keys[i]!;
     if (inv.flags['add'] && seeds) {
       const merged: Record<string, unknown> = { ...old.seeds };

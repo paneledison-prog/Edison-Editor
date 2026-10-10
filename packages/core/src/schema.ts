@@ -120,7 +120,7 @@ export const Matte = z
     to: z.number().int().min(1),
     /** frames where the object was marked, in ms of the asset; the matte is followed from each to the next */
     keys: z
-      .array(z.object({ at: z.number().int().min(0), seeds: MatteSeeds, prior: z.enum(['u2net', 'u2netp']).optional(), pick: z.enum(['auto', 'whole', 'smallest', 'best', 'first']).optional() }).strict())
+      .array(z.object({ at: z.number().int().min(0), seeds: MatteSeeds, prior: z.enum(['u2net', 'u2netp']).optional(), pick: z.enum(['auto', 'whole', 'smallest', 'best', 'first']).optional(), /** the object is not in the picture here (hidden, or out of frame): the matte is empty at this frame */ absent: z.boolean().optional() }).strict())
       .min(1)
       .max(80),
     fps: z.number().min(1).max(60).optional(),

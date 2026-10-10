@@ -211,3 +211,29 @@ describe('marking more frames, and cut-outs on stabilized clips', () => {
     expect(Math.min(...scores)).toBeGreaterThan(0.93);
   }, 400_000);
 });
+
+describe('an object that is not there', () => {
+  it('a marked frame saying "absent" empties the matte there and keeps following from the other side', async () => {
+    const n = 24;
+    const shot = renderObjectShot(n, W, H);
+    const p = await shotProject(await writeShot(shot), { width: W, height: H, fps: FPS, frames: n });
+    const first = ok(await run(['matte', 'add', '--asset', p.asset, '--at', '0', '--box', box(shot), '--fg', dot(shot), '--engine', 'colour', '--project', p.dir]));
+    const lastMs = Math.round(((n - 1) * 1000) / FPS);
+    const r = ok(await run(['matte', 'key', first.matte, '--at', String(lastMs), '--absent', '--project', p.dir]));
+    expect(r.markedFrames).toEqual([0, lastMs]);
+    const d = JSON.parse(readFileSync(join(p.dir, '.studio', 'cache', 'matte', readdirSyncMeta(p.dir)), 'utf8'));
+    expect(d.coverage[n - 1]).toBe(0); // empty where it is not there
+    expect(d.coverage[0]).toBeGreaterThan(0.05); // still there at the first marked frame
+    expect(d.drift).toEqual([]); // nothing to compare an absent frame with
+    // marks are ops: undo takes the absent frame back
+    ok(await run(['project', 'undo', '--project', p.dir]));
+    expect(ok(await run(['matte', 'list', '--project', p.dir])).mattes[0].markedFrames).toEqual([0]);
+  }, 300_000);
+});
+
+function readdirSyncMeta(dir: string): string {
+  // the newest matte data file (the json next to the matte video)
+  const { readdirSync, statSync } = require('node:fs') as typeof import('node:fs');
+  const base = join(dir, '.studio', 'cache', 'matte');
+  return readdirSync(base).filter((f) => f.endsWith('.json')).sort((a, b) => statSync(join(base, b)).mtimeMs - statSync(join(base, a)).mtimeMs)[0]!;
+}

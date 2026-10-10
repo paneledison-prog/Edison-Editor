@@ -51,3 +51,10 @@ Select an object in a video by pointing at it, the way Premiere's Object Mask To
 * Cost: about 0.6 s a frame for a 864 x 480 plate on this machine, plus the matte.
 
 Disk: the segmenter's encodings are about 8 MB a frame; they are kept up to 1.2 GB per project cache (the oldest are dropped first and encoded again when needed).
+
+## When the object is hidden or not in the picture
+Following carries the matte by motion, and a model that is asked about a frame will find *something*. Two safeguards, and one thing you say:
+* **The model must agree with the motion.** A model mask is used only while it overlaps where the motion says the object went (IoU 0.6 or more). When it finds something else (a neighbour, or the object is behind it), the matte is carried by the motion alone and colours are not allowed to grow it (they would take the neighbour in).
+* **It must look like the marked object.** A followed matte whose pixels look less than 0.3 like the marked object (colour evidence from the marked frame against its surroundings) is not shown, and the frames are listed in `checkThese` ("did not look like the marked object ... mark it again where it is back").
+* **You can say it is not there:** `studio mask key mt_xxxx --at MS --absent` (also `matte key`) marks a time where the object is hidden or out of the picture: the matte is empty there, and following does not carry it past. Put it just before the object shows up or just after it is hidden; between an absent frame and a marked one the matte fades over the frames in between, so keep them close.
+* **Measured on clip d, the walking boy** (a navy jacket, passing behind a man in a navy coat): the first two safeguards did not catch it: the matte still sat on the coat in the frames before he comes out from behind it, because the two are the same colour and the carried matte moves with the coat. With `--absent` at 1450 ms the matte is empty at 1300 and 1450 ms and the boy is matted cleanly from 1600 ms (one frame in between shows a faint fade). So: occlusion by something of the same colour needs your `--absent`; the safeguards catch different-coloured neighbours and lost objects.

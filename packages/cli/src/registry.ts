@@ -1918,7 +1918,7 @@ export const COMMANDS: CmdMeta[] = [
     fn: 'maskKey',
     writes: true,
     summary: 'Mark another frame of a matte where it has drifted or the object changed (or add marks to a marked frame with --add), then follow again: the matte is followed from each marked frame to the next, from both sides, so a few marks fix a long stretch.',
-    usage: 'studio mask key mt_xxxx --at MS (--point ... | --neg ... | --box ...) [--add] [--pick whole|best|first] [--px] [--no-build]',
+    usage: 'studio mask key mt_xxxx --at MS (--point ... | --neg ... | --box ... | --absent) [--add] [--pick whole|best|first] [--px] [--no-build]',
     example: 'studio mask key mt_k3f9 --at 1000 --neg "0.2,0.5" --add',
     flags: [
       s('matte', 'matte id (or the first argument)'),
@@ -1937,6 +1937,7 @@ export const COMMANDS: CmdMeta[] = [
       b('px', 'coordinates are pixels of the video frame instead of fractions'),
       s('seeds', 'all the marks as JSON (box, fg, bg, outline)'),
       s('prior', 'a saliency model\'s guess as extra evidence: u2net or u2netp (needs the python models; marks alone work without)'),
+      b('absent', 'the object is NOT in the picture at this time (hidden behind something, or out of the frame): the matte is empty here, and following does not carry it past'),
       b('add', 'add these marks to the ones already on that frame instead of replacing them'),
       b('no-build', 'do not follow again now'),
     ],
@@ -2030,7 +2031,7 @@ export const COMMANDS: CmdMeta[] = [
     module: 'matte',
     writes: true,
     summary: 'Mark another frame of a matte where it has drifted or the object changed (or add marks to a marked frame with --add), then follow again: the matte is followed from each marked frame to the next, from both sides, so a few marks fix a long stretch.',
-    usage: 'studio matte key mt_xxxx --at MS (--box ... | --fg ... | --bg ... | --outline ...) [--add] [--px] [--prior u2net] [--no-build]',
+    usage: 'studio matte key mt_xxxx --at MS (--box ... | --fg ... | --bg ... | --outline ... | --absent) [--add] [--px] [--prior u2net] [--no-build]',
     example: 'studio matte key mt_k3f9 --at 3400 --bg "0.2,0.5;0.22,0.55" --add',
     flags: [
       s('matte', 'matte id (or the first argument)'),
@@ -2046,6 +2047,7 @@ export const COMMANDS: CmdMeta[] = [
       b('px', 'coordinates are pixels of the video frame instead of fractions'),
       s('seeds', 'all the marks as JSON (box, fg, bg, outline)'),
       s('prior', 'a saliency model\'s guess as extra evidence: u2net or u2netp (needs the python models; marks alone work without)'),
+      b('absent', 'the object is NOT in the picture at this time (hidden behind something, or out of the frame): the matte is empty here, and following does not carry it past'),
       b('add', 'add these marks to the ones already on that frame instead of replacing them'),
       b('no-build', 'do not follow again now'),
     ],

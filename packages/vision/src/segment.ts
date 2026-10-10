@@ -856,6 +856,45 @@ export interface FollowStep {
   /** the band that was decided again (px) and how much of it stayed uncertain */
   band: number;
   uncertain: number;
+  /** how much the matte's pixels look like the marked object (colour evidence from the marked frame, 0..1; 1 when the matte is empty) */
+  confidence: number;
+  /** the matte did not look like the object (something else, or the object is hidden or out of the picture): nothing is shown, and the state is kept for when it is back */
+  hidden?: boolean;
+}
+
+/** Mean colour evidence of the pixels a matte covers: do they look like what was marked at the keyframe, and not like its surroundings? */
+function lookLike(st: FollowState, rgb: Uint8Array, alpha: Float32Array): number {
+  let s = 0;
+  let n = 0;
+  for (let i = 0; i < alpha.length; i += 2) {
+    if (alpha[i]! <= 0.5) continue;
+    const r = rgb[3 * i]!;
+    const g = rgb[3 * i + 1]!;
+    const b = rgb[3 * i + 2]!;
+    const a = st.refFg.p(r, g, b);
+    s += a / (a + st.refBg.p(r, g, b) + 1e-9);
+    n++;
+  }
+  return n < 12 ? 1 : s / n;
+}
+
+
+/**
+ * Ends a step: does the matte look like the marked object? If not (a neighbour, the background, the object gone), nothing is shown
+ * for this frame and what was learnt before is kept, so that the object can be found again when it is back.
+ */
+function finishStep(st: FollowState, rgb: Uint8Array, gray: Gray, alpha: Float32Array, band: number, uncertain: number, minConfidence?: number): FollowStep {
+  const confidence = lookLike(st, rgb, alpha);
+  if (minConfidence !== undefined && confidence < minConfidence) {
+    st.rgb = rgb;
+    st.gray = gray;
+    return { alpha: new Float32Array(alpha.length), band, uncertain: 1, confidence, hidden: true };
+  }
+  learn(st, rgb, alpha);
+  st.rgb = rgb;
+  st.gray = gray;
+  st.alpha = alpha;
+  return { alpha, band, uncertain, confidence };
 }
 
 /**
@@ -876,7 +915,7 @@ export function followPrepare(st: FollowState, rgb: Uint8Array): FollowPrep {
   return { gray, flow, warped: warpByFlow(st.alpha, w, h, flow.u, flow.v) };
 }
 
-export function followStep(st: FollowState, rgb: Uint8Array, o: { band?: number; prior?: Float32Array; pre?: FollowPrep } = {}): FollowStep {
+export function followStep(st: FollowState, rgb: Uint8Array, o: { band?: number; prior?: Float32Array; pre?: FollowPrep; minConfidence?: number } = {}): FollowStep {
   const { w, h } = st;
   const n = w * h;
   const { gray, flow, warped } = o.pre ?? followPrepare(st, rgb);
@@ -925,6 +964,12 @@ export function followStep(st: FollowState, rgb: Uint8Array, o: { band?: number;
       }
     // the model is trusted only while it agrees with where the motion says the object went (IoU of the two)
     const agree = before + after - both > 0 ? both / (before + after - both) : 0;
+    if (before > 0 && agree < 0.6 && after > 0) {
+      // The model found something else than where the motion says the object went (a neighbour of the same colours, or the object
+      // is hidden behind it). Colours cannot be trusted to grow the matte here (they would take the neighbour in): it is carried by
+      // the motion alone, and the visibility check below may hide it.
+      return finishStep(st, rgb, gray, warped.slice(), band, 1, o.minConfidence);
+    }
     if (before > 0 && agree >= 0.6) {
       const colour = new Float32Array(n);
       for (let i = 0; i < n; i++) {
@@ -939,11 +984,7 @@ export function followStep(st: FollowState, rgb: Uint8Array, o: { band?: number;
         st.extra = kept;
       }
       const r = refineToTarget(rgb, w, h, sel, colour);
-      learn(st, rgb, r.alpha);
-      st.rgb = rgb;
-      st.gray = gray;
-      st.alpha = r.alpha;
-      return { alpha: r.alpha, band: 3, uncertain: r.unsure };
+      return finishStep(st, rgb, gray, r.alpha, 3, r.unsure, o.minConfidence);
     }
   }
   const inside = new Uint8Array(n);
@@ -992,9 +1033,5 @@ export function followStep(st: FollowState, rgb: Uint8Array, o: { band?: number;
       if (alpha[i]! > 0.2 && alpha[i]! < 0.8) unsure++;
     }
   }
-  learn(st, rgb, alpha);
-  st.rgb = rgb;
-  st.gray = gray;
-  st.alpha = alpha;
-  return { alpha, band, uncertain: nActive ? unsure / nActive : 0 };
+  return finishStep(st, rgb, gray, alpha, band, nActive ? unsure / nActive : 0, o.minConfidence);
 }
