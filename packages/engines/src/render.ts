@@ -107,6 +107,7 @@ function hookSignals() {
 function runFfmpeg(args: string[], partial?: string): Promise<{ code: number; stderr: string }> {
   hookSignals();
   const scripted = withFilterScripts(args);
+  if (process.env['STUDIO_DUMP_FFMPEG']) writeFileSync(process.env['STUDIO_DUMP_FFMPEG'], JSON.stringify(args));
   return new Promise((resolve, reject) => {
     const child = spawn('ffmpeg', ['-hide_banner', '-nostdin', '-y', ...scripted.args], {
       stdio: ['ignore', 'ignore', 'pipe'],
@@ -340,7 +341,8 @@ export async function render(o: RenderOptions): Promise<RenderReport> {
   const common = ['-filter_complex', graph];
   const mkMain = (norm?: string): string[] => {
     const args = [...plan.inputs, ...common, '-map', vfinal];
-    if (stillMode) return [...args, '-frames:v', '1', '-f', 'image2', partial];
+    // the partial file's name ends in .partial, so the image muxer cannot tell the codec from it: PNG is said, or it writes JPEG
+    if (stillMode) return [...args, '-frames:v', '1', '-c:v', 'png', '-f', 'image2', partial];
     if (wantAudio) {
       args.push('-map', norm ? '[aout]' : '[amix]');
     }

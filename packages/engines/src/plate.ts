@@ -12,7 +12,7 @@ import { buildMatte, matteKey, type MatteData } from './matte.js';
 import { probeVideo } from '@studio/vision';
 import { EngineError } from './run.js';
 
-export const PLATE_VERSION = 1;
+export const PLATE_VERSION = 2;
 const MAX_FRAMES = 300;
 /** the default reach of the removed area past the matte, in thousandths of the picture's width */
 export const DEFAULT_PAD = 8;

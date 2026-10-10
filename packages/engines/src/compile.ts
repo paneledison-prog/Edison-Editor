@@ -3,14 +3,14 @@ import { join } from 'node:path';
 import { displaySize, speedOf, type Clip, type Fx, type Project } from '@studio/core';
 import { MAX_AUDIO_SPEED, clipAudioChain, dbToLin } from './audiofx.js';
 import { EngineError } from './run.js';
-import { blurRegionFilter, hasMotion, zoomFilter } from './zoom.js';
+import { blurRegionFilter, hasFrameMotion, hasLayer, hasMotion, layerIsStill, layerMaps, zoomFilter } from './zoom.js';
 import { effectLines, pluginEffectDecl, type FxContext } from './plugins.js';
 import { checkClipKeyframes, nodeLines } from './fxanim.js';
 import type { MatteData } from './matte.js';
 import type { PlateData } from './plate.js';
 import { plateId } from './plate.js';
 import type { TrackData } from './track.js';
-import { PIN_MARGIN, correctionTable, pinQuads, pinWarpLines, stabilizeLines, stabilizePlan, type ClipTiming } from './trackfx.js';
+import { PIN_MARGIN, correctionTable, layerWarpLines, pinQuads, pinWarpLines, stabilizeLines, stabilizePlan, type ClipTiming } from './trackfx.js';
 import type { Preset } from './presets.js';
 
 export interface Plan {
@@ -543,7 +543,7 @@ export function compile(inp: CompileInput): Plan {
       const pins = (c.fx ?? []).filter((f): f is Extract<Fx, { type: 'pin' }> => f.type === 'pin' && !f.bypass);
       if (pins.length) {
         if (!d.w || !d.h) throw new EngineError('INVALID_INPUT', `${c.id}: the size of ${c.asset} is not known, so a pin cannot be placed`, 'studio ingest it again');
-        if (hasMotion(c)) throw new EngineError('ENGINE_MISSING', `${c.id}: a pin cannot be used on a clip with zoom or pan keyframes`, 'remove those keyframes, or put the pin on a clip without them');
+        if (hasFrameMotion(c)) throw new EngineError('ENGINE_MISSING', `${c.id}: a pin cannot be used on a clip with zoom or pan keyframes`, 'remove those keyframes, or put the pin on a clip without them (moving it as a layer, dx dy size, is fine)');
         const base = `v${nV}`;
         const last = vLines.pop()!;
         let cur = `${base}pin`;
@@ -567,6 +567,18 @@ export function compile(inp: CompileInput): Plan {
           vLines.push(`[${cur}][${base}pt${i}]overlay=format=auto:eof_action=pass:repeatlast=0[${out}]`);
           cur = out;
         });
+      }
+      // A layer: the finished picture (cut out, effects, pins) is placed on the canvas by its own motion, about its anchor; what
+      // it no longer covers is transparent and shows the tracks below.
+      if (hasLayer(c)) {
+        const maps = layerMaps(c, timing.frames, fps, { w: width, h: height }, { x: width / p.meta.width, y: height / p.meta.height });
+        if (!layerIsStill(maps)) {
+          const base = `v${nV}`;
+          const last = vLines.pop()!;
+          const cur = `${base}lay`;
+          vLines.push(last.replace(new RegExp(`\\[${base}\\]$`), `[${cur}]`));
+          vLines.push(...layerWarpLines(cur, base, `${base}ly`, maps, { w: width, h: height }, c.start / 1000));
+        }
       }
       vLines.push(...mLines);
       if (d.w && d.h && t.type === 'video') {

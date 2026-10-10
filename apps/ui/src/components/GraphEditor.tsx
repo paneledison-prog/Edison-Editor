@@ -23,7 +23,7 @@ interface Props {
 const W = 264;
 const H = 150;
 const PAD = 18;
-const RANGE: Record<string, [number, number]> = { scale: [1, 2], x: [0, 1], y: [0, 1], opacity: [0, 1], rot: [-45, 45] };
+const RANGE: Record<string, [number, number]> = { scale: [1, 2], x: [0, 1], y: [0, 1], opacity: [0, 1], rot: [-45, 45], dx: [-500, 500], dy: [-500, 500], size: [0.2, 2], ax: [0, 1], ay: [0, 1] };
 
 /**
  * Value graph of one keyframed property: time across, value up. The curve is drawn from the same easing

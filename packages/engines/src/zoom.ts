@@ -18,7 +18,7 @@ export interface Pt {
 /** Points (seconds, clip-local) of one property: keyframes, else the constant transform value, else the default. */
 export function propPoints(
   c: Clip,
-  prop: 'scale' | 'x' | 'y' | 'rot' | 'opacity',
+  prop: 'scale' | 'x' | 'y' | 'rot' | 'opacity' | LayerProp,
   dflt: number,
 ): Pt[] {
   return pointsOf(c.keyframes?.[prop], (c.transform as Record<string, number | undefined> | undefined)?.[prop] ?? dflt);
@@ -88,6 +88,60 @@ export function hasMotion(c: Clip): boolean {
 
 export const MAX_SCALE = 8;
 
+/** The layer properties: they move the clip's picture over what is below it (see `Transform` in @studio/core). */
+export const LAYER_PROPS = ['dx', 'dy', 'size', 'ax', 'ay'] as const;
+export type LayerProp = (typeof LAYER_PROPS)[number];
+
+/** Whether the clip is placed as a layer (any layer property set or keyframed): its rotation then turns about the anchor. */
+export function hasLayer(c: Clip): boolean {
+  const t = c.transform as Record<string, number | undefined> | undefined;
+  return LAYER_PROPS.some((p) => !!c.keyframes?.[p]?.length || t?.[p] !== undefined);
+}
+
+/** Zoom, pan, rotation inside the frame, or opacity: what zoomFilter does (the layer placement is separate). */
+export function hasFrameMotion(c: Clip): boolean {
+  const layered = hasLayer(c);
+  const own = ['scale', 'x', 'y', 'opacity', ...(layered ? [] : ['rot'])];
+  const t = c.transform as Record<string, number | undefined> | undefined;
+  return own.some((p) => !!c.keyframes?.[p]?.length || t?.[p] !== undefined);
+}
+
+/**
+ * Where the layer is in each output frame: the affine map from the clip's picture (canvas pixels, centres at i + 0.5) to the
+ * canvas, as [a, b, c, d, e, f] with x' = a x + b y + c, y' = d x + e y + f. `k` = (project pixels to render pixels) for dx, dy.
+ */
+export function layerMaps(c: Clip, frames: number, fps: number, canvas: { w: number; h: number }, k: { x: number; y: number }): number[][] {
+  const pts = {
+    dx: propPoints(c, 'dx', 0),
+    dy: propPoints(c, 'dy', 0),
+    size: propPoints(c, 'size', 1),
+    ax: propPoints(c, 'ax', 0.5),
+    ay: propPoints(c, 'ay', 0.5),
+    rot: propPoints(c, 'rot', 0),
+  };
+  for (const p of pts.size) if (p.v < 0.02 || p.v > MAX_SCALE) throw new EngineError('INVALID_INPUT', `${c.id}: size ${p.v} is outside 0.02..${MAX_SCALE}`);
+  for (const p of pts.rot) if (Math.abs(p.v) > 3600) throw new EngineError('INVALID_INPUT', `${c.id}: rot ${p.v} is outside -3600..3600 degrees`);
+  const out: number[][] = [];
+  for (let i = 0; i < frames; i++) {
+    const t = i / fps;
+    const s = valueAt(pts.size, t);
+    const r = (valueAt(pts.rot, t) * Math.PI) / 180;
+    const Ax = valueAt(pts.ax, t) * canvas.w;
+    const Ay = valueAt(pts.ay, t) * canvas.h;
+    const Dx = valueAt(pts.dx, t) * k.x;
+    const Dy = valueAt(pts.dy, t) * k.y;
+    const cs = Math.cos(r) * s;
+    const sn = Math.sin(r) * s;
+    // p' = A + R s (p - A) + D   (y points down, so a positive angle turns clockwise on screen)
+    out.push([cs, -sn, Ax - cs * Ax + sn * Ay + Dx, sn, cs, Ay - sn * Ax - cs * Ay + Dy]);
+  }
+  return out;
+}
+
+/** True when every map is the identity (nothing to warp). */
+export const layerIsStill = (maps: number[][]): boolean =>
+  maps.every((m) => Math.abs(m[0]! - 1) < 1e-9 && Math.abs(m[1]!) < 1e-9 && Math.abs(m[2]!) < 1e-6 && Math.abs(m[3]!) < 1e-9 && Math.abs(m[4]! - 1) < 1e-9 && Math.abs(m[5]!) < 1e-6);
+
 const identity = (c: Clip, prop: 'rot' | 'opacity', v: number) =>
   !c.keyframes?.[prop]?.length && ((c.transform as Record<string, number> | undefined)?.[prop] ?? v) === v;
 
@@ -98,14 +152,16 @@ const identity = (c: Clip, prop: 'rot' | 'opacity', v: number) =>
  */
 export function zoomFilter(c: Clip, width: number, height: number): string {
   if (!hasMotion(c)) return '';
-  const known = new Set(['scale', 'x', 'y', 'rot', 'opacity']);
+  const known = new Set(['scale', 'x', 'y', 'rot', 'opacity', ...LAYER_PROPS]);
   for (const p of Object.keys(c.keyframes ?? {}))
     if (!known.has(p) && !isFxProp(p))
       throw new EngineError(
         'ENGINE_MISSING',
-        `${c.id}: keyframes on "${p}" are not implemented for media clips; supported: scale, x, y, rot, opacity`,
+        `${c.id}: keyframes on "${p}" are not implemented for media clips; supported: scale, x, y, rot, opacity, dx, dy, size, ax, ay`,
         'remove it, or use one of the supported properties',
       );
+  // a layer turns about its anchor, after it is cut out: that is done with its placement, not here
+  const layered = hasLayer(c);
   const geom = ['scale', 'x', 'y'].some(
     (p) => c.keyframes?.[p]?.length || (c.transform as Record<string, number> | undefined)?.[p] !== undefined,
   );
@@ -128,7 +184,7 @@ export function zoomFilter(c: Clip, width: number, height: number): string {
       `scale=w='${sw}':h='${sh}':eval=frame:flags=lanczos,` +
       `crop=${width}:${height}:x='min(max((${cx})*${sw}-${width / 2},0),${sw}-${width})':y='min(max((${cy})*${sh}-${height / 2},0),${sh}-${height})',`;
   }
-  if (!identity(c, 'rot', 0)) {
+  if (!layered && !identity(c, 'rot', 0)) {
     const pts = propPoints(c, 'rot', 0);
     for (const p of pts)
       if (Math.abs(p.v) > 3600)

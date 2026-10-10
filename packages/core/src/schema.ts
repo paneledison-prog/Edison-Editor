@@ -177,6 +177,12 @@ export const Track = z
   })
   .strict();
 
+/**
+ * A clip's motion. On media clips `scale` (1..8), `x`, `y` (0..1) zoom into the picture and pan inside it (the frame stays
+ * filled). The layer properties move the clip's picture over what is below it, as a layer: `dx`, `dy` (project pixels),
+ * `size` (0.02..8, about the anchor), `ax`, `ay` (the anchor, fractions of the canvas, default its centre); `rot` (degrees,
+ * clockwise) turns about the anchor; what the layer no longer covers shows the tracks below. `opacity` is 0..1.
+ */
 export const Transform = z
   .object({
     x: z.number(),
@@ -184,6 +190,11 @@ export const Transform = z
     scale: z.number(),
     rot: z.number(),
     opacity: z.number().min(0).max(1),
+    dx: z.number().min(-20000).max(20000),
+    dy: z.number().min(-20000).max(20000),
+    size: z.number().min(0.02).max(8),
+    ax: z.number().min(-2).max(3),
+    ay: z.number().min(-2).max(3),
   })
   .partial()
   .strict();

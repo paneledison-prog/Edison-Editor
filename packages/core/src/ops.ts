@@ -86,6 +86,51 @@ const ms = z.number().int().min(0);
 
 const ClipInput = z.object({ clip: Clip });
 
+/** Clips linked to `c` (the same non-empty `link`), not counting `c`. */
+function linkedTo(p: Project, c: Clip): Clip[] {
+  return c.link ? p.clips.filter((o) => o.id !== c.id && o.link === c.link) : [];
+}
+
+/**
+ * Splits one clip at timeline time `at` (strictly inside it): see clip.split. The right half of a linked clip gets a link of
+ * its own (`<link>@<at>`), shared with the other right halves, so each half of the shot stays one group.
+ */
+function splitOne(p: Project, id: string, at: number, newId: string, kfIds: string[], relink?: string): OpSpec[] {
+  const c = getClip(p, id);
+  if (!(at > c.start && at < c.start + c.dur)) {
+    throw new OpError('INVALID_ARGS', `split time ${at} ms is not inside clip ${c.id} (${c.start}–${c.start + c.dur} ms)`);
+  }
+  const prev = snap(c);
+  const leftDur = at - c.start;
+  const right: Clip = snap(c);
+  right.id = newId;
+  right.start = at;
+  right.dur = c.dur - leftDur;
+  if (c.srcIn !== undefined || c.asset)
+    right.srcIn = (c.srcIn ?? 0) + Math.round(leftDur * speedOf(c));
+  if (c.keyframes) {
+    const ids = [...kfIds];
+    const lk: NonNullable<Clip['keyframes']> = {};
+    const rk: NonNullable<Clip['keyframes']> = {};
+    for (const [prop, kfs] of Object.entries(c.keyframes)) {
+      const l = kfs.filter((k) => k.t < leftDur);
+      const r = kfs
+        .filter((k) => k.t >= leftDur)
+        .map((k) => ({ ...k, id: ids.shift()!, t: k.t - leftDur }));
+      if (l.length) lk[prop] = l;
+      if (r.length) rk[prop] = r;
+    }
+    c.keyframes = Object.keys(lk).length ? lk : undefined;
+    right.keyframes = Object.keys(rk).length ? rk : undefined;
+    if (!c.keyframes) delete c.keyframes;
+    if (!right.keyframes) delete right.keyframes;
+  }
+  c.dur = leftDur;
+  p.clips.push(right);
+  if (relink && c.link) right.link = `${c.link}@${relink}`;
+  return [{ type: 'clip.delete', args: { id: right.id } }, putSpec(prev)];
+}
+
 export const OPS = {
   'asset.add': def({
     args: z.object({ id: AssetId.optional(), asset: Asset }),
@@ -292,17 +337,25 @@ export const OPS = {
       return [putSpec(c)];
     },
   }),
+  /** Clips with the same `link` (the layers of one shot) move with it, by the same amount; only the named clip changes track. */
   'clip.move': def({
     args: z.object({ id: ClipId, start: ms, track: TrackId.optional() }),
     apply(p, a) {
       const c = getClip(p, a.id);
-      const prev = snap(c);
+      const inverse: OpSpec[] = [];
+      const delta = a.start - c.start;
+      for (const o of linkedTo(p, c)) {
+        if (o.start + delta < 0) throw new OpError('INVALID_ARGS', `moving ${c.id} by ${delta} ms would put the clip linked to it, ${o.id}, before 0`);
+        inverse.push(putSpec(snap(o)));
+        o.start += delta;
+      }
+      inverse.push(putSpec(snap(c)));
       c.start = a.start;
       if (a.track) c.track = a.track;
-      return [putSpec(prev)];
+      return inverse.reverse();
     },
   }),
-  /** Absolute values, not deltas. srcIn changes the source in-point. */
+  /** Absolute values, not deltas. srcIn changes the source in-point. Clips linked to it change by the same amounts. */
   'clip.trim': def({
     args: z.object({
       id: ClipId,
@@ -312,11 +365,24 @@ export const OPS = {
     }),
     apply(p, a) {
       const c = getClip(p, a.id);
-      const prev = snap(c);
+      const inverse: OpSpec[] = [];
+      const dStart = a.start !== undefined ? a.start - c.start : 0;
+      const dDur = a.dur !== undefined ? a.dur - c.dur : 0;
+      const dSrc = a.srcIn !== undefined ? a.srcIn - (c.srcIn ?? 0) : 0;
+      for (const o of linkedTo(p, c)) {
+        const next = { start: o.start + dStart, dur: o.dur + dDur, srcIn: (o.srcIn ?? 0) + dSrc };
+        if (next.start < 0 || next.dur <= 0 || next.srcIn < 0)
+          throw new OpError('INVALID_ARGS', `the clip linked to ${c.id}, ${o.id}, cannot be trimmed the same way (start ${next.start}, dur ${next.dur}, srcIn ${next.srcIn})`);
+        inverse.push(putSpec(snap(o)));
+        o.start = next.start;
+        o.dur = next.dur;
+        if (o.srcIn !== undefined || dSrc) o.srcIn = next.srcIn;
+      }
+      inverse.push(putSpec(snap(c)));
       if (a.start !== undefined) c.start = a.start;
       if (a.dur !== undefined) c.dur = a.dur;
       if (a.srcIn !== undefined) c.srcIn = a.srcIn;
-      return [putSpec(prev)];
+      return inverse.reverse();
     },
   }),
   /**
@@ -330,58 +396,39 @@ export const OPS = {
       at: ms,
       newId: ClipId.optional(),
       kfIds: z.array(KeyframeId).optional(),
+      /** the clips linked to it that are split at the same time (filled in when the op is resolved) */
+      linked: z.array(z.object({ id: ClipId, newId: ClipId, kfIds: z.array(KeyframeId) }).strict()).optional(),
     }),
     resolve(a, p, ctx) {
       const c = getClip(p, a.id);
-      const moving = Object.values(c.keyframes ?? {})
-        .flat()
-        .filter((k) => k.t >= a.at - c.start).length;
       const taken = kfIdSet(p);
-      const kfIds =
-        a.kfIds ??
-        Array.from({ length: moving }, () => {
+      const takenClips = clipIds(p);
+      const idsFor = (x: Clip) =>
+        Array.from({ length: Object.values(x.keyframes ?? {}).flat().filter((k) => k.t >= a.at - x.start).length }, () => {
           const id = makeId('k', taken, ctx.rng);
           taken.add(id);
           return id;
         });
-      return { ...a, newId: a.newId ?? makeId('c', clipIds(p), ctx.rng), kfIds };
+      const kfIds = a.kfIds ?? idsFor(c);
+      const newId = a.newId ?? makeId('c', takenClips, ctx.rng);
+      takenClips.add(newId);
+      const linked =
+        a.linked ??
+        linkedTo(p, c)
+          .filter((o) => a.at > o.start && a.at < o.start + o.dur)
+          .map((o) => {
+            const nid = makeId('c', takenClips, ctx.rng);
+            takenClips.add(nid);
+            return { id: o.id, newId: nid, kfIds: idsFor(o) };
+          });
+      return { ...a, newId, kfIds, ...(linked.length ? { linked } : {}) };
     },
     apply(p, a) {
-      const c = getClip(p, a.id);
-      if (!(a.at > c.start && a.at < c.start + c.dur)) {
-        throw new OpError(
-          'INVALID_ARGS',
-          `split time ${a.at} ms is not inside clip ${c.id} (${c.start}–${c.start + c.dur} ms)`,
-        );
-      }
-      const prev = snap(c);
-      const leftDur = a.at - c.start;
-      const right: Clip = snap(c);
-      right.id = a.newId!;
-      right.start = a.at;
-      right.dur = c.dur - leftDur;
-      if (c.srcIn !== undefined || c.asset)
-        right.srcIn = (c.srcIn ?? 0) + Math.round(leftDur * speedOf(c));
-      if (c.keyframes) {
-        const ids = [...(a.kfIds ?? [])];
-        const lk: NonNullable<Clip['keyframes']> = {};
-        const rk: NonNullable<Clip['keyframes']> = {};
-        for (const [prop, kfs] of Object.entries(c.keyframes)) {
-          const l = kfs.filter((k) => k.t < leftDur);
-          const r = kfs
-            .filter((k) => k.t >= leftDur)
-            .map((k) => ({ ...k, id: ids.shift()!, t: k.t - leftDur }));
-          if (l.length) lk[prop] = l;
-          if (r.length) rk[prop] = r;
-        }
-        c.keyframes = Object.keys(lk).length ? lk : undefined;
-        right.keyframes = Object.keys(rk).length ? rk : undefined;
-        if (!c.keyframes) delete c.keyframes;
-        if (!right.keyframes) delete right.keyframes;
-      }
-      c.dur = leftDur;
-      p.clips.push(right);
-      return [{ type: 'clip.delete', args: { id: right.id } }, putSpec(prev)];
+      const inverse: OpSpec[] = [];
+      const relink = a.linked?.length ? String(a.at) : undefined;
+      for (const l of a.linked ?? []) inverse.push(...splitOne(p, l.id, a.at, l.newId, l.kfIds, relink));
+      inverse.push(...splitOne(p, a.id, a.at, a.newId!, a.kfIds ?? [], relink));
+      return inverse.reverse();
     },
   }),
   /**

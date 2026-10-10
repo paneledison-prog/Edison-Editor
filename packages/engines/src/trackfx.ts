@@ -156,6 +156,45 @@ export function pinWarpLines(from: string, to: string, uid: string, quads: Quad[
 }
 
 /**
+ * Places a layer (`from`: a canvas-sized picture, with or without alpha) on the canvas by a per-frame affine map
+ * (`maps[k]` = [a, b, c, d, e, f], canvas pixels, see layerMaps in zoom.ts). The picture is first given a transparent margin,
+ * so what it no longer covers is transparent rather than its edge pixels repeated, then warped, then cut back to the canvas.
+ * Whole-pixel moves sample whole pixels: the picture is moved, not resampled.
+ */
+export function layerWarpLines(from: string, to: string, uid: string, maps: number[][], canvas: { w: number; h: number }, atSec: number): string[] {
+  const m = PIN_MARGIN * 4;
+  const W = canvas.w + 2 * m;
+  const H = canvas.h + 2 * m;
+  const rows = maps.map(([a, b, c, d, e, f]) => {
+    // corner (x, y) of the padded picture (index space, as the filter counts them) goes where the map sends the matching canvas
+    // point; pixel centres sit at i + 0.5
+    const at = (x: number, y: number) => {
+      const px = x - m + 0.5;
+      const py = y - m + 0.5;
+      return [a! * px + b! * py + c! + m - 0.5, d! * px + e! * py + f! + m - 0.5];
+    };
+    return [...at(0, 0), ...at(W, 0), ...at(0, H), ...at(W, H)];
+  });
+  const filt = (vals: number[][]) => {
+    const e = exprs(vals);
+    const q = (j: number) => `'${e[j]!.startsWith('if(') ? `(${e[j]})` : e[j]}'`;
+    return `perspective=x0=${q(0)}:y0=${q(1)}:x1=${q(2)}:y1=${q(3)}:x2=${q(4)}:y2=${q(5)}:x3=${q(6)}:y3=${q(7)}:interpolation=cubic:sense=destination:eval=frame`;
+  };
+  const head = `format=yuva420p,pad=${W}:${H}:${m}:${m}:color=black@0`;
+  const tail = `crop=${canvas.w}:${canvas.h}:${m}:${m}`;
+  const ps = pieces(rows.length);
+  if (ps.length <= 1) return [`[${from}]${head},${filt(rows)},${tail}[${to}]`];
+  const lines = [`[${from}]${head},split=${ps.length}${ps.map((_, i) => `[${uid}i${i}]`).join('')}`];
+  ps.forEach(([a, b], i) => {
+    const last = i === ps.length - 1;
+    lines.push(`[${uid}i${i}]trim=start_frame=${a}${last ? '' : `:end_frame=${b}`},setpts=PTS-STARTPTS,${filt(rows.slice(a, b))}[${uid}o${i}]`);
+  });
+  // the pieces are joined from time 0; the clip's place on the timeline is put back after
+  lines.push(`${ps.map((_, i) => `[${uid}o${i}]`).join('')}concat=n=${ps.length}:v=1:a=0,${tail},setpts=PTS+${atSec.toFixed(3)}/TB[${to}]`);
+  return lines;
+}
+
+/**
  * Where a pin's quad is in each output frame, in canvas pixels. `quadRef` is the quad at the tracker's reference frame (unit
  * coordinates); `steady` is the clip's stabilization table when there is one (the picture the pin sits on is then the steadied
  * one); `fit` places the displayed frame on the canvas (reframing).

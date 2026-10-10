@@ -5,8 +5,9 @@
  * the matte: as a cutout (transparent outside), or to limit any effect to the object or to everything else.
  * The marks are ops in the project; the matte video is derived and cached (packages/engines/src/matte.ts).
  */
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { cryptoRng, makeId, Matte, MatteSeeds, type Fx, type Project } from '@studio/core';
+import { cryptoRng, makeId, Matte, MatteSeeds, type Clip, type Fx, type Project } from '@studio/core';
 import { CliError } from '../args.js';
 import type { Handler, Invocation } from '../main.js';
 import { clipOf, fxSpecs } from './fx.js';
@@ -554,8 +555,31 @@ function keepGroups(text: string): string[][] {
     .map((g) => g.split('+').map((x) => (x.trim().startsWith('s') ? x.trim() : `s${x.trim()}`)));
 }
 
-/** `studio bg remove`: keep the chosen subjects, take out the rest of every frame. */
-export const bgRemove: Handler = async (inv) => {
+type Engines = Awaited<ReturnType<typeof engines>>;
+
+/** What `bg remove` and `bg layers` share: the subjects named, and one matte per kept thing (not yet in the project). */
+interface KeptPlan {
+  E: Engines;
+  project: Project;
+  clip?: Clip;
+  assetId: string;
+  from: number;
+  to: number;
+  run: string;
+  found: import('@studio/engines').SubjectsRun;
+  byId: Map<string, import('@studio/engines').Subject>;
+  groups: string[][];
+  removeIds: Set<string>;
+  notes: string[];
+  edge: Matte['edge'] | undefined;
+  /** one matte per kept thing, in the order of --keep */
+  members: { id: string; matte: Matte; group: string[] }[];
+  specs: { type: string; args: Record<string, unknown> }[];
+  mattes: Record<string, Matte>;
+  taken: Set<string>;
+}
+
+async function keptPlan(inv: Invocation, what: string): Promise<KeptPlan> {
   const { project } = store(inv).load();
   const E = await engines();
   const clipId = str(inv, 'clip');
@@ -569,7 +593,7 @@ export const bgRemove: Handler = async (inv) => {
   const to = Math.round(num(inv, 'to') ?? Math.min(a.probe.durMs ?? pTo + 200, pTo + (clip ? 200 : 0)));
   const notes: string[] = [];
   let keep = str(inv, 'keep');
-  let found: Awaited<ReturnType<typeof E.findSubjects>>;
+  let found: import('@studio/engines').SubjectsRun;
   if (!run) {
     if (!inv.flags['auto']) throw new CliError('INVALID_ARGS', 'say what to keep: --run sub_xxxx --keep 1,3 (studio bg subjects --asset ' + aid + ' lists the subjects), or --auto to keep the most prominent one', 2);
     inv.log('looking for the main subject');
@@ -592,15 +616,14 @@ export const bgRemove: Handler = async (inv) => {
   const removeIds = new Set(str(inv, 'remove') ? keepGroups(str(inv, 'remove')!).flat() : []);
   for (const id of [...groups.flat(), ...removeIds]) if (!byId.has(id)) throw new CliError('NOT_FOUND', `no subject ${id} in ${run}`, 2, `the ids are ${[...byId.keys()].join(' ')}`);
   for (const id of removeIds) if (groups.flat().includes(id)) throw new CliError('INVALID_ARGS', `${id} is both kept and removed`, 2);
-  const keptAll = new Set(groups.flat());
   const taken = new Set(Object.keys(project.mattes ?? {}));
   const specs: { type: string; args: Record<string, unknown> }[] = [];
-  const memberIds: string[] = [];
+  const members: KeptPlan['members'] = [];
   const mattes: Record<string, Matte> = {};
   const edge = edgeFrom(inv);
   for (const g of groups) {
     const subs = g.map((id) => byId.get(id)!);
-    // one marked frame per moment the group's subjects were found at; the other things there are marked as not the object
+    // one marked frame per moment the group's subjects were found at
     const byAt = new Map<number, typeof subs>();
     for (const x of subs) byAt.set(x.at, [...(byAt.get(x.at) ?? []), x]);
     const keys = [...byAt.entries()]
@@ -613,9 +636,9 @@ export const bgRemove: Handler = async (inv) => {
         for (const x of xs) {
           let at2 = 0;
           let v = 0;
-          for (const run of x.mask.rle) {
-            if (v) for (let q = at2; q < Math.min(union.length, at2 + run); q++) union[q] = 1;
-            at2 += run;
+          for (const r of x.mask.rle) {
+            if (v) for (let q = at2; q < Math.min(union.length, at2 + r); q++) union[q] = 1;
+            at2 += r;
             v ^= 1;
           }
         }
@@ -638,34 +661,49 @@ export const bgRemove: Handler = async (inv) => {
       ...(num(inv, 'fps') !== undefined ? { fps: num(inv, 'fps') } : {}),
       ...(num(inv, 'width') !== undefined ? { width: num(inv, 'width') } : {}),
       ...(edge ? { edge } : {}),
-      label: `bg remove: keep ${g.join('+')}`,
+      label: `${what}: keep ${g.join('+')}`,
     });
     const id = makeId('mt', taken, cryptoRng());
     taken.add(id);
     mattes[id] = matte;
-    memberIds.push(id);
+    members.push({ id, matte, group: g });
     specs.push({ type: 'matte.add', args: { id, matte } });
   }
-  let finalId = memberIds[0]!;
-  if (memberIds.length > 1) {
-    finalId = makeId('mt', taken, cryptoRng());
-    const u = parsedMatte({ asset: assetId, from, to, keys: [], union: memberIds, ...(edge ? { edge } : {}), label: `bg remove: keep ${groups.map((g) => g.join('+')).join(', ')}` });
-    mattes[finalId] = u;
-    specs.push({ type: 'matte.add', args: { id: finalId, matte: u } });
-  }
-  const ahead = { ...project, mattes: { ...(project.mattes ?? {}), ...mattes } } as Project;
+  return { E, project, ...(clip ? { clip } : {}), assetId, from, to, run: run!, found, byId, groups, removeIds, notes, edge, members, specs, mattes, taken };
+}
+
+/** The union of the plan's mattes (added to the plan), or its single matte. */
+function unionOfPlan(plan: KeptPlan, what: string): string {
+  if (plan.members.length === 1) return plan.members[0]!.id;
+  const id = makeId('mt', plan.taken, cryptoRng());
+  plan.taken.add(id);
+  const u = parsedMatte({ asset: plan.assetId, from: plan.from, to: plan.to, keys: [], union: plan.members.map((m) => m.id), ...(plan.edge ? { edge: plan.edge } : {}), label: `${what}: ${plan.groups.map((g) => g.join('+')).join(', ')}` });
+  plan.mattes[id] = u;
+  plan.specs.push({ type: 'matte.add', args: { id, matte: u } });
+  return id;
+}
+
+const describeGroup = (plan: KeptPlan, g: string[]) => g.map((id) => plan.byId.get(id)!).map((x) => `${x.id} (${x.colour}, ${x.areaPct}%${x.top ? '' : ', a part'})`).join(' + ');
+
+/** `studio bg remove`: keep the chosen subjects, take out the rest of every frame. */
+export const bgRemove: Handler = async (inv) => {
+  const plan = await keptPlan(inv, 'bg remove');
+  const { E, clip, found, groups, removeIds, notes, members } = plan;
+  const finalId = unionOfPlan(plan, 'bg remove: keep');
+  const ahead = { ...plan.project, mattes: { ...(plan.project.mattes ?? {}), ...plan.mattes } } as Project;
   let built: Awaited<ReturnType<typeof build>> | undefined;
   if (!inv.flags['no-build'] && !inv.dryRun) built = await build(inv, ahead, finalId);
   let node: string | undefined;
+  const specs = [...plan.specs];
   if (clip) {
     const feather = num(inv, 'feather');
     const choke = num(inv, 'choke');
     const fx: Fx = { type: 'cutout', matte: { id: finalId, ...(feather ? { feather } : {}), ...(choke ? { choke } : {}) } };
-    const { list: stack, node: nd } = newEntry(project, clip, fx);
+    const { list: stack, node: nd } = newEntry(plan.project, clip, fx);
     node = nd;
     specs.push(...fxSpecs(clip, stack));
   }
-  const r = runSpecs(inv, specs, `bg remove ${assetId}`);
+  const r = runSpecs(inv, specs, `bg remove ${plan.assetId}`);
   let preview: string | undefined;
   if (built && !inv.dryRun) {
     const look = needsLook(built.data, 4);
@@ -673,27 +711,167 @@ export const bgRemove: Handler = async (inv) => {
     await E.matteSheet({ projectDir: inv.dir, project: ahead, id: finalId, data: built.data, out: join(inv.dir, rel), frames: [...new Set([0, Math.floor((built.data.frames - 1) / 2), built.data.frames - 1, ...look])].slice(0, 8) });
     preview = rel;
   }
-  const kept = groups.map((g) => g.map((id) => byId.get(id)!)).map((xs) => xs.map((x) => `${x.id} (${x.colour}, ${x.areaPct}%${x.top ? '' : ', a part'})`).join(' + '));
+  const keptAll = new Set(groups.flat());
   return {
     ...r,
     data: {
       ...(r.data as object),
       matte: finalId,
-      ...(memberIds.length > 1 ? { members: memberIds } : {}),
+      ...(members.length > 1 ? { members: members.map((m) => m.id) } : {}),
       ...(node ? { cutout: { clip: clip!.id, node } } : {}),
-      kept,
+      kept: groups.map((g) => describeGroup(plan, g)),
       ...(removeIds.size ? { removedExplicitly: [...removeIds] } : {}),
       leftOut: found.subjects.filter((x) => x.top && !keptAll.has(x.id)).map((x) => `${x.id} (${x.colour}, ${x.areaPct}%)`),
       ...(notes.length ? { notes } : {}),
       ...(built ? { result: summary(built.data), wallMs: built.wallMs } : { result: `not built (studio matte build ${finalId})` }),
       ...(built ? { needsALook: needsLook(built.data).map((f) => ({ frame: f, ms: Math.round(built!.data.fromMs + (f * 1000) / built!.data.fps), how: built!.data.quality?.frames[f]?.how })) } : {}),
       ...(preview ? { preview } : {}),
-      next: [`studio bg check ${finalId}   (the frames most likely to be wrong, on one sheet)`, `studio mask key ${memberIds[0]!} --at MS --neg "x,y" --add   (a neighbour joined: mark it where it did; --absent where the object is not in the picture)`, node && clip ? `studio fx set --clip ${clip.id} --node ${node} --feather 1.5   (soften the edge)` : `studio cutout --clip c_xx --matte ${finalId}`],
+      next: [`studio bg check ${finalId}   (the frames most likely to be wrong, on one sheet)`, `studio mask key ${members[0]!.id} --at MS --neg "x,y" --add   (a neighbour joined: mark it where it did; --absent where the object is not in the picture)`, node && clip ? `studio fx set --clip ${clip.id} --node ${node} --feather 1.5   (soften the edge)` : `studio cutout --clip c_xx --matte ${finalId}`, `studio bg layers --run ${plan.run} --keep ... --clip c_xx   (instead: each kept thing a layer of its own that can be moved, with the background rebuilt behind it)`],
     },
     ...(built ? { warnings: warningsOf(finalId, built.data) } : {}),
     ...(preview ? { artifacts: [{ kind: 'image', path: preview }] } : {}),
   };
 };
+
+/**
+ * `studio bg layers`: a shot split into layers. Each kept thing becomes a clip of its own on its own track above the shot, cut
+ * out by its own matte (an element that can be moved, sized, turned and given effects); the shot itself stays below as the
+ * background, with the kept things erased from it (rebuilt from other frames), so that moving an element leaves no copy of it
+ * behind. All the layers are linked: moving or trimming one in time moves or trims them all.
+ */
+export const bgLayers: Handler = async (inv) => {
+  if (!str(inv, 'clip')) throw new CliError('INVALID_ARGS', '--clip is required: the shot to split into layers', 2, 'studio project show lists clips');
+  const plan = await keptPlan(inv, 'layer');
+  const { E, clip, members, notes } = plan;
+  const shot = clip!;
+  const project = plan.project;
+  const doErase = !inv.flags['no-erase'];
+  const eraseId = doErase ? unionOfPlan(plan, 'layers: erased from the background') : undefined;
+  const specs = [...plan.specs];
+  const link = shot.link ?? `ly_${createHash('sha256').update(`${shot.id}:${Date.now()}:${Math.random()}`).digest('hex').slice(0, 6)}`;
+  // the background: the shot, with the kept things erased from it
+  const bgLabel = shot.label ?? `background (${plan.groups.map((g) => g.join('+')).join(', ')} ${doErase ? 'erased' : 'still in it'})`;
+  let bgFx = shot.fx ?? [];
+  if (eraseId) {
+    const pad = num(inv, 'pad');
+    const fx: Fx = { type: 'erase', matte: { id: eraseId }, ...(pad !== undefined ? { pad } : {}) } as Fx;
+    bgFx = newEntry(project, shot, fx).list;
+  }
+  specs.push({ type: 'clip.set', args: { id: shot.id, patch: { fx: bgFx.length ? bgFx : null, link, label: bgLabel } } });
+  // the elements: a copy of the shot (same timing, same motion, same look) on a new track above it, cut out by one matte each
+  const trackIdx = project.tracks.findIndex((t) => t.id === shot.track);
+  const tracksTaken = new Set(project.tracks.map((t) => t.id));
+  const clipsTaken = new Set(project.clips.map((c) => c.id));
+  const nodesTaken = new Set(project.clips.flatMap((c) => (c.fx ?? []).map((f) => (f as { node?: string }).node).filter(Boolean) as string[]));
+  for (const f of bgFx) if ((f as { node?: string }).node) nodesTaken.add((f as { node?: string }).node!);
+  const rng = cryptoRng();
+  const kfTaken = new Set(project.clips.flatMap((c) => Object.values(c.keyframes ?? {}).flat().map((k) => k.id)));
+  const d = project.assets[plan.assetId]!.probe;
+  const layers: { clip: string; track: string; kind: 'element' | 'background'; what: string; matte?: string; anchor?: [number, number] }[] = [{ clip: shot.id, track: shot.track, kind: 'background', what: bgLabel, ...(eraseId ? { matte: eraseId } : {}) }];
+  const feather = num(inv, 'feather');
+  const choke = num(inv, 'choke');
+  members.forEach((m, k) => {
+    const tid = makeId('t', tracksTaken, rng);
+    tracksTaken.add(tid);
+    const cid = makeId('c', clipsTaken, rng);
+    clipsTaken.add(cid);
+    const what = describeGroup(plan, m.group);
+    specs.push({ type: 'track.add', args: { id: tid, type: 'video', name: `element ${m.group.join('+')}`, index: trackIdx + 1 + k } });
+    // the shot's own effects (look, timing, steadying), each under a new name; its keyframes follow their effects
+    const rename = new Map<string, string>();
+    const fx: Fx[] = [];
+    for (const f of shot.fx ?? []) {
+      if (f.type === 'erase' || f.type === 'cutout' || f.type === 'pin') continue;
+      const old = (f as { node?: string }).node;
+      if (old) {
+        const nn = makeId('f', nodesTaken, rng);
+        nodesTaken.add(nn);
+        rename.set(old, nn);
+        fx.push({ ...f, node: nn } as Fx);
+      } else fx.push({ ...f } as Fx);
+    }
+    const cutNode = makeId('f', nodesTaken, rng);
+    nodesTaken.add(cutNode);
+    fx.push({ type: 'cutout', matte: { id: m.id, ...(feather ? { feather } : {}), ...(choke ? { choke } : {}) }, node: cutNode } as Fx);
+    const keyframes: NonNullable<Clip['keyframes']> = {};
+    for (const [prop, ks] of Object.entries(shot.keyframes ?? {})) {
+      const fm = /^fx\.(f_[^.]+)\.(.+)$/.exec(prop);
+      if (fm && !rename.has(fm[1]!)) continue;
+      keyframes[fm ? `fx.${rename.get(fm[1]!)}.${fm[2]}` : prop] = ks.map((x) => ({ ...x }));
+    }
+    // the anchor (where it is sized and turned about) is where the thing is at the moment it was found, on the canvas
+    const first = plan.byId.get(m.group[0]!)!;
+    const fit = canvasFit(project, d);
+    const ax = Math.round((fit.x + (first.bbox[0] + first.bbox[2] / 2) * fit.w) * 1000) / 1000;
+    const ay = Math.round((fit.y + (first.bbox[1] + first.bbox[3] / 2) * fit.h) * 1000) / 1000;
+    const t0 = shot.transform ?? {};
+    const transform = { ...t0, ...(t0.ax === undefined ? { ax } : {}), ...(t0.ay === undefined ? { ay } : {}) };
+    // keyframe ids are new too
+    for (const ks of Object.values(keyframes)) for (const x of ks) (x.id = makeId('k', kfTaken, rng)), kfTaken.add(x.id);
+    specs.push({
+      type: 'clip.add',
+      args: {
+        clip: {
+          id: cid, track: tid, asset: plan.assetId, start: shot.start, dur: shot.dur,
+          ...(shot.srcIn !== undefined ? { srcIn: shot.srcIn } : {}),
+          transform, fx,
+          ...(Object.keys(keyframes).length ? { keyframes } : {}),
+          link, label: `element ${what}`,
+        },
+      },
+    });
+    layers.push({ clip: cid, track: tid, kind: 'element', what, matte: m.id, anchor: [transform.ax!, transform.ay!] });
+  });
+  const ahead = { ...project, mattes: { ...(project.mattes ?? {}), ...plan.mattes } } as Project;
+  const builtMattes: Record<string, import('@studio/engines').MatteData> = {};
+  let plate: Awaited<ReturnType<typeof E.buildPlate>> | undefined;
+  if (!inv.flags['no-build'] && !inv.dryRun) {
+    for (const m of members) builtMattes[m.id] = (await build(inv, ahead, m.id)).data;
+    if (eraseId) {
+      if (!builtMattes[eraseId]) builtMattes[eraseId] = (await build(inv, ahead, eraseId)).data;
+      const pad = num(inv, 'pad');
+      plate = await E.buildPlate({ projectDir: inv.dir, project: ahead, matte: eraseId, ...(pad !== undefined ? { pad } : {}), log: inv.log });
+    }
+  }
+  const r = runSpecs(inv, specs, `bg layers ${shot.id}`);
+  const warnings: string[] = [];
+  for (const [id, md] of Object.entries(builtMattes)) warnings.push(...warningsOf(id, md));
+  if (plate) warnings.push(...plateWarnings(plate.data));
+  const el = layers.find((l) => l.kind === 'element');
+  return {
+    ...r,
+    data: {
+      ...(r.data as object),
+      link,
+      layers,
+      ...(Object.keys(builtMattes).length ? { mattes: Object.fromEntries(Object.entries(builtMattes).map(([id, md]) => [id, { quality: md.quality?.summary, checkThese: md.flagged.length }])) } : {}),
+      ...(plate ? { background: platesSummary(plate.data) } : eraseId ? { background: `plate not built (studio erase build ${eraseId})` } : {}),
+      ...(notes.length ? { notes } : {}),
+      next: el
+        ? [
+            `studio layer move --clip ${el.clip} --dx 200 --dy -40 --size 0.8 --rot 10   (place it; values in project pixels, size about its anchor)`,
+            `studio layer move --clip ${el.clip} --t 0 --dx 0   then   --t 1500 --dx 400 --ease expo.inOut   (animate it: keyframes, ms from the clip start)`,
+            `studio fx add --clip ${el.clip} --effect ...   (an effect on this element only)`,
+            `studio layer hide --clip ${shot.id}   (no background: the elements over the tracks below, or over the project background)`,
+            `studio render --still MS --out check   (look at it)`,
+            `studio erase preview ${eraseId ?? 'mt_x'}   (the background with the kept things taken out)`,
+          ]
+        : [],
+    },
+    ...(warnings.length ? { warnings } : {}),
+  };
+};
+
+/** Where the asset's picture sits on the canvas when it is fitted (letterboxed), as fractions of the canvas. */
+function canvasFit(project: Project, d: Project['assets'][string]['probe']): { x: number; y: number; w: number; h: number } {
+  const rot = d.rotation === 90 || d.rotation === 270;
+  const w = (rot ? d.h : d.w) ?? project.meta.width;
+  const h = (rot ? d.w : d.h) ?? project.meta.height;
+  const k = Math.min(project.meta.width / w, project.meta.height / h);
+  const fw = (w * k) / project.meta.width;
+  const fh = (h * k) / project.meta.height;
+  return { x: (1 - fw) / 2, y: (1 - fh) / 2, w: fw, h: fh };
+}
 
 /** `studio bg check`: how clean a matte is, and a sheet of the frames most likely to be wrong. */
 export const bgCheck: Handler = async (inv) => {

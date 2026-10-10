@@ -111,54 +111,85 @@ export function cleanPlate(frames: Uint8Array[], holes: Uint8Array[], w: number,
     }
     const Ht = HH[t];
     const Hti = Ht ? inv3(Ht) : null;
-    // the frames to look at: the shot's frames, nearest first, spread out so that a long shot is sampled evenly
+    // The frames to look at: the shot's frames, nearest in time first. Each pixel of the hole takes its colour from the nearest
+    // frame that saw it: what was behind the object then is most like what is behind it now (people sway, light changes), and
+    // neighbouring pixels mostly come from the same frame, so the fill is one picture, not a patchwork of many.
     const cands: number[] = [];
     for (let d = 1; d < N; d++) for (const s of [t - d, t + d]) if (s >= 0 && s < N && shotOf[s] === shotOf[t] && HH[s]) cands.push(s);
-    const step = Math.max(1, Math.ceil(cands.length / maxSrc));
-    const srcs = cands.filter((_, i) => i % step === 0).slice(0, maxSrc);
-    const vals: number[][] = px.map(() => []); // per hole pixel: r,g,b triples of the candidates
-    if (Hti)
-      for (const s of srcs) {
-        const M = mul3(HH[s]!, Hti); // t -> s
-        const bs = bad[s]!;
-        const fs = frames[s]!;
-        for (let j = 0; j < px.length; j++) {
-          const p = px[j]!;
-          const x = (p % w) + 0.5;
-          const y = Math.floor(p / w) + 0.5;
-          const z = M[6]! * x + M[7]! * y + M[8]!;
-          const qx = (M[0]! * x + M[1]! * y + M[2]!) / z - 0.5;
-          const qy = (M[3]! * x + M[4]! * y + M[5]!) / z - 0.5;
-          if (!(qx >= 0 && qy >= 0 && qx < w - 1 && qy < h - 1)) continue;
-          if (bs[Math.round(qy) * w + Math.round(qx)]) continue;
-          // the neighbours of the sample must not be hole either (bilinear)
-          if (bs[(qy | 0) * w + (qx | 0)] || bs[(qy | 0) * w + (qx | 0) + 1] || bs[((qy | 0) + 1) * w + (qx | 0)] || bs[((qy | 0) + 1) * w + (qx | 0) + 1]) continue;
-          vals[j]!.push(bil(fs, qx, qy, 0), bil(fs, qx, qy, 1), bil(fs, qx, qy, 2));
-        }
-      }
-    // the candidate nearest to all the others (a medoid): the fill is a real colour seen somewhere, not a mixture
-    const known = new Uint8Array(w * h);
+    const srcs = cands.slice(0, Math.max(maxSrc, 1) * 3);
     const o2 = out[t]!;
+    const known = new Uint8Array(w * h);
+    const fromFrame = new Int32Array(w * h).fill(-1);
     let nFilled = 0;
-    px.forEach((p, j) => {
-      const v = vals[j]!;
-      const m = v.length / 3;
-      if (!m) return;
-      let best = 0;
-      if (m > 2) {
-        let bd = Infinity;
-        for (let a = 0; a < m; a++) {
-          let d = 0;
-          for (let b = 0; b < m; b++) d += Math.hypot(v[3 * a]! - v[3 * b]!, v[3 * a + 1]! - v[3 * b + 1]!, v[3 * a + 2]! - v[3 * b + 2]!);
-          if (d < bd) (bd = d, (best = a));
+    const sample = (s: number, M: Mat3, p: number, dst: Uint8Array, at: number): boolean => {
+      const x = (p % w) + 0.5;
+      const y = Math.floor(p / w) + 0.5;
+      const z = M[6]! * x + M[7]! * y + M[8]!;
+      const qx = (M[0]! * x + M[1]! * y + M[2]!) / z - 0.5;
+      const qy = (M[3]! * x + M[4]! * y + M[5]!) / z - 0.5;
+      if (!(qx >= 0 && qy >= 0 && qx < w - 1 && qy < h - 1)) return false;
+      const bs = bad[s]!;
+      // the sample and its bilinear neighbours must not be hole there
+      if (bs[(qy | 0) * w + (qx | 0)] || bs[(qy | 0) * w + (qx | 0) + 1] || bs[((qy | 0) + 1) * w + (qx | 0)] || bs[((qy | 0) + 1) * w + (qx | 0) + 1]) return false;
+      const fs = frames[s]!;
+      dst[at] = Math.round(bil(fs, qx, qy, 0));
+      dst[at + 1] = Math.round(bil(fs, qx, qy, 1));
+      dst[at + 2] = Math.round(bil(fs, qx, qy, 2));
+      return true;
+    };
+    if (Hti) {
+      const Ms = srcs.map((s) => mul3(HH[s]!, Hti)); // t -> s
+      let left = px.slice();
+      for (let k = 0; k < srcs.length && left.length; k++) {
+        const s = srcs[k]!;
+        const next: number[] = [];
+        for (const p of left) {
+          if (sample(s, Ms[k]!, p, o2, 3 * p)) {
+            known[p] = 1;
+            fromFrame[p] = s;
+            nFilled++;
+          } else next.push(p);
         }
+        left = next;
       }
-      o2[3 * p] = Math.round(v[3 * best]!);
-      o2[3 * p + 1] = Math.round(v[3 * best + 1]!);
-      o2[3 * p + 2] = Math.round(v[3 * best + 2]!);
-      known[p] = 1;
-      nFilled++;
-    });
+      // Seams: the fill is taken from other moments, a little brighter or darker or displaced; the difference to the picture
+      // around the hole (measured on a ring just outside it, where both are known) is spread smoothly over the hole and added,
+      // so the fill meets its surroundings without a visible edge.
+      const ring = morph(hole, w, h, 2, true);
+      const offR = new Float32Array(w * h);
+      const offG = new Float32Array(w * h);
+      const offB = new Float32Array(w * h);
+      const wt = new Float32Array(w * h);
+      const tmp = new Uint8Array(3);
+      for (let p = 0; p < w * h; p++) {
+        if (!ring[p] || hole[p]) continue;
+        // what the same source would have given here: the source of the nearest hole pixel
+        const x = p % w;
+        const y = (p / w) | 0;
+        let s = -1;
+        for (let r = 1; r <= 3 && s < 0; r++)
+          for (let dy = -r; dy <= r && s < 0; dy++)
+            for (let dx = -r; dx <= r && s < 0; dx++) {
+              const q = (y + dy) * w + (x + dx);
+              if (x + dx >= 0 && x + dx < w && y + dy >= 0 && y + dy < h && hole[q] && fromFrame[q]! >= 0) s = fromFrame[q]!;
+            }
+        if (s < 0) continue;
+        const ki = srcs.indexOf(s);
+        if (ki < 0 || !sample(s, Ms[ki]!, p, tmp, 0)) continue;
+        const cur = frames[t]!;
+        offR[p] = cur[3 * p]! - tmp[0]!;
+        offG[p] = cur[3 * p + 1]! - tmp[1]!;
+        offB[p] = cur[3 * p + 2]! - tmp[2]!;
+        wt[p] = 1;
+      }
+      const smooth = membrane([offR, offG, offB], wt, w, h);
+      for (const p of px)
+        if (known[p]) {
+          o2[3 * p] = Math.max(0, Math.min(255, Math.round(o2[3 * p]! + smooth[0]![p]!)));
+          o2[3 * p + 1] = Math.max(0, Math.min(255, Math.round(o2[3 * p + 1]! + smooth[1]![p]!)));
+          o2[3 * p + 2] = Math.max(0, Math.min(255, Math.round(o2[3 * p + 2]! + smooth[2]![p]!)));
+        }
+    }
     // what no frame shows: spread in from the pixels around it (nearest known neighbours, repeated)
     let remaining = px.length - nFilled;
     const nSpread = remaining;
@@ -189,4 +220,57 @@ export function cleanPlate(frames: Uint8Array[], holes: Uint8Array[], w: number,
     spread.push(nSpread / px.length);
   }
   return { frames: out, filled, spread };
+}
+
+/**
+ * A smooth surface through scattered values (weight 1 where known, 0 elsewhere), by push-pull over a pyramid: averages are
+ * pulled down to coarser levels until every cell has something, then pushed back up to fill what was unknown. Several
+ * channels share the weights.
+ */
+export function membrane(ch: Float32Array[], wt: Float32Array, w: number, h: number): Float32Array[] {
+  if (w <= 1 && h <= 1) return ch.map((c) => c.slice());
+  const w2 = Math.max(1, (w + 1) >> 1);
+  const h2 = Math.max(1, (h + 1) >> 1);
+  const cw = new Float32Array(w2 * h2);
+  const cc = ch.map(() => new Float32Array(w2 * h2));
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const p = y * w + x;
+      const q = (y >> 1) * w2 + (x >> 1);
+      const a = wt[p]!;
+      if (!a) continue;
+      cw[q] = cw[q]! + a;
+      for (let k = 0; k < ch.length; k++) cc[k]![q] = cc[k]![q]! + ch[k]![p]! * a;
+    }
+  let any = false;
+  for (let q = 0; q < cw.length; q++)
+    if (cw[q]) {
+      any = true;
+      for (let k = 0; k < ch.length; k++) cc[k]![q] = cc[k]![q]! / cw[q]!;
+      cw[q] = Math.min(1, cw[q]!);
+    }
+  if (!any) return ch.map(() => new Float32Array(w * h));
+  const coarse = w2 === w && h2 === h ? cc : membrane(cc, cw, w2, h2);
+  const out = ch.map((c) => c.slice());
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const p = y * w + x;
+      const a = Math.min(1, wt[p]!);
+      if (a >= 1) continue;
+      // bilinear from the coarser level (its cell centres sit at 2i + 0.5)
+      const fx = Math.min(w2 - 1, Math.max(0, (x - 0.5) / 2));
+      const fy = Math.min(h2 - 1, Math.max(0, (y - 0.5) / 2));
+      const x0 = Math.floor(fx);
+      const y0 = Math.floor(fy);
+      const x1 = Math.min(w2 - 1, x0 + 1);
+      const y1 = Math.min(h2 - 1, y0 + 1);
+      const ax = fx - x0;
+      const ay = fy - y0;
+      for (let k = 0; k < ch.length; k++) {
+        const C = coarse[k]!;
+        const v = (C[y0 * w2 + x0]! * (1 - ax) + C[y0 * w2 + x1]! * ax) * (1 - ay) + (C[y1 * w2 + x0]! * (1 - ax) + C[y1 * w2 + x1]! * ax) * ay;
+        out[k]![p] = a * ch[k]![p]! + (1 - a) * v;
+      }
+    }
+  return out;
 }
