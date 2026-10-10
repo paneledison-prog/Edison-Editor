@@ -117,10 +117,13 @@ Easing names: `linear`, `hold`, `<family>.<in|out|inOut>` for `quad cubic quart 
   transparent and shows the tracks below. `opacity` 0..1. On a clip without layer properties `rot` turns the picture inside the
   frame about its centre.
 
-**A clip's video chain, in order:** stabilize (on the source frames) → fit to the canvas → zoom and pan → `erase` (clean plate) →
-LUT → plugin effects → `cutout` (transparent outside the matte) → plugin effects marked `after` (they see the cut-out's
-transparency: drop shadow, glow) → pins → layer placement (`dx dy size rot ax ay`) → composited over the tracks below (later tracks
-on top). Every effect is an entry on the clip, never baked into the source: `fx bypass` / `fx remove` / `project undo` take it back.
+**A clip's video chain, in order:** stabilize (on the source frames; `slowmo` too, on the matte's pictures as well) → fit to the
+canvas → zoom and pan → `erase` (clean plate) → on a cut-out element, its edge colours cleaned and what the cutout hides filled
+with its own colours → LUT → plugin effects → `cutout` (transparent outside the matte) → plugin effects marked `after` (they see
+the element's transparency, each by its kind: blur and warps move its edge, glow and shadows fall around it, colour stays inside;
+`fx add` puts effects there by default when they need it) → pins → layer placement (`dx dy size rot ax ay`) → composited over the
+tracks below (later tracks on top). Every effect is an entry on the clip, never baked into the source: `fx bypass` / `fx remove` /
+`project undo` take it back.
 
 **Layers of a shot** (`studio bg layers`, docs/layers.md): each kept thing is a copy of the shot on its own track with a `cutout` by
 its own matte (an element); the shot stays below with an `erase` of the kept things (the background, rebuilt from other frames);

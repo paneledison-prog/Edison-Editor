@@ -8,6 +8,7 @@
   "effects": [
     {
       "id": "glow",
+      "alpha": "light",
       "summary": "Soft glow: a blurred copy of the picture screened over it.",
       "params": {
         "radius": {
@@ -29,6 +30,7 @@
     },
     {
       "id": "bloom",
+      "alpha": "light",
       "summary": "Bloom: only the bright parts glow.",
       "params": {
         "threshold": {

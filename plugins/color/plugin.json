@@ -645,6 +645,7 @@
   },
   {
    "id": "chromatic",
+   "alpha": "spread",
    "summary": "Chromatic aberration: shift the red and blue channels apart.",
    "params": {
     "redX": {
@@ -685,6 +686,7 @@
   },
   {
    "id": "gaussian-blur",
+   "alpha": "spread",
    "summary": "Gaussian blur: soften backgrounds, glows, mattes.",
    "params": {
     "radius": {
@@ -700,6 +702,7 @@
   },
   {
    "id": "sharpen",
+   "alpha": "spread",
    "summary": "Sharpen / unsharp mask: recover crispness on soft or scaled footage.",
    "params": {
     "amount": {
@@ -728,6 +731,7 @@
   },
   {
    "id": "lens-blur",
+   "alpha": "spread",
    "summary": "Camera lens blur (approximation): a sharp focus area, a blurred rest, brightened highlights for bokeh. It is not a depth-map blur.",
    "params": {
     "radius": {
@@ -785,6 +789,7 @@
   },
   {
    "id": "motion-blur",
+   "alpha": "spread",
    "summary": "Motion blur by averaging neighbouring frames (frame blending, not motion-vector blur).",
    "params": {
     "frames": {
@@ -806,6 +811,7 @@
   },
   {
    "id": "denoise",
+   "alpha": "spread",
    "summary": "Noise reduction, fast: spatial and temporal (hqdn3d).",
    "params": {
     "spatial": {
@@ -835,6 +841,7 @@
   },
   {
    "id": "denoise-strong",
+   "alpha": "spread",
    "summary": "Noise reduction, strong: non-local means (slow). Use on short, very noisy clips.",
    "params": {
     "strength": {
@@ -872,6 +879,7 @@
   },
   {
    "id": "light-rays",
+   "alpha": "light",
    "summary": "Light rays: streaks radiating from a point, built from the brightest parts of the picture.",
    "params": {
     "x": {
@@ -968,6 +976,7 @@
   },
   {
    "id": "drop-shadow",
+   "alpha": "own",
    "summary": "Drop shadow for clips with transparency (titles, cut-outs, logos).",
    "params": {
     "dx": {
@@ -1006,6 +1015,7 @@
   },
   {
    "id": "wave-warp",
+   "alpha": "spread",
    "summary": "Wave warp: ripples and flag-like waves across the picture.",
    "params": {
     "amplitude": {
@@ -1044,6 +1054,7 @@
   },
   {
    "id": "turbulent-displace",
+   "alpha": "spread",
    "summary": "Turbulent displace: organic wobble for heat haze, water, liquid text (layered waves, not true noise).",
    "params": {
     "amount": {
@@ -1073,6 +1084,7 @@
   },
   {
    "id": "glitch",
+   "alpha": "spread",
    "summary": "Glitch: horizontal slice jumps and RGB split, seeded by time so a render repeats exactly.",
    "params": {
     "amount": {
@@ -1118,6 +1130,7 @@
   },
   {
    "id": "optics",
+   "alpha": "spread",
    "summary": "Optics compensation: add or remove lens distortion (negative k1 barrel/fisheye, positive pincushion).",
    "params": {
     "k1": {
@@ -1140,6 +1153,7 @@
   },
   {
    "id": "stabilize",
+   "alpha": "frame",
    "summary": "Stabilize (single pass, light): reduces handheld shake. It is not a two-pass tracker.",
    "params": {
     "range": {
@@ -1185,6 +1199,7 @@
   },
   {
    "id": "keyer",
+   "alpha": "key",
    "summary": "Keyer (Keylight-style): remove a green or blue screen, suppress spill, soften the edge. Leaves transparency for the layers below.",
    "params": {
     "key": {

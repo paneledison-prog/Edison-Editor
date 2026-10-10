@@ -183,12 +183,7 @@ export const add: Handler = async (inv) => {
     if (fx.type !== 'plugin' && fx.type !== 'lut') throw new CliError('INVALID_ARGS', '--matte limits plugin effects and LUTs to a cut-out', 2);
     fx.matte = use;
   }
-  if (inv.flags['after-cutout']) {
-    if (fx.type !== 'plugin') throw new CliError('INVALID_ARGS', '--after-cutout applies to plugin effects', 2);
-    if (fx.matte) throw new CliError('INVALID_ARGS', '--after-cutout and --matte do not go together: on the cut-out element the effect already sees only the element', 2);
-    if (!(clip.fx ?? []).some((f) => f.type === 'cutout')) throw new CliError('INVALID_ARGS', `${clip.id} has no cutout: --after-cutout is for a cut-out element`, 2, 'studio bg layers ... or studio cutout --clip ... first');
-    fx.after = true;
-  }
+  const placed = await placeOnElement(inv, clip, fx);
   const mix = num(inv, 'mix');
   if (mix !== undefined) {
     if (fx.type !== 'plugin' && fx.type !== 'lut') throw new CliError('INVALID_ARGS', '--mix applies to plugin effects and LUTs', 2);
@@ -205,8 +200,48 @@ export const add: Handler = async (inv) => {
   else if (Number.isInteger(at) && at >= 0 && at <= list.length) list.splice(at, 0, entry);
   else throw new CliError('INVALID_ARGS', `--at must be 0..${list.length}`, 2);
   const r = setFx(inv, clip, list, `fx add ${label(fx)}`);
-  return { ...r, data: { ...(r.data as object), node, added: label(fx) } };
+  return {
+    ...r,
+    data: { ...(r.data as object), node, added: label(fx), ...(placed.where ? { placed: placed.where } : {}) },
+    ...(placed.warnings.length ? { warnings: [...((r as { warnings?: string[] }).warnings ?? []), ...placed.warnings] } : {}),
+  };
 };
+
+const KIND_WHY: Record<string, string> = {
+  spread: 'it moves or mixes pixels: after the cutout the edge softens or moves with the element, and nothing of the old background comes in',
+  light: 'it adds light: after the cutout the light falls around the element, on what is below',
+  own: 'it makes its own transparency from the element’s (a shadow falls on what is below)',
+};
+
+/**
+ * Where an effect goes on a cut-out element: before the cutout (on the whole picture, then cut) or after it (seeing the element's
+ * transparency). `--after-cutout` / `--before-cutout` decide; without them, effects that move pixels, add light or cast a shadow go
+ * after (before, they would pull the old background into the edge or be cut away), colour effects before (the same result,
+ * cheaper). A one-pass stabilizer cannot run on an element at all.
+ */
+export async function placeOnElement(inv: Invocation, clip: Clip, fx: Fx): Promise<{ where?: string; warnings: string[] }> {
+  const after = !!inv.flags['after-cutout'];
+  const before = !!inv.flags['before-cutout'];
+  if (after && before) throw new CliError('INVALID_ARGS', '--after-cutout or --before-cutout, not both', 2);
+  const hasCut = (clip.fx ?? []).some((f) => f.type === 'cutout' && !f.bypass);
+  if (after || before) {
+    if (fx.type !== 'plugin') throw new CliError('INVALID_ARGS', `--${after ? 'after' : 'before'}-cutout applies to plugin effects`, 2);
+    if (after && fx.matte) throw new CliError('INVALID_ARGS', '--after-cutout and --matte do not go together: on the cut-out element the effect already sees only the element', 2);
+    if (!hasCut) throw new CliError('INVALID_ARGS', `${clip.id} has no cutout: --${after ? 'after' : 'before'}-cutout is for a cut-out element`, 2, 'studio bg layers ... or studio cutout --clip ... first');
+  }
+  if (fx.type !== 'plugin' || !hasCut) return { warnings: [] };
+  const kind = (await engines()).effectAlpha(fx.id);
+  if (kind === 'frame')
+    throw new CliError('INVALID_ARGS', `${fx.id} moves the whole picture to steady it; ${clip.id} is cut out by a matte that would not move with it`, 2, `studio stabilize --clip ${clip.id} (it steadies the matte with the picture)`);
+  const warnings: string[] = [];
+  if (after || (!before && !fx.matte && KIND_WHY[kind])) {
+    fx.after = true;
+    return { where: after ? 'after the cutout' : `after the cutout, by default: ${KIND_WHY[kind]} (--before-cutout puts it on the whole picture first)`, warnings };
+  }
+  if (before && kind === 'spread') warnings.push(`${fx.id} before the cutout moves pixels inside the element's fixed shape, so the old background at its edge is pulled in; --after-cutout moves the edge with it`);
+  if (before && (kind === 'light' || kind === 'own')) warnings.push(`${fx.id} before the cutout: what it adds outside the element is cut away; --after-cutout lets it fall on what is below`);
+  return { where: 'before the cutout', warnings };
+}
 
 export const set: Handler = async (inv) => {
   const { project, clip } = clipOf(inv);
@@ -262,9 +297,20 @@ export const set: Handler = async (inv) => {
   if (inv.flags['bypass'] && inv.flags['enable']) throw new CliError('INVALID_ARGS', 'give --bypass or --enable, not both', 2);
   if (inv.flags['bypass']) f['bypass'] = true;
   if (inv.flags['enable']) delete f['bypass'];
+  const warnings: string[] = [];
+  if (inv.flags['after-cutout'] || inv.flags['before-cutout']) {
+    // moves the effect to the other side of the cutout
+    const moved = { ...(f as Fx) } as Fx & { after?: boolean };
+    delete moved.after;
+    const p = await placeOnElement(inv, clip, moved);
+    warnings.push(...p.warnings);
+    if (moved.after) f['after'] = true;
+    else delete f['after'];
+  }
   await check(f as Fx);
   list[index] = f as Fx;
-  return setFx(inv, clip, list, `fx set ${label(f as Fx)}`);
+  const r = setFx(inv, clip, list, `fx set ${label(f as Fx)}`);
+  return warnings.length ? { ...r, warnings: [...((r as { warnings?: string[] }).warnings ?? []), ...warnings] } : r;
 };
 
 export const remove: Handler = async (inv) => {

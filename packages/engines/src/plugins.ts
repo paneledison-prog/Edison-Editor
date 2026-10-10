@@ -115,7 +115,8 @@ export function effectLines(
     SRCFPS: String(Math.round(ctx.SRCFPS * 1000) / 1000),
     SPEED: String(ctx.SPEED),
     INTERPFPS: String(interp),
-    T0: String(Math.round(ctx.T0 * 1000) / 1000),
+    // negative in a still or preview window that starts inside the clip: in parentheses, so `T-{T0}` stays one subtraction
+    T0: ctx.T0 < 0 ? `(${Math.round(ctx.T0 * 1000) / 1000})` : String(Math.round(ctx.T0 * 1000) / 1000),
   };
   let g = e.decl.graph;
   for (const k of graphParams(g)) g = g.replaceAll(`{${k}}`, values[k] ?? builtin[k]!);
@@ -123,7 +124,18 @@ export function effectLines(
   g = g.replace(/\[([A-Za-z0-9_]+)\]/g, (m, name: string) =>
     name === 'in' ? `[${from}]` : name === 'out' ? `[${to}]` : `[${name}_${uid}]`,
   );
-  return splitGraph(g);
+  const lines = splitGraph(g);
+  // the line that writes the output goes last: the steps after an effect (a cutout, a placement) continue from the last line
+  const oi = lines.findIndex((l) => l.trimEnd().endsWith(`[${to}]`));
+  if (oi >= 0 && oi < lines.length - 1) lines.push(...lines.splice(oi, 1));
+  return lines;
+}
+
+/** What an effect does with transparency (see `alpha` in the effect declaration); undeclared: `own` if its graph ends with alpha. */
+export function effectAlpha(id: string): 'keep' | 'spread' | 'light' | 'own' | 'key' | 'frame' {
+  const decl = effects.get(id)?.decl as { alpha?: 'keep' | 'spread' | 'light' | 'own' | 'key' | 'frame'; graph?: string } | undefined;
+  if (decl?.alpha) return decl.alpha;
+  return /format=(yuva\w+|rgba|argb|bgra|abgr|gbrap)\[out\]\s*$/.test(String(decl?.graph ?? '').trim()) ? 'own' : 'keep';
 }
 
 /** Splits a filtergraph on `;` that are outside single quotes (an expression may contain `;`). */

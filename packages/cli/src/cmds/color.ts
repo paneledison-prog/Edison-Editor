@@ -8,6 +8,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { cryptoRng, makeId, type Clip, type Fx } from '@studio/core';
 import { CliError } from '../args.js';
 import type { Handler, Invocation } from '../main.js';
+import { placeOnElement } from './fx.js';
 import { num, parseJson, runSpecs, selfRun, store, str } from './shared.js';
 
 type Node = Extract<Fx, { type: 'plugin' | 'lut' }>;
@@ -197,10 +198,14 @@ async function addNode(inv: Invocation, clipId: string, id: string, params: Reco
   const fx = [...(clip.fx ?? [])];
   const taken = new Set(store(inv).load().project.clips.flatMap((c) => (c.fx ?? []).map((f) => (f as { node?: string }).node).filter(Boolean) as string[]));
   const node: Fx = { type: 'plugin', id, ...(params ? { params: params as Record<string, number | string | boolean> } : {}), node: makeId('f', taken, cryptoRng()) };
+  // on a cut-out element, the same placement as `fx add`: blur, glow and the like after the cutout, colour before it
+  const placed = await placeOnElement(inv, clip, node);
   if (at === undefined) fx.push(node);
   else if (at >= 0 && at <= fx.length) fx.splice(at, 0, node);
   else throw new CliError('INVALID_ARGS', `--at must be 0..${fx.length}`, 2);
-  return setFx(inv, clip.id, fx, label ?? `color add ${id}`);
+  const r = setFx(inv, clip.id, fx, label ?? `color add ${id}`);
+  if (!placed.where?.startsWith('after')) return r;
+  return { ...r, data: { ...((r as { data?: object }).data ?? {}), placed: placed.where } };
 }
 
 export const add: Handler = async (inv) => {

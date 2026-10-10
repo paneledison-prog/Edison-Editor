@@ -83,6 +83,20 @@ export const EffectDecl = z
     stage: z.enum(['clip', 'source']).optional(),
     /** a rough cost label shown by `plugins list`; `heavy` effects are measured and flagged in render warnings */
     cost: z.enum(['light', 'medium', 'heavy']).optional(),
+    /**
+     * What the effect does with a picture that has transparency (a cut-out element, effect after its cutout):
+     * `keep` (default): changes colours pixel by pixel; the element keeps its shape.
+     * `spread`: moves or mixes pixels (blur, warp, glitch, sharpen, denoise); its opacity is moved and mixed the same way, so the
+     *   edge softens or moves with the picture, and nothing hidden under the transparent part comes in.
+     * `light`: adds light that may fall around the element (glow, bloom, rays); where it falls on transparent parts it becomes
+     *   opacity, so it lights what is below.
+     * `own`: makes its own transparency from the one it is given (a drop shadow); used as it is.
+     * `key`: makes transparency from colours (a keyer); it is combined with the element's.
+     * `frame`: follows the motion of the whole picture (a one-pass stabilizer); it cannot run on a cut-out element, whose shape
+     *   would no longer match.
+     * Without it, a graph that ends in a format with alpha is `own`, any other `keep`.
+     */
+    alpha: z.enum(['keep', 'spread', 'light', 'own', 'key', 'frame']).optional(),
   })
   .strict();
 

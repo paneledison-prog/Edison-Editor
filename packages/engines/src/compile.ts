@@ -4,7 +4,7 @@ import { displaySize, speedOf, type Clip, type Fx, type Project } from '@studio/
 import { MAX_AUDIO_SPEED, clipAudioChain, dbToLin } from './audiofx.js';
 import { EngineError } from './run.js';
 import { blurRegionFilter, hasFrameMotion, hasLayer, hasMotion, layerIsStill, layerMaps, zoomFilter } from './zoom.js';
-import { effectLines, pluginEffectDecl, type FxContext } from './plugins.js';
+import { effectAlpha, effectLines, pluginEffectDecl, type FxContext } from './plugins.js';
 import { checkClipKeyframes, nodeLines } from './fxanim.js';
 import type { MatteData } from './matte.js';
 import type { PlateData } from './plate.js';
@@ -76,9 +76,18 @@ export function routeBackend(p: Project): { backend: 'ffmpeg' | 'hybrid'; reason
   };
 }
 
+/**
+ * The clip's start on the clock that time-driven effects use (seconds): its start on the timeline, less what a render window cut
+ * off its head, so a still or a preview range shows the effect where the full render has it.
+ */
+const fxT0 = (c: WindowedClip): number => (c.start - (c.headCutMs ?? 0)) / 1000;
+
+/** A clip cut by a render window: `headCutMs` of its start were cut away (time-driven effects keep the clip's own clock). */
+export type WindowedClip = Clip & { headCutMs?: number };
+
 /** Restrict the timeline to [a, b) ms by cutting clips at the window edges and shifting them to start at 0. */
-export function windowClips(clips: Clip[], a: number, b: number): Clip[] {
-  const out: Clip[] = [];
+export function windowClips(clips: Clip[], a: number, b: number): WindowedClip[] {
+  const out: WindowedClip[] = [];
   for (const c of clips) {
     const s = Math.max(c.start, a);
     const e = Math.min(c.start + c.dur, b);
@@ -87,6 +96,7 @@ export function windowClips(clips: Clip[], a: number, b: number): Clip[] {
       ...c,
       start: s - a,
       dur: e - s,
+      ...(s > c.start ? { headCutMs: s - c.start } : {}),
       srcIn: c.asset
         ? (c.srcIn ?? 0) + Math.round((s - c.start) * speedOf(c))
         : (c.srcIn ?? 0) + (s - c.start),
@@ -349,6 +359,21 @@ export function compile(inp: CompileInput): Plan {
       const plateLabels: string[] = []; // one per erase effect, in order
       if (matteCount.size && a.kind !== 'video') throw new EngineError('INVALID_INPUT', `${c.id}: a matte needs a video clip`);
       const mLines: string[] = []; // the matte pictures are laid out after the clip's own chain (which later steps extend at its end)
+      // Effects on the source frames (frame interpolation for slow motion) run on the matte's pictures too: the in-between frames
+      // of the picture then get in-between shapes, edge colours and plates, not those of the frame before.
+      const srcFx = liveFx.filter((f): f is Extract<Fx, { type: 'plugin' }> => f.type === 'plugin' && pluginEffectDecl(f.id)?.stage === 'source');
+      const srcCtx: FxContext = { W: width, H: height, FPS: fps, SRCFPS: a.probe.fps || fps, SPEED: speed, T0: fxT0(c) };
+      const viaSource = (from: string, tag: string, back: string): string => {
+        if (!srcFx.length) return from;
+        let cur = `${tag}sxp`;
+        mLines.push(`[${from}]tpad=stop=2:stop_mode=clone[${cur}]`);
+        srcFx.forEach((f, i) => {
+          mLines.push(...effectLines(f, cur, `${tag}sx${i}`, `${tag}sx${i}`, srcCtx));
+          cur = `${tag}sx${i}`;
+        });
+        mLines.push(`[${cur}]trim=duration=${sec(c.dur * speed)},format=${back}[${tag}sxo]`);
+        return `${tag}sxo`;
+      };
       [...matteCount].forEach(([id, n], mi) => {
         const md = inp.mattes?.[id];
         if (!md) throw new EngineError('INVALID_INPUT', `${c.id}: matte ${id} has not been built`, `studio matte build ${id}`);
@@ -364,7 +389,7 @@ export function compile(inp: CompileInput): Plan {
         }
         inputs.push('-ss', sec(Math.max(0, in0 - fromMs)), '-t', sec(c.dur * speed), '-i', join(projectDir, md.file));
         const lead = in0 < fromMs ? `,tpad=start_duration=${((fromMs - in0) / 1000 / speed).toFixed(3)}:start_mode=clone` : '';
-        let src = `${mk}:v`;
+        let src = viaSource(`${mk}:v`, base, 'gray');
         const mhead = `setpts=(PTS-STARTPTS)/${speed},fps=${fps}${lead}`;
         if (stab && steady) {
           mLines.push(`[${src}]${mhead}[${base}h]`);
@@ -372,8 +397,11 @@ export function compile(inp: CompileInput): Plan {
           src = `${base}st`;
         }
         const fit = reframe === 'center-crop' ? `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}` : `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black`;
+        // FFmpeg pads a grey picture with TV-range black (16, so 6% opacity): the matte is padded as RGB, where black is 0 (the
+        // round trip grey -> RGB -> grey is exact for every value)
+        const mfit = reframe === 'center-crop' ? fit : `scale=${width}:${height}:force_original_aspect_ratio=decrease,format=gbrp,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black`;
         const raw = `${base}r`;
-        mLines.push(`[${src}]${stab && steady ? '' : `${mhead},`}${fit},format=gray,${zf ? `${zf}format=gray,` : ''}setpts=PTS-STARTPTS+${at}/TB[${raw}]`);
+        mLines.push(`[${src}]${stab && steady ? '' : `${mhead},`}${mfit},format=gray,${zf ? `${zf}format=gray,` : ''}setpts=PTS-STARTPTS+${at}/TB[${raw}]`);
         const names = Array.from({ length: n }, (_, j) => `${base}u${j}`);
         if (n > 1) mLines.push(`[${raw}]split=${n}${names.map((x) => `[${x}]`).join('')}`);
         matteLabels.set(id, n > 1 ? names : [raw]);
@@ -382,7 +410,7 @@ export function compile(inp: CompileInput): Plan {
         const layout = (file: string, tag: string, copies: number): string[] => {
           const fk = nIn++;
           inputs.push('-ss', sec(Math.max(0, in0 - fromMs)), '-t', sec(c.dur * speed), '-i', join(projectDir, file));
-          let fsrc = `${fk}:v`;
+          let fsrc = viaSource(`${fk}:v`, `${base}${tag}`, 'gbrp');
           if (stab && steady) {
             mLines.push(`[${fsrc}]${mhead}[${base}${tag}h]`);
             mLines.push(...stabilizeLines(`${base}${tag}h`, `${base}${tag}st`, `${base}${tag}t`, steady, { w: d.w!, h: d.h! }));
@@ -421,9 +449,59 @@ export function compile(inp: CompileInput): Plan {
           cur = out;
         });
       }
+      // A cut-out element's picture is prepared here, before any effect: if its matte comes with the object's own colours (the
+      // old background taken out of its edge pixels) they go in, so grades and looks reach the whole element, its edge included;
+      // and what the cutout will hide (fully transparent pixels) is filled with the element's own colours spread outward, so no
+      // effect, and no colour sampled at half resolution next to the edge, picks up the old background. The opacity itself is
+      // applied at the cutout, after the effects. The matte pictures go with the other matte lines (the clip's chain stays last).
+      const cuts = liveFx.filter((f): f is Extract<Fx, { type: 'cutout' }> => f.type === 'cutout');
+      const cutAlpha: string[] = [];
+      if (cuts.length) {
+        const base = `v${nV}`;
+        const last = vLines.pop()!;
+        let cur = `${base}dcin`;
+        vLines.push(last.replace(new RegExp(`\\[${base}\\]$`), `[${cur}]`));
+        vLines.push(`[${cur}]format=gbrp[${base}dcg]`);
+        cur = `${base}dcg`;
+        cuts.forEach((f, i) => {
+          const fgPic = fgLabels.get(f.matte.id)?.shift();
+          const m = `${base}cm${i}`;
+          mLines.push(...matteFinish(matteTake(f.matte.id), `${base}cmx${i}`, f.matte));
+          mLines.push(`[${base}cmx${i}]split=${fgPic ? 7 : 3}[${m}][${base}cf${i}][${base}ck${i}]${fgPic ? `[${base}cb${i}][${base}cc${i}][${base}ci${i}][${base}cy${i}]` : ''}`);
+          if (fgPic) {
+            // The object's own colours at the edge. Where the matte is opaque the picture is the object (nothing to clean); where
+            // it is partly transparent the picture is mixed with the old background, and the estimated object colour replaces it,
+            // pulled towards the colour of the object just inside the edge the more transparent the pixel is (there the estimate
+            // rests on little of the object and errs towards the opposite of the background's colour). Measured with the same
+            // object over two hidden backgrounds (tests/effects-layers.test.ts): their edges 4.3 levels apart on average, against
+            // 7.0 replacing the band with the estimate and 6.4 not cleaning at all.
+            const q = `${base}eg${i}`;
+            mLines.push(`[${base}cb${i}]dilation,dilation[${base}cd${i}]`);
+            mLines.push(`[${base}cc${i}]erosion,erosion[${base}ce${i}]`);
+            mLines.push(`[${base}cd${i}][${base}ce${i}]blend=all_mode=subtract,gblur=sigma=1[${base}cband${i}]`);
+            // weight: 0 where opaque, full from 1/8 transparency on, and only in the band around the edge
+            mLines.push(`[${base}cy${i}]split=2[${q}y][${q}w2]`, `[${q}w2]lut=c0='clip((255-val)*8,0,255)'[${q}w0]`, `[${base}cband${i}][${q}w0]blend=all_mode=multiply[${q}w]`);
+            // the object's colour just inside the edge: opaque pixels only, spread outward
+            mLines.push(`[${base}ci${i}]lut=c0='255*gte(val,250)',split=2[${q}i1][${q}i2]`, `[${q}i2]gblur=sigma=3[${q}ib]`);
+            vLines.push(`[${cur}]split=2[${q}p][${q}s]`, `[${q}s][${q}i1]alphamerge,premultiply=inplace=1,format=gbrp,gblur=sigma=3[${q}pb]`, `[${q}pb][${q}ib]unpremultiply[${q}in]`);
+            // the estimate mixed with the inside colour by the opacity, then laid in by the weight
+            vLines.push(`[${q}in][${fgPic}][${q}y]maskedmerge[${q}f]`, `[${q}p][${q}f][${q}w]maskedmerge[${base}dc${i}]`);
+            cur = `${base}dc${i}`;
+          }
+          // fill: the premultiplied picture and the opacity, both blurred, divided; kept wherever the opacity is above zero
+          const u = `${base}fl${i}`;
+          mLines.push(`[${base}cf${i}]split=2[${u}a][${u}b]`, `[${u}b]gblur=sigma=8[${u}ab]`, `[${base}ck${i}]lut=c0='255*gt(val,0)'[${u}k]`);
+          vLines.push(`[${cur}]split=2[${u}p][${u}q]`, `[${u}q][${u}a]alphamerge,premultiply=inplace=1,format=gbrp,gblur=sigma=8[${u}pb]`);
+          vLines.push(`[${u}pb][${u}ab]unpremultiply[${u}x]`, `[${u}x][${u}p][${u}k]maskedmerge[${base}fd${i}]`);
+          cur = `${base}fd${i}`;
+          cutAlpha.push(m);
+        });
+        // back to the clip's own format, so effects get the same kind of picture as on any clip
+        vLines.push(`[${cur}]format=yuv420p[${base}]`);
+      }
       // LUTs run right after the clip's own scale and zoom, before plugin nodes: order of the fx array decides among nodes of
       // the same kind, and a LUT is always first, as camera conversions are on a colourist's first node.
-      const fxCtxEarly: FxContext = { W: width, H: height, FPS: fps, SRCFPS: a.probe.fps || fps, SPEED: speed, T0: c.start / 1000 };
+      const fxCtxEarly: FxContext = { W: width, H: height, FPS: fps, SRCFPS: a.probe.fps || fps, SPEED: speed, T0: fxT0(c) };
       const luts = (c.fx ?? []).filter((f): f is Extract<Fx, { type: 'lut' }> => f.type === 'lut' && !f.bypass);
       if (luts.length) {
         const base = `v${nV}`;
@@ -461,7 +539,7 @@ export function compile(inp: CompileInput): Plan {
         FPS: fps,
         SRCFPS: a.probe.fps || fps,
         SPEED: speed,
-        T0: c.start / 1000,
+        T0: fxT0(c),
       };
       const isSource = (f: { id: string }) => pluginEffectDecl(f.id)?.stage === 'source';
       for (const f of live) {
@@ -483,13 +561,17 @@ export function compile(inp: CompileInput): Plan {
         const base = `v${nV}`;
         const firstIdx = vLines.findIndex((l, i) => i >= lineStart && l.includes(`[${k}:v]`));
         if (firstIdx >= 0) {
-          let cur = `${k}:v`;
-          const pre: string[] = [];
+          // the last frames are held twice before (frame interpolation needs a next frame, or its stream ends early) and the
+          // result is cut back to the clip's length
+          let cur = `${base}spad`;
+          const pre: string[] = [`[${k}:v]tpad=stop=2:stop_mode=clone[${cur}]`];
           sfx.forEach((f, i) => {
             const out = `${base}s${i}`;
             pre.push(...effectLines(f, cur, out, `${base}s${i}`, fxCtx));
             cur = out;
           });
+          pre.push(`[${cur}]trim=duration=${sec(c.dur * speed)}[${base}strim]`);
+          cur = `${base}strim`;
           vLines[firstIdx] = vLines[firstIdx]!.replace(`[${k}:v]`, `[${cur}]`);
           vLines.splice(firstIdx, 0, ...pre);
         }
@@ -513,8 +595,11 @@ export function compile(inp: CompileInput): Plan {
           cur = out;
         });
       }
-      // A cutout makes everything outside the matte transparent, after the effects (which may drop alpha) and before pins.
-      const cuts = liveFx.filter((f): f is Extract<Fx, { type: 'cutout' }> => f.type === 'cutout');
+      // A cutout makes everything outside the matte transparent, after the effects and before pins. If the picture already has
+      // transparency of its own (a keyer before the cutout), or a cutout came before, only what both keep stays.
+      const madeAlpha = pfx.some((f) => ['key', 'own'].includes(effectAlpha(f.id)));
+      const framey = cuts.length ? pfx.find((f) => effectAlpha(f.id) === 'frame') : undefined;
+      if (framey) throw new EngineError('INVALID_INPUT', `${c.id}: effect ${framey.id} moves the whole picture to steady it, but the cutout's matte does not move with it, so the element would be cut in the wrong place`, `remove it and use studio stabilize --clip ${c.id} (it steadies the matte with the picture)`);
       if (cuts.length) {
         const base = `v${nV}`;
         const last = vLines.pop()!;
@@ -522,27 +607,23 @@ export function compile(inp: CompileInput): Plan {
         vLines.push(last.replace(new RegExp(`\\[${base}\\]$`), `[${cur}]`));
         cuts.forEach((f, i) => {
           const out = i === cuts.length - 1 ? base : `${base}ct${i}`;
-          const fgPic = fgLabels.get(f.matte.id)?.shift();
-          if (fgPic) {
-            // the edge pixels take the object's colour with the old background taken out; the rest of the picture is left as the
-            // effects made it
-            vLines.push(...matteFinish(matteTake(f.matte.id), `${base}cmx${i}`, f.matte));
-            vLines.push(`[${base}cmx${i}]split=3[${base}cm${i}][${base}cb${i}][${base}cc${i}]`);
-            vLines.push(`[${base}cb${i}]dilation,dilation[${base}cd${i}]`);
-            vLines.push(`[${base}cc${i}]erosion,erosion[${base}ce${i}]`);
-            vLines.push(`[${base}cd${i}][${base}ce${i}]blend=all_mode=subtract,gblur=sigma=1[${base}cband${i}]`);
-            vLines.push(`[${cur}]format=gbrp[${base}cp${i}]`);
-            vLines.push(`[${base}cp${i}][${fgPic}][${base}cband${i}]maskedmerge[${base}cq${i}]`);
-            vLines.push(`[${base}cq${i}][${base}cm${i}]alphamerge[${out}]`);
-          } else {
-            vLines.push(...matteFinish(matteTake(f.matte.id), `${base}cm${i}`, f.matte));
-            vLines.push(`[${cur}][${base}cm${i}]alphamerge[${out}]`);
-          }
+          if (madeAlpha || i > 0) {
+            const u = `${base}cx${i}`;
+            vLines.push(`[${cur}]format=yuva420p,split=2[${u}p][${u}s]`, `[${u}s]alphaextract[${u}a]`);
+            vLines.push(`[${u}a][${cutAlpha[i]!}]blend=all_mode=multiply[${u}m]`, `[${u}p][${u}m]alphamerge[${out}]`);
+          } else vLines.push(`[${cur}][${cutAlpha[i]!}]alphamerge[${out}]`);
           cur = out;
         });
       }
-      // Effects on the cut-out element: they see its transparency. One that makes transparency of its own (a drop shadow, a
-      // glow) is used as it is; any other acts on the picture and the element keeps the shape the cutout gave it.
+      // Effects on the cut-out element see its transparency; each as its kind needs (`alpha` in the effect's declaration):
+      //   own     it makes its transparency from the one it is given (a drop shadow): used as it is;
+      //   spread  it moves or mixes pixels (blur, warp, glitch): run on the premultiplied picture (what the cutout hid is black,
+      //           so none of it comes in) and on the opacity the same way, so the edge softens or moves with the picture;
+      //   light   it adds light (glow, bloom, rays): run on the premultiplied picture; what it adds on transparent parts becomes
+      //           opacity (the brightest channel), so the light falls on what is below;
+      //   key     it makes transparency from colours (a keyer): multiplied with the element's;
+      //   keep    it changes colours: run on the picture (what the cutout hid holds the element's own colours, filled before the
+      //           effects), and the element keeps its shape.
       if (afterFx.length) {
         const base = `v${nV}`;
         const last = vLines.pop()!;
@@ -550,14 +631,30 @@ export function compile(inp: CompileInput): Plan {
         vLines.push(last.replace(new RegExp(`\\[${base}\\]$`), `[${cur}]`));
         afterFx.forEach((f, i) => {
           const out = i === afterFx.length - 1 ? base : `${base}af${i}`;
-          const graph = String((pluginEffectDecl(f.id) as { graph?: string } | undefined)?.graph ?? '');
-          const ownAlpha = /format=(yuva\w+|rgba|argb|bgra|abgr)\[out\]\s*$/.test(graph.trim());
-          if (ownAlpha || !cuts.length) vLines.push(...nodeLines(c, f, cur, out, `${base}a${i}`, fxCtx, { fps, atSec: c.start / 1000 }));
-          else {
-            const u = `${base}ak${i}`;
-            vLines.push(`[${cur}]split=2[${u}p][${u}s]`, `[${u}s]alphaextract[${u}al]`);
-            vLines.push(...nodeLines(c, f, `${u}p`, `${u}e`, `${base}a${i}`, fxCtx, { fps, atSec: c.start / 1000 }));
-            vLines.push(`[${u}e]format=yuv420p[${u}ef]`, `[${u}ef][${u}al]alphamerge[${out}]`);
+          const kind = effectAlpha(f.id);
+          const u = `${base}ak${i}`;
+          const run = (from: string, to: string, tag: string) => nodeLines(c, f, from, to, `${base}a${i}${tag}`, fxCtx, { fps, atSec: c.start / 1000 });
+          const maxRGB = (from: string, to: string) => [`[${from}]extractplanes=r+g+b[${u}xr][${u}xg][${u}xb]`, `[${u}xr][${u}xg]blend=all_mode=lighten[${u}xrg]`, `[${u}xrg][${u}xb]blend=all_mode=lighten[${to}]`];
+          if (!cuts.length || kind === 'own') vLines.push(...run(cur, out, ''));
+          else if (kind === 'frame') throw new EngineError('INVALID_INPUT', `${c.id}: effect ${f.id} follows the motion of the whole picture, so it cannot run on a cut-out element (its shape would no longer match)`, `studio stabilize --clip ${c.id} (it steadies the matte with the picture)`);
+          else if (kind === 'spread') {
+            vLines.push(`[${cur}]format=gbrap,split=2[${u}p][${u}s]`, `[${u}s]alphaextract,format=yuv420p[${u}a]`, `[${u}p]premultiply=inplace=1,format=yuv420p[${u}pm]`);
+            vLines.push(...run(`${u}a`, `${u}ae`, 'o'), `[${u}ae]format=gbrp[${u}aeg]`, ...maxRGB(`${u}aeg`, `${u}al`));
+            vLines.push(...run(`${u}pm`, `${u}e`, ''));
+            vLines.push(`[${u}e]format=gbrp[${u}ec]`, `[${u}ec][${u}al]alphamerge,unpremultiply=inplace=1[${out}]`);
+          } else if (kind === 'light') {
+            vLines.push(`[${cur}]format=gbrap,split=2[${u}p][${u}s]`, `[${u}s]alphaextract[${u}a]`, `[${u}p]premultiply=inplace=1,format=yuv420p[${u}pm]`);
+            vLines.push(...run(`${u}pm`, `${u}e`, ''));
+            vLines.push(`[${u}e]format=gbrp,split=2[${u}e1][${u}e2]`, ...maxRGB(`${u}e2`, `${u}l`), `[${u}a][${u}l]blend=all_mode=lighten[${u}al]`);
+            vLines.push(`[${u}e1][${u}al]alphamerge,unpremultiply=inplace=1[${out}]`);
+          } else if (kind === 'key') {
+            vLines.push(`[${cur}]format=yuva420p,split=2[${u}p][${u}s]`, `[${u}s]alphaextract[${u}a]`);
+            vLines.push(...run(`${u}p`, `${u}e`, ''));
+            vLines.push(`[${u}e]format=yuva420p,split=2[${u}e1][${u}e2]`, `[${u}e2]alphaextract[${u}ka]`, `[${u}a][${u}ka]blend=all_mode=multiply[${u}m]`, `[${u}e1][${u}m]alphamerge[${out}]`);
+          } else {
+            vLines.push(`[${cur}]split=2[${u}p][${u}s]`, `[${u}s]alphaextract[${u}a]`);
+            vLines.push(...run(`${u}p`, `${u}e`, ''));
+            vLines.push(`[${u}e]format=yuv420p[${u}ef]`, `[${u}ef][${u}a]alphamerge[${out}]`);
           }
           cur = out;
         });

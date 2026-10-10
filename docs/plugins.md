@@ -73,6 +73,21 @@ register('my-title', (c, lib) => {
 The loader refuses a graph that has a character outside a small safe set, no `[in]` or `[out]`, an undeclared `{param}`, or any filter that reads files or runs code (`movie`, `amovie`, `sendcmd`, `subtitles`, `drawtext`, `lut3d`, `geq`, `frei0r`, `ladspa`, `lv2`, ...).
 `studio plugins check` really runs the graph on a test pattern. The effect is applied after the clip's own scale/crop/zoom/blur and before its position on the timeline.
 
+`alpha` says what the effect does with a picture that has transparency (on a cut-out element, after its cutout: `docs/layers.md`):
+
+| `alpha` | the effect | on a cut-out element |
+|---|---|---|
+| `keep` (default) | changes colours pixel by pixel (grades, looks, grain, vignette) | acts inside the element's shape; same picture before or after the cutout |
+| `spread` | moves or mixes pixels (blur, warp, glitch, sharpen, denoise) | run on the premultiplied picture and on the opacity the same way: the edge softens or moves with the element, nothing hidden comes in |
+| `light` | adds light (glow, bloom, rays) | what it adds on transparent parts becomes opacity, so it falls on what is below |
+| `own` | makes its transparency from the one it gets (drop shadow); the graph ends in a format with alpha | used as it is |
+| `key` | makes transparency from colours (keyer) | multiplied with the element's |
+| `frame` | follows the whole picture's motion (one-pass stabilizer) | refused: the element's matte would not move with it |
+
+Without `alpha`, a graph that ends in a format with alpha (`format=yuva420p[out]`, `rgba`, ...) counts as `own`, any other as `keep`.
+A graph may end with lines after the one that writes `[out]` (a `nullsink` for an unused branch): the line that writes `[out]`
+is moved last, since the steps after an effect continue from the clip's last line.
+
 ### Scripts
 
 A script is an ES module (`.mjs`) that declares `meta` and a default export. A file without both is **not** a script and is never imported (so `studio script list` cannot run a build script that happens to sit in the folder).
