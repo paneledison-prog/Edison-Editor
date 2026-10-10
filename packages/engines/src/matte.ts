@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Matte, Project } from '@studio/core';
 import {
-  VideoWriter, colourEvidence, consensusMask, proposalPrompts, detectCuts, estimateForeground, flowsOf, morph, refineEdge, resizePlane, smoothMattes, smoothMattesBytes, drawLine, drawPoly, followPrepare, followStep, probeVideo, promptsFromMask, promptsFromSeeds, segmentFromPrompted, readFrames, readSize, segmentFrame, segmentWithModel, startFollowing, tileRgb,
+  VideoWriter, colourEvidence, neverSeen, consensusMask, proposalPrompts, detectCuts, estimateForeground, flowsOf, morph, refineEdge, resizePlane, smoothMattes, smoothMattesBytes, drawLine, drawPoly, followPrepare, followStep, probeVideo, promptsFromMask, promptsFromSeeds, segmentFromPrompted, readFrames, readSize, segmentFrame, segmentWithModel, startFollowing, tileRgb,
   type Seeds,
 } from '@studio/vision';
 import { grabFrame } from './grab.js';
@@ -20,7 +20,7 @@ import { EngineError, run } from './run.js';
 import { SamServer } from './sam.js';
 import { VitMatteServer } from './vitmatte.js';
 
-export const MATTE_VERSION = 25;
+export const MATTE_VERSION = 34;
 /** a followed matte whose pixels look less than this much like the marked object (colour evidence 0..1) is not shown */
 const MIN_CONFIDENCE = 0.3;
 const MAX_FRAMES = 700;
@@ -379,12 +379,16 @@ async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer; t
       let r;
       if (sam && modelKey[ki]) {
         // the segmenter is asked about this frame with prompts taken from the matte carried over to it
+        const t0 = Date.now();
         const pre = followPrepare(st, frames[i]!);
         const prompts = proposalPrompts(pre.warped, w, h);
         let prior: Float32Array | undefined;
         if (prompts.length) {
+          const t1 = Date.now();
           const props = await sam.proposals(`f${i}`, w, h, prompts);
-          const c = consensusMask(pre.warped, props, w, h, { flow: pre.flow, frames: { prev: st.gray, cur: pre.gray }, evidence: colourEvidence(st, frames[i]!) });
+          const t2 = Date.now();
+          const c = consensusMask(pre.warped, props, w, h, { flow: pre.flow, frames: { prev: st.gray, cur: pre.gray }, evidence: colourEvidence(st, frames[i]!), never: neverSeen(st, frames[i]!) });
+          if (process.env['STUDIO_DEBUG_FOLLOW']) log(`TIMING ${i} prepare ${t1 - t0} ms, proposals ${t2 - t1} ms, consensus ${Date.now() - t2} ms`);
           if (process.env['STUDIO_DEBUG_FOLLOW'] === '2') log(`TRACE ${i} ${JSON.stringify(c.trace)}`);
           if (process.env['STUDIO_DEBUG_FOLLOW']) log(`frame ${i}: ${c.how}, ${c.accepted} proposals accepted, ${c.foreign} foreign, coverage ${c.coverage.toFixed(2)}, motion separation ${c.motionSeparation?.toFixed(1) ?? 'n/a'} px`);
           prior = c.alpha;

@@ -11,8 +11,8 @@ Reads one JSON object per line on stdin and answers one JSON line on stdout.
   {"cmd":"decode","id":"f12","points":[[x,y],...],"labels":[1,0,...],"box":[x0,y0,x1,y1],"pick":"auto|whole|smallest|best|first","out":"mask.png"}
       Coordinates are pixels of the embedded image. Writes an 8-bit grayscale PNG (probability, same size as the image)
       and answers with the three candidate masks' predicted quality and area and the one that was written.
-  {"cmd":"proposals","id":"f12","prompts":[{"points":[[x,y]],"labels":[1],"box":null},...],"out":"dir"}
-      Many prompts on one frame: every one of the three candidates of each is written as DIR/<prompt>_<candidate>.png.
+  {"cmd":"proposals","id":"f12","prompts":[{"points":[[x,y]],"labels":[1],"box":null},...],"out":"file"}
+      Many prompts on one frame: the logits (256x256) of every one of the three candidates of each, one byte each, in the file "out".
   {"cmd":"quit"}
 
 Only onnxruntime, numpy and Pillow are used. Limits come from the model: thin structures and hair are soft, the model
@@ -164,13 +164,13 @@ def main():
                 Image.fromarray((prob * 255 + 0.5).astype(np.uint8), "L").save(q["out"], "PNG")
                 reply({"ok": True, "ms": ms, "picked": k, "iou": [round(float(v), 3) for v in iou], "area": [round(v, 4) for v in areas], "object": round(float(obj.reshape(-1)[0]), 2)})
             elif cmd == "proposals":
-                # many prompts on one frame, every candidate of each written as a probability PNG: DIR/<prompt>_<candidate>.png
+                # many prompts on one frame; every candidate's 256x256 logits (clipped to +-12, one byte each) go to one file:
+                # prompt-major, then candidate, then row-major: P x 3 x 256 x 256 bytes
                 e = load(q["id"])
                 w, h = sizes[q["id"]]
                 sc = np.array([S / w, S / h], dtype=np.float32)
-                outd = q["out"]
-                os.makedirs(outd, exist_ok=True)
                 res = []
+                blob = []
                 t0 = time.perf_counter()
                 for pi, pr in enumerate(q["prompts"]):
                     pts = pr.get("points") or []
@@ -189,12 +189,10 @@ def main():
                     iou, m, obj = dec.run(None, {"image_embeddings.0": e[0], "image_embeddings.1": e[1], "image_embeddings.2": e[2], "input_points": p.astype(np.float32), "input_labels": l, "input_boxes": b.astype(np.float32)})
                     m = m[0, 0]
                     iou = iou[0, 0]
-                    for k in range(m.shape[0]):
-                        lg = Image.fromarray(m[k].astype(np.float32), mode="F").resize((w, h), Image.Resampling.BILINEAR)
-                        prob = sigmoid(np.asarray(lg))
-                        Image.fromarray((prob * 255 + 0.5).astype(np.uint8), "L").save(os.path.join(outd, "%d_%d.png" % (pi, k)), "PNG", compress_level=1)
+                    blob.append(np.clip((m + 12.0) * (255.0 / 24.0) + 0.5, 0, 255).astype(np.uint8))
                     res.append({"iou": [round(float(v), 3) for v in iou], "area": [round(float((m[k] > 0).mean()), 4) for k in range(m.shape[0])]})
-                reply({"ok": True, "ms": round((time.perf_counter() - t0) * 1000), "results": res})
+                np.stack(blob).tofile(q["out"])
+                reply({"ok": True, "ms": round((time.perf_counter() - t0) * 1000), "results": res, "size": [int(blob[0].shape[1]), int(blob[0].shape[2])] if blob else [0, 0]})
             else:
                 reply({"ok": False, "error": "unknown cmd " + str(cmd)})
         except Exception as ex:  # noqa: BLE001 - report any failure as one JSON line and keep serving

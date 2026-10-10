@@ -876,6 +876,14 @@ export function colourEvidence(st: FollowState, rgb: Uint8Array): Float32Array {
   return e;
 }
 
+/** Per pixel: 1 where the colour is one the object's palette at the keyframe gives (almost) no probability to: something the object never looked like. */
+export function neverSeen(st: FollowState, rgb: Uint8Array): Uint8Array {
+  const n = st.w * st.h;
+  const o = new Uint8Array(n);
+  for (let i = 0; i < n; i++) if (st.refFg.p(rgb[3 * i]!, rgb[3 * i + 1]!, rgb[3 * i + 2]!) < st.fgFloor) o[i] = 1;
+  return o;
+}
+
 /** Mean colour evidence of the pixels a matte covers: do they look like what was marked at the keyframe, and not like its surroundings? */
 function lookLike(st: FollowState, rgb: Uint8Array, alpha: Float32Array): number {
   let s = 0;

@@ -34,6 +34,8 @@ export interface ConsensusOptions {
   frames?: { prev: Gray; cur: Gray };
   /** per pixel, how much the colour looks like the marked object (0..1): a proposal in colours the object never had is not the object */
   evidence?: Float32Array;
+  /** per pixel, 1 where the colour is one the object never had (its palette gives it next to no probability) */
+  never?: Uint8Array;
 }
 
 export interface Consensus {
@@ -48,7 +50,7 @@ export interface Consensus {
   /** the object's motion against the background's (px per frame), when the flow was given: below about 1.2 the motion tells nothing and was not used */
   motionSeparation?: number;
   /** what was decided about each proposal (for looking into a result) */
-  trace?: { cx: number; cy: number; share: number; precision: number; looks: number; moves: string; verdict: string }[];
+  trace?: { cx: number; cy: number; share: number; precision: number; looks: number; moves: string; verdict: string; motion?: number[] }[];
 }
 
 interface Affine {
@@ -115,7 +117,7 @@ const area = (m: Uint8Array): number => {
  * both do (flat colour, or the two motions are alike there). The previous frame is sampled where each motion says the pixel came
  * from, and the difference to this frame is averaged over a small window.
  */
-function motionLabels(mA: Affine, mB: Affine, cx: number, cy: number, f: { prev: Gray; cur: Gray }, w: number, h: number): Float32Array {
+function motionLabels(mA: Affine, mB: Affine, cx: number, cy: number, f: { prev: Gray; cur: Gray }, w: number, h: number): { lab: Float32Array; rA: Float32Array; rB: Float32Array } {
   const n = w * h;
   const rA = new Float32Array(n);
   const rB = new Float32Array(n);
@@ -156,9 +158,9 @@ function motionLabels(mA: Affine, mB: Affine, cx: number, cy: number, f: { prev:
   for (let i = 0; i < n; i++) {
     const d = b[i]! - a[i]!; // > 0: the object's motion explains the pixel better
     const scale = Math.max(a[i]!, b[i]!);
-    lab[i] = Math.abs(d) < Math.max(2.5, 0.25 * scale) ? 0 : d > 0 ? 1 : -1;
+    lab[i] = Math.abs(d) < Math.max(2, 0.2 * scale) ? 0 : d > 0 ? 1 : -1;
   }
-  return lab;
+  return { lab, rA, rB };
 }
 
 /**
@@ -207,17 +209,24 @@ export function consensusMask(predicted: Float32Array, props: Proposal[], w: num
       }
     }
   }
-  const labels = mA && mB && o.frames ? motionLabels(mA, mB, mcx, mcy, o.frames, w, h) : null;
+  const ml = mA && mB && o.frames ? motionLabels(mA, mB, mcx, mcy, o.frames, w, h) : null;
+  const labels = ml ? ml.lab : null;
+  let lastMotion: number[] | undefined;
   const moves = (C: Uint8Array): 'object' | 'background' | 'unknown' => {
-    if (labels) {
-      let po = 0, pb = 0, k = 0;
+    lastMotion = undefined;
+    if (ml) {
+      // the proposal's inside (away from its edge, where the other layer shows through): which motion explains it better, summed over
+      // all its pixels, so that a few textured places (eyes, hair, a seam) decide where the rest is flat
+      const inner = morph(C, w, h, 3, false);
+      let sA = 0, sB = 0, k = 0;
       for (let i = 0; i < n; i += 2)
-        if (C[i]) {
+        if (inner[i]) {
           k++;
-          if (labels[i]! > 0) po++;
-          else if (labels[i]! < 0) pb++;
+          sA += ml.rA[i]!;
+          sB += ml.rB[i]!;
         }
-      if (k >= 15 && po + pb >= 0.2 * k) return pb > 2 * po ? 'background' : po > 2 * pb ? 'object' : 'unknown';
+      lastMotion = [k, Math.round((100 * sA) / Math.max(1, k)) / 100, Math.round((100 * sB) / Math.max(1, k)) / 100];
+      if (k >= 40 && sA + sB >= 0.05 * k) return sB < 0.6 * sA ? 'background' : sA < 0.6 * sB ? 'object' : 'unknown';
     }
     if (!mA || !mB || !o.flow) return 'unknown';
     let rA = 0, rB = 0, k = 0;
@@ -263,7 +272,7 @@ export function consensusMask(predicted: Float32Array, props: Proposal[], w: num
       let sx = 0, sy = 0;
       for (let i = 0; i < n; i += 4) if (C[i]) (sx += i % w, (sy += Math.floor(i / w)));
       const q = Math.max(1, area(C) / 4);
-      trace.push({ cx: Math.round(sx / q), cy: Math.round(sy / q), share: Math.round((100 * a) / Math.max(1, pArea)) / 100, precision: Math.round((100 * inD) / a) / 100, looks: Math.round(looks * 100) / 100, moves: mv, verdict: notObject ? 'foreign' : inD / a >= prec ? 'accepted' : 'too far outside' });
+      trace.push({ cx: Math.round(sx / q), cy: Math.round(sy / q), share: Math.round((100 * a) / Math.max(1, pArea)) / 100, precision: Math.round((100 * inD) / a) / 100, looks: Math.round(looks * 100) / 100, moves: mv, verdict: notObject ? 'foreign' : inD / a >= prec ? 'accepted' : 'too far outside', ...(lastMotion ? { motion: lastMotion } : {}) });
     }
     if (!notObject && (!best || iou > best.iou)) best = { m: C, iou };
     if (!notObject && inD / a >= prec) accepted.push(C);
@@ -286,7 +295,7 @@ export function consensusMask(predicted: Float32Array, props: Proposal[], w: num
     // What is enclosed by the object (the inside of a mouth, a dark button) is its own and stays.
     {
       const fp = new Uint8Array(n);
-      for (let i = 0; i < n; i++) if (out[i] && ((o.evidence && o.evidence[i]! < 0.2) || (labels && labels[i]! < 0))) fp[i] = 1;
+      for (let i = 0; i < n; i++) if (out[i] && ((o.never && o.never[i]) || (o.evidence && o.evidence[i]! < 0.2) || (labels && labels[i]! < 0))) fp[i] = 1;
       const fc = components(fp, w, h);
       let rArea = 0;
       for (let i = 0; i < n; i++) rArea += out[i]! > 0.5 ? 1 : 0;

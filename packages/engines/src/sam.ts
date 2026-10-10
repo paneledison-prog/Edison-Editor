@@ -4,7 +4,7 @@
  * about a tenth of a second each. Used by the Object Mask Tool (`mask`) and the `sam` matte engine.
  */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -111,24 +111,50 @@ export class SamServer {
     return { prob: Float32Array.from(raw, (v) => v / 255), picked: Number(r['picked']), iou: r['iou'] as number[], area: r['area'] as number[], ms: Number(r['ms']) };
   }
 
-  /** Many prompts on one embedded frame, all three candidates of each (what a candidate is: see `SamPrompt.pick`). */
+  /**
+   * Many prompts on one embedded frame, all three candidates of each, as binary masks at the size of the picture (what a candidate
+   * is: see `SamPrompt.pick`). The model's own 256 x 256 logits are interpolated, so the boundaries are not a staircase of cells.
+   */
   async proposals(id: string, w: number, h: number, prompts: Pick<SamPrompt, 'points' | 'labels' | 'box'>[]): Promise<{ prob: Float32Array; iou: number; prompt: number; candidate: number }[]> {
-    const sharp = (await import('sharp')).default;
-    const out = join(this.tmp, `prop${this.n++}`);
+    const out = join(this.tmp, `prop${this.n++}.bin`);
     const r = await this.send({ cmd: 'proposals', id, prompts: prompts.map((p) => ({ points: p.points ?? [], labels: p.labels ?? [], box: p.box ?? null })), out });
     if (!r['ok']) throw new EngineError('ENGINE_FAILED', `the segmenter failed on prompts: ${String(r['error'])}`);
     const results = r['results'] as { iou: number[] }[];
+    const [gh, gw] = (r['size'] as [number, number]) ?? [256, 256];
+    const buf = readFileSync(out);
+    rmSync(out, { force: true });
+    const per = gw * gh;
     const got: { prob: Float32Array; iou: number; prompt: number; candidate: number }[] = [];
-    try {
-      for (let pi = 0; pi < results.length; pi++)
-        for (let k = 0; k < (results[pi]!.iou.length || 3); k++) {
-          const raw = await sharp(join(out, `${pi}_${k}.png`)).greyscale().raw().toBuffer();
-          if (raw.length !== w * h) throw new EngineError('ENGINE_FAILED', 'the segmenter returned a mask of the wrong size');
-          got.push({ prob: Float32Array.from(raw, (v) => v / 255), iou: results[pi]!.iou[k] ?? 0, prompt: pi, candidate: k });
-        }
-    } finally {
-      rmSync(out, { recursive: true, force: true });
+    const xs = new Int32Array(w);
+    const fx = new Float32Array(w);
+    for (let x = 0; x < w; x++) {
+      const g = Math.min(gw - 1.001, Math.max(0, ((x + 0.5) * gw) / w - 0.5));
+      xs[x] = Math.floor(g);
+      fx[x] = g - xs[x]!;
     }
+    let off = 0;
+    for (let pi = 0; pi < results.length; pi++)
+      for (let k = 0; k < (results[pi]!.iou.length || 3); k++) {
+        const base = off;
+        off += per;
+        const prob = new Float32Array(w * h);
+        for (let y = 0; y < h; y++) {
+          const g = Math.min(gh - 1.001, Math.max(0, ((y + 0.5) * gh) / h - 0.5));
+          const y0 = Math.floor(g);
+          const fy = g - y0;
+          const r0 = base + y0 * gw;
+          const r1 = r0 + gw;
+          for (let x = 0; x < w; x++) {
+            const x0 = xs[x]!;
+            const a = buf[r0 + x0]! * (1 - fx[x]!) + buf[r0 + x0 + 1]! * fx[x]!;
+            const b = buf[r1 + x0]! * (1 - fx[x]!) + buf[r1 + x0 + 1]! * fx[x]!;
+            // logit > 0 is inside (byte 127.5); a steep ramp so the result is a mask with a one-pixel edge, not a blur
+            const lg = ((a * (1 - fy) + b * fy) * 24) / 255 - 12;
+            prob[y * w + x] = 1 / (1 + Math.exp(-4 * lg));
+          }
+        }
+        got.push({ prob, iou: results[pi]!.iou[k] ?? 0, prompt: pi, candidate: k });
+      }
     return got;
   }
 
