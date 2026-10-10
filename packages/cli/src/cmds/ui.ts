@@ -205,6 +205,8 @@ export const ui: Handler = async (inv) => {
             10_000,
           );
           child.stderr.on('data', (d) => (err += d));
+          // the child can exit while a request is being written (it is killed when the answer is in): never crash the UI server on it
+          child.stdin.on('error', () => {});
           child.on('error', (e) => finish({ ok: false, message: e.message }));
           child.on('close', (code) =>
             finish({
@@ -214,7 +216,11 @@ export const ui: Handler = async (inv) => {
           );
           child.stdout.on('data', (d) => {
             buf += d;
-            for (const line of buf.split('\n')) {
+            // each complete line once: the answer to tools/list is large and comes in many chunks
+            const lines = buf.split('\n');
+            buf = lines.pop()!;
+            for (const line of lines) {
+              if (done) return;
               let m: any;
               try {
                 m = JSON.parse(line);
