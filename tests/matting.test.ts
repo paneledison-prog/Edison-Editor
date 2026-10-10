@@ -132,3 +132,43 @@ describe('flicker: steadying a sequence of mattes', () => {
     expect(glitchSm).toBeGreaterThan(glitchRaw);
   }, 120_000);
 });
+
+describe('the hair matting model (ViTMatte) against the guided filter', async () => {
+  const { vitmatteReady, VitMatteServer } = await import('../packages/engines/src/index.js');
+  const { morph } = await import('../packages/vision/src/index.js');
+  const ready = (await vitmatteReady()).ok;
+  it.skipIf(!ready)('opacity in the edge band: measured against the truth, same trimap for both', async () => {
+    const c = hairComposite(W, H);
+    const { low, lw, lh } = roughMask(c);
+    const guided = refineEdge(c.image, W, H, low, lw, lh, { hair: true });
+    const bin = new Uint8Array(W * H);
+    for (let i = 0; i < bin.length; i++) bin[i] = guided[i]! > 0.5 ? 1 : 0;
+    const r = Math.round(0.02 * W);
+    const grown = morph(bin, W, H, r, true);
+    const shrunk = morph(bin, W, H, r, false);
+    const tri = new Uint8Array(W * H);
+    for (let i = 0; i < tri.length; i++) tri[i] = shrunk[i] ? 255 : !grown[i] ? 0 : 128;
+    const srv = await VitMatteServer.start();
+    try {
+      await srv.matte(c.image, tri, W, H); // the first call loads the session
+      const t0 = Date.now();
+      const vit = (await srv.matte(c.image, tri, W, H)).alpha;
+      const ms = Date.now() - t0;
+      const band = new Uint8Array(W * H);
+      for (let i = 0; i < band.length; i++) if (c.alpha[i]! > 0.02 && c.alpha[i]! < 0.98) band[i] = 1;
+      const mae = (a: Float32Array) => {
+        let s = 0;
+        let n = 0;
+        for (let i = 0; i < band.length; i++) if (band[i]) (s += Math.abs(a[i]! - c.alpha[i]!), n++);
+        return s / n;
+      };
+      // strands thinner than a pixel: how much of their true coverage each recovers (sum of opacity over the strand pixels)
+      let truthSum = 0, gSum = 0, vSum = 0;
+      for (let i = 0; i < band.length; i++) if (band[i]) (truthSum += c.alpha[i]!, gSum += guided[i]!, vSum += vit[i]!);
+      console.log(`HAIR MODEL: error of the opacity in the edge band: guided filter ${mae(guided).toFixed(4)}, ViTMatte ${mae(vit).toFixed(4)}; opacity recovered in the band (truth 1.00): guided ${(gSum / truthSum).toFixed(2)}, ViTMatte ${(vSum / truthSum).toFixed(2)}; ${ms} ms at ${W}x${H} (trimap unknown ${(tri.reduce((a, v) => a + (v === 128 ? 1 : 0), 0) / tri.length * 100).toFixed(0)}% of the picture)`);
+      expect(Number.isFinite(mae(vit))).toBe(true);
+    } finally {
+      await srv.close();
+    }
+  }, 300_000);
+});

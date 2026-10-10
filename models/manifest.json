@@ -182,6 +182,17 @@
       "license": "Apache-2.0",
       "licenseSource": "https://github.com/facebookresearch/sam2/blob/main/LICENSE",
       "notes": "SAM 2.1 Hiera-tiny, promptable segmentation (points, boxes), ONNX export by onnx-community pinned to revision 814a066640debee5a91e70aa401fb8e17e030503; int8 image encoder (1024x1024 input) and the fp32 prompt encoder + mask decoder. Not generative."
+    },
+    "vitmatte-small": {
+      "kind": "onnx",
+      "task": "matting",
+      "file": "vitmatte-small.onnx",
+      "url": "https://huggingface.co/Xenova/vitmatte-small-distinctions-646/resolve/358d428c452e5e0cd52955011a8b51944731d28e/onnx/model.onnx",
+      "sha256": "a1cf48234c369faa3ea1711981d961fe1ec71f51e593f9d6553aa5a0e7d557e3",
+      "bytes": 103885865,
+      "license": "Apache-2.0",
+      "licenseSource": "https://huggingface.co/hustvl/vitmatte-small-distinctions-646 (model card: license apache-2.0; code https://github.com/hustvl/ViTMatte, MIT)",
+      "notes": "ViTMatte small trained on Distinctions-646: alpha matting from a picture and a trimap (sure inside, sure outside, unknown band), the hair and fine edge tier of the edge engine. ONNX export by Xenova pinned to revision 358d428c452e5e0cd52955011a8b51944731d28e. Not generative."
     }
   }
 }

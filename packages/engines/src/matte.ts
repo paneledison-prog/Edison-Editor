@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Matte, Project } from '@studio/core';
 import {
-  VideoWriter, detectCuts, estimateForeground, refineEdge, resizePlane, smoothMattes, drawLine, drawPoly, followPrepare, followStep, probeVideo, promptsFromMask, promptsFromSeeds, segmentFromPrompted, readFrames, readSize, segmentFrame, segmentWithModel, startFollowing, tileRgb,
+  VideoWriter, detectCuts, estimateForeground, flowsOf, morph, refineEdge, resizePlane, smoothMattes, smoothMattesBytes, drawLine, drawPoly, followPrepare, followStep, probeVideo, promptsFromMask, promptsFromSeeds, segmentFromPrompted, readFrames, readSize, segmentFrame, segmentWithModel, startFollowing, tileRgb,
   type Seeds,
 } from '@studio/vision';
 import { grabFrame } from './grab.js';
@@ -18,8 +18,9 @@ import { pythonReady, removeBackground } from './bgremove.js';
 import { requireModel, studioRoot } from './models.js';
 import { EngineError, run } from './run.js';
 import { SamServer } from './sam.js';
+import { VitMatteServer } from './vitmatte.js';
 
-export const MATTE_VERSION = 17;
+export const MATTE_VERSION = 18;
 const MAX_FRAMES = 700;
 
 export interface MatteData {
@@ -34,7 +35,7 @@ export interface MatteData {
   /** the size the marks were followed at; `w` and `h` are the size of the matte video */
   analysis?: { w: number; h: number };
   /** what the edge engine did, and how steady the matte is (flicker 0..1, lower is steadier) */
-  edge?: { refined: boolean; hair: boolean; smoothed: number; decontaminated: boolean; flicker?: { before: number; after: number }; jitter?: { before: number; after: number } };
+  edge?: { refined: boolean; hair: boolean; model?: string; smoothed: number; decontaminated: boolean; flicker?: { before: number; after: number }; jitter?: { before: number; after: number } };
   fps: number;
   w: number;
   h: number;
@@ -416,32 +417,82 @@ async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer })
   const tmp = `${video}.${process.pid}.partial.mkv`;
   const fgVideo = video.replace(/\.mkv$/, '.fg.mkv');
   const fgTmp = `${fgVideo}.${process.pid}.partial.mkv`;
-  const wr = new VideoWriter(tmp, { w: ow, h: oh, fps });
-  const wf = decontaminate ? new VideoWriter(fgTmp, { w: ow, h: oh, fps, channels: 3, codec: ['-c:v', 'ffv1', '-level', '3', '-pix_fmt', 'bgr0'] }) : null;
+  const useModel = edgeCfg.model === 'vitmatte';
   const coverage: number[] = [];
-  const needPictures = refine || decontaminate;
-  if (needPictures) log(`the edge at ${ow}x${oh}${refine ? ' (band decided again from the picture)' : ''}${decontaminate ? ', object colour cleaned of the old background' : ''}`);
-  let idx = 0;
-  const writeOne = async (i: number, pic: Uint8Array | null) => {
-    const a = work[i]!;
+  const needPictures = refine || decontaminate || useModel;
+  if (needPictures) log(`the edge at ${ow}x${oh}${refine ? ' (band decided again from the picture)' : ''}${useModel ? ', opacity in the band from the hair matting model' : ''}${decontaminate ? ', object colour cleaned of the old background' : ''}`);
+  const readPictures = () => readFrames({ file: src, startMs: m.from, durMs: Math.ceil(total * step) + 1, fps, size: { w: ow, h: oh }, channels: 3 });
+  const toByte = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 255);
+  for (let i = 0; i < N; i++) {
     let cov = 0;
-    for (let p = 0; p < a.length; p++) cov += a[p]!;
+    for (let p = 0; p < work[i]!.length; p++) cov += work[i]![p]!;
     coverage.push(Math.round((cov / (w * h)) * 10000) / 10000);
-    let big: Float32Array;
-    if (pic && refine) big = refineEdge(pic, ow, oh, a, w, h, { hair });
-    else big = resizePlane(a, w, h, ow, oh);
-    await wr.write(Uint8Array.from(big, (v) => Math.round(Math.min(1, Math.max(0, v)) * 255)));
-    if (wf && pic) await wf.write(estimateForeground(pic, big, ow, oh, 1));
-  };
-  if (needPictures) {
-    for await (const b of readFrames({ file: src, startMs: m.from, durMs: Math.ceil(total * step) + 1, fps, size: { w: ow, h: oh }, channels: 3 })) {
-      if (idx >= N) break;
-      await writeOne(idx++, new Uint8Array(b));
+  }
+  // Pass 1: the matte at the picture's size, one frame at a time (the hair model, if asked for, decides the opacity in the band).
+  const big: Uint8Array[] = [];
+  let vit: VitMatteServer | undefined;
+  let vitMs = 0;
+  if (useModel) {
+    vit = await VitMatteServer.start().catch((e: Error) => {
+      throw new EngineError('ENGINE_MISSING', `matte ${id}: the hair matting model cannot run: ${e.message}`, 'studio models fetch vitmatte-small; or drop --edge-model');
+    });
+  }
+  try {
+    let idx = 0;
+    const one = async (pic: Uint8Array | null) => {
+      const a = work[idx]!;
+      let b: Float32Array = pic && refine ? refineEdge(pic, ow, oh, a, w, h, { hair }) : resizePlane(a, w, h, ow, oh);
+      if (vit && pic) {
+        // the trimap: sure inside, sure outside, and an unknown band around the boundary (wider with --hair)
+        const bin = new Uint8Array(ow * oh);
+        for (let p = 0; p < bin.length; p++) bin[p] = b[p]! > 0.5 ? 1 : 0;
+        const r = Math.max(3, Math.round((hair ? 0.03 : 0.015) * ow));
+        const grown = morph(bin, ow, oh, r, true);
+        const shrunk = morph(bin, ow, oh, r, false);
+        const tri = new Uint8Array(ow * oh);
+        for (let p = 0; p < tri.length; p++) tri[p] = shrunk[p] ? 255 : !grown[p] ? 0 : 128;
+        const got = await vit.matte(pic, tri, ow, oh);
+        vitMs += got.ms;
+        b = got.alpha;
+      }
+      big.push(Uint8Array.from(b, toByte));
+      idx++;
+    };
+    if (needPictures) {
+      for await (const b of readPictures()) {
+        if (idx >= N) break;
+        await one(new Uint8Array(b));
+      }
+    }
+    while (idx < N) await one(null);
+  } finally {
+    await vit?.close();
+  }
+  if (useModel) {
+    edgeInfo.model = 'vitmatte';
+    log(`hair matting model: ${Math.round(vitMs / Math.max(1, N))} ms a frame`);
+    if (smoothAmt > 0 && N >= 3) {
+      // the model's opacity differs a little from frame to frame: steadied again at the finished size, along the same motion
+      const flows = flowsOf(frames, w, h, new Set(cuts));
+      const steady = smoothMattesBytes(big, ow, oh, flows, { fixed: new Set(keys.map((k) => k.frame)), strength: smoothAmt });
+      for (let i = 0; i < N; i++) big[i] = steady[i]!;
     }
   }
-  while (idx < N) await writeOne(idx++, null);
+  // Pass 2: write the matte, and the object's colour with the old background taken out of the edge pixels.
+  const wr = new VideoWriter(tmp, { w: ow, h: oh, fps });
+  const wf = decontaminate ? new VideoWriter(fgTmp, { w: ow, h: oh, fps, channels: 3, codec: ['-c:v', 'ffv1', '-level', '3', '-pix_fmt', 'bgr0'] }) : null;
+  for (let i = 0; i < N; i++) await wr.write(big[i]!);
   await wr.close();
-  if (wf) await wf.close();
+  if (wf) {
+    let j = 0;
+    for await (const b of readPictures()) {
+      if (j >= N) break;
+      await wf.write(estimateForeground(new Uint8Array(b), Float32Array.from(big[j]!, (v) => v / 255), ow, oh, 1));
+      j++;
+    }
+    while (j++ < N) await wf.write(new Uint8Array(ow * oh * 3));
+    await wf.close();
+  }
   renameSync(tmp, video);
   if (wf) renameSync(fgTmp, fgVideo);
   for (let i = 0; i < N; i++) final[i] = Uint8Array.from(work[i]!, (v) => Math.round(Math.min(1, Math.max(0, v)) * 255));

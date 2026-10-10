@@ -26,6 +26,7 @@ function edgeFrom(inv: Invocation): Matte['edge'] | undefined {
   if (num(inv, 'smooth') !== undefined) e['smooth'] = num(inv, 'smooth');
   if (inv.flags['no-smooth']) e['smooth'] = 0;
   if (inv.flags['no-decontaminate']) e['decontaminate'] = false;
+  if (str(inv, 'edge-model')) e['model'] = str(inv, 'edge-model') === 'none' ? undefined : str(inv, 'edge-model');
   return Object.keys(e).length ? (e as Matte['edge']) : undefined;
 }
 

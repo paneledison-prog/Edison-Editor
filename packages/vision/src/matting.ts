@@ -251,7 +251,7 @@ function bandOf(a: Float32Array, w: number, h: number, r: number): Uint8Array {
 }
 
 /** Flows needed to compare neighbours: for each frame, where its pixels are in the frame before and the frame after. */
-function flowsOf(frames: Uint8Array[], w: number, h: number, cutAt: Set<number>): { prev: (Flow | null)[]; next: (Flow | null)[] } {
+export function flowsOf(frames: Uint8Array[], w: number, h: number, cutAt: Set<number>): { prev: (Flow | null)[]; next: (Flow | null)[] } {
   const grays = frames.map((f) => grayOfBytes(f, w, h));
   const prev: (Flow | null)[] = new Array(frames.length).fill(null);
   const next: (Flow | null)[] = new Array(frames.length).fill(null);
@@ -260,6 +260,71 @@ function flowsOf(frames: Uint8Array[], w: number, h: number, cutAt: Set<number>)
     if (t + 1 < frames.length && !cutAt.has(t + 1)) next[t] = denseFlow(grays[t]!, grays[t + 1]!, { levels: 4, iters: 3, radius: 5 });
   }
   return { prev, next };
+}
+
+
+/** One frame steadied against its neighbours carried onto it (either may be null): glitches replaced, the rest averaged where they agree. */
+function steadyFrame(cur: Float32Array, wp: Float32Array | null, wn: Float32Array | null, strength: number, out: Float32Array): void {
+  const n = cur.length;
+  for (let i = 0; i < n; i++) {
+    const c = cur[i]!;
+    if (wp && wn) {
+      const p = wp[i]!;
+      const q = wn[i]!;
+      // a pixel unlike both neighbours while they agree with each other: a glitch of this frame alone
+      if (Math.abs(p - q) < 0.25 && Math.abs(c - p) > 0.4 && Math.abs(c - q) > 0.4) out[i] = 0.5 * (p + q);
+      else {
+        const m = 0.5 * (p + q);
+        const k = strength * (1 - Math.min(1, Math.abs(c - m) / 0.5)); // trust the neighbours where they and this frame are close
+        out[i] = c + k * (m - c);
+      }
+    } else if (wp || wn) {
+      const m = (wp ?? wn)![i]!;
+      const k = 0.5 * strength * (1 - Math.min(1, Math.abs(c - m) / 0.5));
+      out[i] = c + k * (m - c);
+    }
+  }
+}
+
+/** A flow field at another size: the same motion, in the pixels of the new size. */
+export function scaleFlow(f: Flow, w: number, h: number): Flow {
+  if (f.w === w && f.h === h) return f;
+  const k = w / f.w;
+  const u = resizePlane(f.u, f.w, f.h, w, h);
+  const v = resizePlane(f.v, f.w, f.h, w, h);
+  for (let i = 0; i < u.length; i++) (u[i] = u[i]! * k, (v[i] = v[i]! * (h / f.h)));
+  return { w, h, u, v };
+}
+
+/**
+ * Flicker control for mattes held as bytes at the picture's size (the finished matte, where the hair model's opacity flickers
+ * from frame to frame). The motion comes from the analysis-size pictures. `fixed` frames are not changed.
+ */
+export function smoothMattesBytes(alphas: Uint8Array[], w: number, h: number, flows: { prev: (Flow | null)[]; next: (Flow | null)[] }, o: { fixed?: Set<number>; strength?: number } = {}): Uint8Array[] {
+  const strength = Math.min(1, Math.max(0, o.strength ?? 0.7));
+  const n = w * h;
+  const toF = (a: Uint8Array) => Float32Array.from(a, (v) => v / 255);
+  const out: Uint8Array[] = alphas.map((a) => a.slice());
+  for (let t = 0; t < alphas.length; t++) {
+    if (o.fixed?.has(t)) continue;
+    const pf = flows.prev[t];
+    const nf = flows.next[t];
+    if (!pf && !nf) continue;
+    const pa = pf ? scaleFlow(pf, w, h) : null;
+    const na = nf ? scaleFlow(nf, w, h) : null;
+    const wp = pa ? warpByFlow(toF(alphas[t - 1]!), w, h, pa.u, pa.v) : null;
+    const wn = na ? warpByFlow(toF(alphas[t + 1]!), w, h, na.u, na.v) : null;
+    const res = new Float32Array(n);
+    steadyFrame(toF(alphas[t]!), wp, wn, strength, res);
+    // only where the frame changed does the steadied value replace the original byte, so untouched pixels stay exact
+    const cur = alphas[t]!;
+    const dst = out[t]!;
+    for (let i = 0; i < n; i++) {
+      const v = Math.round(res[i]! * 255);
+      if (Math.abs(v - cur[i]!) > 0) dst[i] = Math.min(255, Math.max(0, v));
+    }
+  }
+  return out;
 }
 
 /** How steady a sequence of mattes is (lower is steadier). `frames` are the pictures at the matte's size. */
@@ -311,25 +376,7 @@ export function smoothMattes(alphas: Float32Array[], frames: Uint8Array[], w: nu
     const cur = alphas[t]!;
     const wp = pf ? warpByFlow(alphas[t - 1]!, w, h, pf.u, pf.v) : null;
     const wn = nf ? warpByFlow(alphas[t + 1]!, w, h, nf.u, nf.v) : null;
-    const a = out[t]!;
-    for (let i = 0; i < n; i++) {
-      const c = cur[i]!;
-      const p = wp ? wp[i]! : NaN;
-      const q = wn ? wn[i]! : NaN;
-      if (wp && wn) {
-        // a pixel unlike both neighbours while they agree with each other: a glitch of this frame alone
-        if (Math.abs(p - q) < 0.25 && Math.abs(c - p) > 0.4 && Math.abs(c - q) > 0.4) a[i] = 0.5 * (p + q);
-        else {
-          const m = 0.5 * (p + q);
-          const k = strength * (1 - Math.min(1, Math.abs(c - m) / 0.5)); // trust the neighbours where they and this frame are close
-          a[i] = c + k * (m - c);
-        }
-      } else {
-        const m = wp ? p : q;
-        const k = 0.5 * strength * (1 - Math.min(1, Math.abs(c - m) / 0.5));
-        a[i] = c + k * (m - c);
-      }
-    }
+    steadyFrame(cur, wp, wn, strength, out[t]!);
   }
   const after = flickerOf(out, frames, w, h, o.cuts, flows);
   return { alphas: out, before, after };

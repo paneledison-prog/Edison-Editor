@@ -138,6 +138,8 @@ export const Matte = z
         hair: z.boolean().optional(),
         /** flicker control, 0 (off) to 1 (default 0.7) */
         smooth: z.number().min(0).max(1).optional(),
+        /** a trained matting model decides the opacity in the edge band: hair, fur, fine detail (slower: about 0.5 to 2 s a frame) */
+        model: z.enum(['vitmatte']).optional(),
         /** take the old background out of the edge pixels' colour (default on) */
         decontaminate: z.boolean().optional(),
       })
