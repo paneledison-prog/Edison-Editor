@@ -46,19 +46,19 @@ export interface Consensus {
   /** foreign proposals: other things on the frame that were kept out */
   foreign: number;
   /** how the matte was made: from proposals, from the single best-matching proposal, or no proposal fitted and the prediction stands */
-  how: 'consensus' | 'best' | 'prediction';
+  how: 'consensus' | 'best' | 'prediction' | 'hidden';
   /** the object's motion against the background's (px per frame), when the flow was given: below about 1.2 the motion tells nothing and was not used */
   motionSeparation?: number;
   /** what was decided about each proposal (for looking into a result) */
   trace?: { cx: number; cy: number; share: number; precision: number; looks: number; moves: string; verdict: string; motion?: number[] }[];
 }
 
-interface Affine {
+export interface Affine {
   a: number[];
   b: number[];
 }
 /** Robust affine fit of a flow field over some pixels: u = a0 + a1 x + a2 y, v = b0 + b1 x + b2 y (x, y centred on cx, cy). */
-function fitAffine(pix: number[], w: number, flow: { u: Float32Array; v: Float32Array }, cx: number, cy: number): Affine | null {
+export function fitFlowAffine(pix: number[], w: number, flow: { u: Float32Array; v: Float32Array }, cx: number, cy: number): Affine | null {
   if (pix.length < 30) return null;
   let use = pix;
   let fit: Affine = { a: [0, 0, 0], b: [0, 0, 0] };
@@ -189,15 +189,27 @@ export function consensusMask(predicted: Float32Array, props: Proposal[], w: num
     const inner: number[] = [];
     const ring: number[] = [];
     let cx = 0, cy = 0, cc = 0;
-    for (let i = 0; i < n; i += 2) {
-      if (Pc[i]) (inner.push(i), (cx += i % w), (cy += Math.floor(i / w)), cc++);
+    const smallObj = area(Pc) < 40;
+    for (let i = 0; i < n; i += smallObj ? 1 : 2) {
+      if (smallObj ? P[i] : Pc[i]) (inner.push(i), (cx += i % w), (cy += Math.floor(i / w)), cc++);
       else if (far[i] && !near[i]) ring.push(i);
     }
     if (cc) {
       cx /= cc; cy /= cc;
       mcx = cx; mcy = cy;
-      mA = fitAffine(inner, w, o.flow, cx, cy);
-      mB = fitAffine(ring, w, o.flow, cx, cy);
+      mA = fitFlowAffine(inner, w, o.flow, cx, cy);
+      if (!mA) {
+        // a small object has no middle to speak of: its whole prediction, and a plain shift if that is too little for more
+        const all: number[] = [];
+        for (let i = 0; i < n; i++) if (P[i]) all.push(i);
+        mA = fitFlowAffine(all, w, o.flow, cx, cy);
+        if (!mA && all.length >= 6) {
+          const us = all.map((i) => o.flow!.u[i]!).sort((x, y) => x - y);
+          const vs = all.map((i) => o.flow!.v[i]!).sort((x, y) => x - y);
+          mA = { a: [us[Math.floor(us.length / 2)]!, 0, 0], b: [vs[Math.floor(vs.length / 2)]!, 0, 0] };
+        }
+      }
+      mB = fitFlowAffine(ring, w, o.flow, cx, cy);
       if (mA && mB) {
         let sep = 0;
         for (const i of inner) {
@@ -287,6 +299,11 @@ export function consensusMask(predicted: Float32Array, props: Proposal[], w: num
   for (let i = 0; i < n; i++) if (union[i] && P[i]) cov++;
   const coverage = pArea ? cov / pArea : 0;
   const out = new Float32Array(n);
+  // The object's motion is known and differs from the background's, and every thing found where the object should be moves with the
+  // background (a coat it went behind, the ground it is not on): the object is not in the picture here.
+  if (mA && mB && accepted.length === 0 && trace.some((t) => t.moves === 'background' && t.verdict === 'foreign')) {
+    return { alpha: new Float32Array(n), coverage: 0, accepted: 0, foreign: nForeign, how: 'hidden', trace, ...(separation !== undefined ? { motionSeparation: separation } : {}) };
+  }
   if (accepted.length && coverage >= 0.5) {
     // the object: the accepted proposals, and the middle of the prediction where they left a hole, except what is another thing
     for (let i = 0; i < n; i++) out[i] = union[i] || (Pc[i] && !foreign[i]) ? 1 : 0;

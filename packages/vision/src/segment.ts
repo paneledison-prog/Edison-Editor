@@ -794,6 +794,28 @@ export function segmentFromPrompted(rgb: Uint8Array, w: number, h: number, seeds
   for (let x = 0; x < w; x++) (touches[holes.id[x]!] = 1, (touches[holes.id[(h - 1) * w + x]!] = 1));
   for (let y = 0; y < h; y++) (touches[holes.id[y * w]!] = 1, (touches[holes.id[y * w + w - 1]!] = 1));
   for (let i = 0; i < n; i++) if (holes.id[i] && !touches[holes.id[i]!] && holes.sizes[holes.id[i]!]! < 0.004 * n && strokes[i] !== LABEL_BG) { bin[i] = 1; prior[i] = 1; }
+  {
+    // Larger holes the object's own colours say are the object (the gap between a hand and what it holds, where the model hesitated):
+    // judged by the colours of the mask itself against the colours around it. A hole in other colours is really a hole.
+    let objArea = 0;
+    for (let i = 0; i < n; i++) objArea += bin[i]!;
+    const big = new Set<number>();
+    for (let k = 1; k < holes.sizes.length; k++) if (!touches[k] && holes.sizes[k]! >= 0.004 * n && holes.sizes[k]! <= 0.02 * objArea) big.add(k);
+    if (big.size) {
+      const sureIn = morph(bin, w, h, 2, false);
+      const out0 = new Uint8Array(n);
+      for (let i = 0; i < n; i++) out0[i] = bin[i] || (holes.id[i] && big.has(holes.id[i]!)) ? 0 : 1;
+      const m0 = modelsFrom(rgb, sureIn, morph(out0, w, h, 2, false), 1, 1);
+      const sum = new Map<number, number>();
+      for (let i = 0; i < n; i++)
+        if (holes.id[i] && big.has(holes.id[i]!)) {
+          const a = m0.fg.p(rgb[3 * i]!, rgb[3 * i + 1]!, rgb[3 * i + 2]!);
+          const b = m0.bg.p(rgb[3 * i]!, rgb[3 * i + 1]!, rgb[3 * i + 2]!);
+          sum.set(holes.id[i]!, (sum.get(holes.id[i]!) ?? 0) + a / (a + b + 1e-12));
+        }
+      for (const k of big) if ((sum.get(k) ?? 0) / holes.sizes[k]! >= 0.5) for (let i = 0; i < n; i++) if (holes.id[i] === k && strokes[i] !== LABEL_BG) { bin[i] = 1; prior[i] = 1; }
+    }
+  }
   const { id, sizes } = components(bin, w, h);
   const hasStroke = new Uint8Array(sizes.length);
   for (let i = 0; i < n; i++) if (id[i] && strokes[i] === LABEL_FG) hasStroke[id[i]!] = 1;

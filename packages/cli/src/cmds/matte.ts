@@ -625,6 +625,13 @@ export const bgRemove: Handler = async (inv) => {
           .flatMap((o) => o.prompt.points.filter((q) => !union[Math.min(h0 - 1, Math.floor(q[1] * h0)) * w0 + Math.min(w0 - 1, Math.floor(q[0] * w0))]).map((q) => ({ p: [q] as [number, number][] })));
         return { at: Math.min(Math.max(at, from), to - 1), seeds: { mask, ...(bg.length ? { bg } : {}) } };
       });
+    // "visible from / until": the thing is not in the picture outside that time (it is hidden, or not yet or no longer there)
+    const vFrom = num(inv, 'visible-from');
+    const vUntil = num(inv, 'visible-until');
+    const step = 1000 / Math.min(30, a.probe.fps ?? 30);
+    if (vFrom !== undefined && vFrom - step > from) keys.unshift({ at: Math.round(vFrom - step), seeds: {}, absent: true } as unknown as (typeof keys)[number]);
+    if (vUntil !== undefined && vUntil + step < to) keys.push({ at: Math.round(vUntil + step), seeds: {}, absent: true } as unknown as (typeof keys)[number]);
+    keys.sort((x, y) => x.at - y.at);
     const matte = parsedMatte({
       asset: assetId, from, to, keys, engine: 'sam',
       ...(num(inv, 'fps') !== undefined ? { fps: num(inv, 'fps') } : {}),

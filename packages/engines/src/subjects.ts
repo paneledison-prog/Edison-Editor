@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Project } from '@studio/core';
-import { colourName, denseFlow, drawMaskOutline, drawText, grayOf, maskToRle, probeVideo, proposalPrompts, rankSubjects, readSize, SUBJECT_COLOURS, tileRgb, type Candidate } from '@studio/vision';
+import { colourName, denseFlow, drawMaskOutline, drawText, grayOf, maskToRle, movingBlobs, probeVideo, proposalPrompts, rankSubjects, readSize, SUBJECT_COLOURS, tileRgb, type Candidate } from '@studio/vision';
 import { removeBackground } from './bgremove.js';
 import { grabFrame } from './grab.js';
 import { SamServer } from './sam.js';
@@ -131,7 +131,7 @@ export async function findSubjects(o: SubjectsOptions): Promise<SubjectsRun> {
   const from = Math.max(0, o.from ?? 0);
   const to = Math.min(dur || Infinity, o.to ?? dur);
   const times = (o.at?.length ? o.at : to > from + 400 ? [from, Math.round((from + to) / 2), Math.max(from, to - 150)] : [from]).map((t) => Math.round(t));
-  const run = 'sub_' + createHash('sha256').update(JSON.stringify([a.hash, times, w, o.maxThings ?? 10, o.maxParts ?? 6])).digest('hex').slice(0, 4);
+  const run = 'sub_' + createHash('sha256').update(JSON.stringify([a.hash, times, w, o.maxThings ?? 12, o.maxParts ?? 6])).digest('hex').slice(0, 4);
   const sam = await SamServer.start(join(o.projectDir, '.studio', 'cache', 'matte', 'sam-subjects'));
   const subjects: Subject[] = [];
   const tiles: Uint8Array[] = [];
@@ -143,49 +143,80 @@ export async function findSubjects(o: SubjectsOptions): Promise<SubjectsRun> {
       const fr = await grabFrame(src, t, fps, { w, h });
       if (!fr) throw new EngineError('INVALID_INPUT', `no frame at ${t} ms of ${o.asset}`);
       const rgb = new Uint8Array(fr);
-      const nx = await grabFrame(src, t + dtMs, fps, { w, h });
       const id = `u${createHash('sha256').update(JSON.stringify([a.hash, t, w, h])).digest('hex').slice(0, 14)}`;
       log(`looking at ${t} ms`);
       await sam.embed(id, rgb, w, h);
       // a grid of questions "what is here?", one point each
       const GX = 9;
       const GY = 6;
-      const prompts: { points: [number, number][]; labels: number[] }[] = [];
+      const prompts: { points?: [number, number][]; labels?: number[]; box?: [number, number, number, number] }[] = [];
       for (let gy = 0; gy < GY; gy++) for (let gx = 0; gx < GX; gx++) prompts.push({ points: [[((gx + 0.5) / GX) * w, ((gy + 0.5) / GY) * h]], labels: [1] });
+      // what moves against the background is asked about too, however small (a person far away): a point and a box for each mover
+      let moverFrom = prompts.length;
+      let flowEarly: { u: Float32Array; v: Float32Array } | null = null;
+      const nxt = await grabFrame(src, t + dtMs, fps, { w, h });
+      if (nxt) {
+        flowEarly = denseFlow(grayOf(rgb, w, h), grayOf(new Uint8Array(nxt), w, h), { levels: 4, iters: 3, radius: 5 });
+        const blobs = movingBlobs(flowEarly, w, h);
+        log(`${t} ms: ${blobs.length} moving blob(s)${blobs.length ? ': ' + blobs.map((b) => `${Math.round(b.size)} px at ${Math.round((100 * b.point[0]) / w)}%,${Math.round((100 * b.point[1]) / h)}%`).join('; ') : ''}`);
+        for (const b of blobs) {
+          prompts.push({ points: [b.point], labels: [1], box: [Math.max(0, b.box[0] - 3), Math.max(0, b.box[1] - 3), Math.min(w - 1, b.box[2] + 3), Math.min(h - 1, b.box[3] + 3)] });
+        }
+      } else moverFrom = prompts.length;
       const props = await sam.proposals(id, w, h, prompts);
       const cands: (Candidate & { index: number })[] = props.map((p) => {
         const mask = new Uint8Array(w * h);
         for (let i = 0; i < mask.length; i++) mask[i] = p.prob[i]! > 0.5 ? 1 : 0;
-        return { mask, quality: p.iou, prompt: p.prompt, candidate: p.candidate, index: p.candidate };
+        return { mask, quality: p.iou, prompt: p.prompt, candidate: p.candidate, index: p.candidate, ...(p.prompt >= moverFrom ? { small: true } : {}) };
       });
       const ranked = rankSubjects(cands, w, h);
-      const things = ranked.map((r, i) => ({ r, i })).filter(({ r }) => r.parent < 0).slice(0, o.maxThings ?? 10);
-      const keepIdx = new Set(things.map((x) => x.i));
-      const parts = ranked.map((r, i) => ({ r, i })).filter(({ r }) => r.parent >= 0 && keepIdx.has(r.parent)).slice(0, o.maxParts ?? 6);
-      for (const p of parts) keepIdx.add(p.i);
-      const listed = ranked.map((r, i) => ({ r, i })).filter(({ i }) => keepIdx.has(i));
-      // saliency and motion
+      // saliency, and the motion of everything against the background's own (the median of the whole frame: it is mostly background)
       const sal = await salienceOf(rgb, w, h);
-      let flow: { u: Float32Array; v: Float32Array } | null = null;
-      if (nx) flow = denseFlow(grayOf(rgb, w, h), grayOf(new Uint8Array(nx), w, h), { levels: 4, iters: 3, radius: 5 });
-      // the motion of what is not a subject: the background's own (the camera's)
-      const inThing = new Uint8Array(w * h);
-      for (const { r } of things) for (let i = 0; i < inThing.length; i++) if (r.mask[i]) inThing[i] = 1;
-      const bgU: number[] = [];
-      const bgV: number[] = [];
-      if (flow) {
-        for (let i = 0; i < w * h; i += 7)
-          if (!inThing[i]) {
-            bgU.push(flow.u[i]!);
-            bgV.push(flow.v[i]!);
+      const flow = flowEarly;
+      const bgFlow: [number, number] = flow ? [median(Array.from(flow.u).filter((_, i) => i % 7 === 0)), median(Array.from(flow.v).filter((_, i) => i % 7 === 0))] : [0, 0];
+      const facts = (r: (typeof ranked)[number]) => {
+        const pt = innerPoint(r.mask, w, h);
+        let cnt = 0;
+        let x0 = w, y0 = h, x1 = 0, y1 = 0;
+        let rr = 0, gg = 0, bb = 0, sIn = 0, taken = 0;
+        const fu: number[] = [];
+        const fv: number[] = [];
+        for (let y = 0; y < h; y++)
+          for (let x = 0; x < w; x++) {
+            const p = y * w + x;
+            if (!r.mask[p]) continue;
+            cnt++;
+            if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+            if ((x + y) % 3 === 0) {
+              taken++;
+              rr += rgb[3 * p]!; gg += rgb[3 * p + 1]!; bb += rgb[3 * p + 2]!;
+              if (flow) (fu.push(flow.u[p]!), fv.push(flow.v[p]!));
+              if (sal) sIn += sal[p]!;
+            }
           }
-        if (bgU.length < 0.05 * ((w * h) / 7)) {
-          bgU.length = 0;
-          bgV.length = 0;
-          for (let i = 0; i < w * h; i += 7) (bgU.push(flow.u[i]!), bgV.push(flow.v[i]!));
-        }
-      }
-      const bgFlow: [number, number] = [median(bgU), median(bgV)];
+        const nS = Math.max(1, taken);
+        const bw = (x1 - x0 + 1) / w;
+        const bh = (y1 - y0 + 1) / h;
+        const speed = flow ? (Math.hypot(median(fu) - bgFlow[0], median(fv) - bgFlow[1]) / (dtMs / 1000) / w) * 100 : 0;
+        const touches: string[] = [];
+        if (x0 <= 1) touches.push('left');
+        if (x1 >= w - 2) touches.push('right');
+        if (y0 <= 1) touches.push('top');
+        if (y1 >= h - 2) touches.push('bottom');
+        const salience = sal ? sIn / nS : 0;
+        return {
+          area: cnt, pt, x0, y0, bw, bh, speed, touches, salience,
+          colour: colourName(rr / nS, gg / nS, bb / nS),
+          moving: speed >= 6,
+          interest: (speed >= 6 ? 0.5 : 0) + 0.35 * salience + 0.15 * Math.sqrt(cnt / (w * h)),
+        };
+      };
+      const tops = ranked.map((r, i) => ({ r, i, f: facts(r) })).filter(({ r }) => r.parent < 0).slice(0, 40);
+      // what is worth listing: what moves, what a saliency model likes, what is big; the rest is "everything else"
+      const things = tops.slice().sort((x, y) => y.f.interest - x.f.interest).slice(0, o.maxThings ?? 12);
+      const keepIdx = new Set(things.map((x) => x.i));
+      const parts = ranked.map((r, i) => ({ r, i })).filter(({ r, i }) => r.parent >= 0 && keepIdx.has(r.parent) && i >= 0).slice(0, o.maxParts ?? 6).map(({ r, i }) => ({ r, i, f: facts(r) }));
+      const listed = [...things, ...parts];
       // numbered left to right: things first, then their parts
       const order = listed.slice().sort((x, y) => (x.r.parent < 0 ? 0 : 1) - (y.r.parent < 0 ? 0 : 1) || centroidX(x.r.mask, w, h) - centroidX(y.r.mask, w, h));
       const idOf = new Map<number, string>();
@@ -193,67 +224,31 @@ export async function findSubjects(o: SubjectsOptions): Promise<SubjectsRun> {
       const tint = rgb.slice();
       const colourOf = new Map<number, number>();
       let ci = 0;
-      for (const { r, i } of order) {
+      for (const { r, i, f } of order) {
         const top = r.parent < 0;
-        // a point inside, away from the edge: the pixel with the most room around it (cheap: the one closest to the centroid among the eroded)
-        const pt = innerPoint(r.mask, w, h);
-        let sx = 0;
-        let sy = 0;
-        let cnt = 0;
-        let x0 = w, y0 = h, x1 = 0, y1 = 0;
-        let rr = 0, gg = 0, bb = 0;
-        const fu: number[] = [];
-        const fv: number[] = [];
-        let sIn = 0;
-        for (let y = 0; y < h; y++)
-          for (let x = 0; x < w; x++) {
-            const p = y * w + x;
-            if (!r.mask[p]) continue;
-            cnt++;
-            sx += x; sy += y;
-            if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
-            if ((x + y) % 3 === 0) {
-              rr += rgb[3 * p]!; gg += rgb[3 * p + 1]!; bb += rgb[3 * p + 2]!;
-              if (flow) (fu.push(flow.u[p]!), fv.push(flow.v[p]!));
-              if (sal) sIn += sal[p]!;
-            }
-          }
-        const nS = Math.max(1, Math.floor(cnt / 3));
-        const bw = (x1 - x0 + 1) / w;
-        const bh = (y1 - y0 + 1) / h;
-        const dx = median(fu) - bgFlow[0];
-        const dy = median(fv) - bgFlow[1];
-        const speed = flow ? (Math.hypot(dx, dy) / (dtMs / 1000) / w) * 100 : 0;
-        const touches: string[] = [];
-        if (x0 <= 1) touches.push('left');
-        if (x1 >= w - 2) touches.push('right');
-        if (y0 <= 1) touches.push('top');
-        if (y1 >= h - 2) touches.push('bottom');
         const s: Subject = {
           id: idOf.get(i)!,
           n: subjects.length + 1,
           at: t,
           top,
           ...(top ? {} : { partOf: idOf.get(r.parent) ?? '' }),
-          areaPct: Math.round((1000 * cnt) / (w * h)) / 10,
-          bbox: [round3(x0 / w), round3(y0 / h), round3(bw), round3(bh)],
-          point: [round3(pt[0] / w), round3(pt[1] / h)],
+          areaPct: Math.round((1000 * f.area) / (w * h)) / 10,
+          bbox: [round3(f.x0 / w), round3(f.y0 / h), round3(f.bw), round3(f.bh)],
+          point: [round3(f.pt[0] / w), round3(f.pt[1] / h)],
           quality: Math.round(r.quality * 100) / 100,
-          salience: sal ? Math.round((100 * sIn) / nS) / 100 : 0,
-          speedPctPerSec: Math.round(speed * 10) / 10,
-          moving: speed >= 6,
-          colour: colourName(rr / nS, gg / nS, bb / nS),
-          shape: bh > 1.3 * bw ? 'tall' : bw > 1.3 * bh ? 'wide' : 'compact',
-          touches,
-          prompt: { points: [[round3(pt[0] / w), round3(pt[1] / h)]], box: [round3(x0 / w), round3(y0 / h), round3(bw), round3(bh)] },
+          salience: Math.round(f.salience * 100) / 100,
+          speedPctPerSec: Math.round(f.speed * 10) / 10,
+          moving: f.moving,
+          colour: f.colour,
+          shape: f.bh > 1.3 * f.bw ? 'tall' : f.bw > 1.3 * f.bh ? 'wide' : 'compact',
+          touches: f.touches,
+          prompt: { points: [[round3(f.pt[0] / w), round3(f.pt[1] / h)]], box: [round3(f.x0 / w), round3(f.y0 / h), round3(f.bw), round3(f.bh)] },
           mask: maskToRle(r.mask, w, h),
         };
-        void sx; void sy;
         subjects.push(s);
-        // points spread over the whole of it (not the grid point that found it): with its box they ask for the same mask again
+        // points spread over the whole of it (not the grid point that found it): they and its box describe it
         const spread = proposalPrompts(Float32Array.from(r.mask), w, h, 6).filter((q) => q.points?.length === 1).map((q) => [round3(q.points![0]![0] / w), round3(q.points![0]![1] / h)] as [number, number]);
         if (spread.length) s.prompt.points = spread;
-        // drawing
         const col = SUBJECT_COLOURS[(top ? ci++ : (colourOf.get(r.parent) ?? 0)) % SUBJECT_COLOURS.length]!;
         if (top) colourOf.set(i, ci - 1);
         if (top) for (let p = 0; p < w * h; p++) if (r.mask[p]) for (let c = 0; c < 3; c++) tint[3 * p + c] = Math.round(rgb[3 * p + c]! * 0.62 + col[c]! * 0.38);

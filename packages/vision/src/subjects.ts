@@ -3,6 +3,7 @@
  * asked about one point of a grid over the frame, no two the same, the whole of a thing told from its parts. Pure functions on
  * masks; the segmenter and the picture are the engine's business (packages/engines/src/subjects.ts).
  */
+import { fitFlowAffine } from './consensus.js';
 import { drawLine, type Rgb } from './draw.js';
 
 export interface Candidate {
@@ -13,6 +14,8 @@ export interface Candidate {
   /** which prompt and candidate made it (to ask for the same again) */
   prompt: number;
   candidate: number;
+  /** found where something moves against the background: may be much smaller than the rest (a person far away) */
+  small?: boolean;
 }
 
 export interface RankedSubject extends Candidate {
@@ -34,12 +37,13 @@ const area = (m: Uint8Array): number => {
 export function rankSubjects(cands: Candidate[], w: number, h: number, o: { minArea?: number; maxArea?: number; minQuality?: number; dup?: number; inside?: number } = {}): RankedSubject[] {
   const n = w * h;
   const minA = (o.minArea ?? 0.004) * n;
+  const minSmall = 0.0008 * n;
   const maxA = (o.maxArea ?? 0.85) * n;
   const dup = o.dup ?? 0.85;
   const inside = o.inside ?? 0.9;
   const pool = cands
     .map((c) => ({ ...c, area: area(c.mask) }))
-    .filter((c) => c.area >= minA && c.area <= maxA && c.quality >= (o.minQuality ?? 0.7))
+    .filter((c) => c.area >= (c.small ? minSmall : minA) && c.area <= maxA && c.quality >= (o.minQuality ?? 0.7))
     .sort((a, b) => b.quality - a.quality || b.area - a.area);
   const kept: (Candidate & { area: number })[] = [];
   for (const c of pool) {
@@ -176,3 +180,98 @@ export const SUBJECT_COLOURS: Rgb[] = [
   [180, 180, 255],
 ];
 void drawLine;
+
+/**
+ * Where something moves against the background: points to ask the segmenter about (one per moving blob, with the blob's box).
+ * `flow` is from this frame to the next; the background's motion is taken to be the median of the whole frame.
+ */
+export function movingBlobs(flow: { u: Float32Array; v: Float32Array }, w: number, h: number, o: { minPx?: number; max?: number } = {}): { point: [number, number]; box: [number, number, number, number]; size: number }[] {
+  const n = w * h;
+  // the background's own motion (the camera's, shake and slow drift): a robust affine fit of the flow over the whole frame, which
+  // the things that move on their own (few, and unlike it) hardly disturb
+  const pix: number[] = [];
+  for (let i = 0; i < n; i += 5) pix.push(i);
+  const cx = w / 2;
+  const cy = h / 2;
+  const bgm = fitFlowAffine(pix, w, flow, cx, cy);
+  const resid = new Float32Array(n);
+  const vals: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const x = (i % w) - cx;
+    const y = Math.floor(i / w) - cy;
+    const pu = bgm ? bgm.a[0]! + bgm.a[1]! * x + bgm.a[2]! * y : 0;
+    const pv = bgm ? bgm.b[0]! + bgm.b[1]! * x + bgm.b[2]! * y : 0;
+    resid[i] = Math.hypot(flow.u[i]! - pu, flow.v[i]! - pv);
+    if (i % 5 === 0) vals.push(resid[i]!);
+  }
+  vals.sort((a, b) => a - b);
+  // movers stand out from the background's own residual (its noise level): well above it, and not less than a pixel
+  const thr = Math.max(o.minPx ?? 1.0, 4 * vals[Math.floor(vals.length * 0.6)]!);
+  const bin = new Uint8Array(n);
+  for (let i = 0; i < n; i++) if (resid[i]! > thr) bin[i] = 1;
+  // close small gaps so that one mover is one blob
+  const closed = morphClose(bin, w, h, 2);
+  const seen = new Uint8Array(n);
+  const blobs: { point: [number, number]; box: [number, number, number, number]; size: number; score: number }[] = [];
+  const stack = new Int32Array(n);
+  for (let s0 = 0; s0 < n; s0++) {
+    if (!closed[s0] || seen[s0]) continue;
+    let sp = 0;
+    let cnt = 0;
+    let x0 = w, y0 = h, x1 = 0, y1 = 0, sx = 0, sy = 0, sm = 0;
+    stack[sp++] = s0;
+    seen[s0] = 1;
+    const pix: number[] = [];
+    while (sp) {
+      const p = stack[--sp]!;
+      const x = p % w, y = (p / w) | 0;
+      cnt++;
+      pix.push(p);
+      sx += x; sy += y;
+      sm += resid[p]!;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      if (x > 0 && closed[p - 1] && !seen[p - 1]) (seen[p - 1] = 1, (stack[sp++] = p - 1));
+      if (x < w - 1 && closed[p + 1] && !seen[p + 1]) (seen[p + 1] = 1, (stack[sp++] = p + 1));
+      if (y > 0 && closed[p - w] && !seen[p - w]) (seen[p - w] = 1, (stack[sp++] = p - w));
+      if (y < h - 1 && closed[p + w] && !seen[p + w]) (seen[p + w] = 1, (stack[sp++] = p + w));
+    }
+    if (cnt < 18 || cnt > 0.4 * n) continue;
+    // the pixel of the blob nearest its centre (the centre itself may be outside it)
+    const cx = sx / cnt, cy = sy / cnt;
+    let best = pix[0]!, bd = Infinity;
+    for (const p of pix) {
+      const d = ((p % w) - cx) ** 2 + (((p / w) | 0) - cy) ** 2;
+      if (d < bd) (bd = d, (best = p));
+    }
+    blobs.push({ point: [best % w, (best / w) | 0], box: [x0, y0, x1, y1], size: cnt, score: cnt * (sm / cnt) });
+  }
+  blobs.sort((a, b) => b.score - a.score);
+  return blobs.slice(0, o.max ?? 8).map((b) => ({ point: b.point, box: b.box, size: b.size }));
+}
+
+function morphClose(m: Uint8Array, w: number, h: number, r: number): Uint8Array {
+  const grow = (src: Uint8Array, rad: number, on: number): Uint8Array => {
+    const out = new Uint8Array(src.length);
+    const tmp = new Uint8Array(src.length);
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        let hit = on ? 0 : 1;
+        for (let k = -rad; k <= rad; k++) {
+          const xx = Math.min(w - 1, Math.max(0, x + k));
+          if (on ? src[y * w + xx] : !src[y * w + xx]) { hit = on ? 1 : 0; break; }
+        }
+        tmp[y * w + x] = hit;
+      }
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        let hit = on ? 0 : 1;
+        for (let k = -rad; k <= rad; k++) {
+          const yy = Math.min(h - 1, Math.max(0, y + k));
+          if (on ? tmp[yy * w + x] : !tmp[yy * w + x]) { hit = on ? 1 : 0; break; }
+        }
+        out[y * w + x] = hit;
+      }
+    return out;
+  };
+  return grow(grow(m, r, 1), r, 0);
+}

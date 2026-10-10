@@ -416,6 +416,17 @@ async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer; t
           const props = await sam.proposals(`f${i}`, w, h, prompts);
           const t2 = Date.now();
           const c = consensusMask(pre.warped, props, w, h, { flow: pre.flow, frames: { prev: st.gray, cur: pre.gray }, evidence: colourEvidence(st, frames[i]!), never: neverSeen(st, frames[i]!) });
+          if (c.how === 'hidden') {
+            // the object's motion says it is behind something here: nothing is shown, and the state waits for it to come back
+            st.rgb = frames[i]!;
+            st.gray = pre.gray;
+            out.set(i, new Uint8Array(w * h));
+            unc[i] = 1;
+            hidden.add(i);
+            lastHid.add(i);
+            note(i, 'hidden');
+            continue;
+          }
           if (process.env['STUDIO_DEBUG_FOLLOW']) log(`TIMING ${i} prepare ${t1 - t0} ms, proposals ${t2 - t1} ms, consensus ${Date.now() - t2} ms`);
           if (process.env['STUDIO_DEBUG_FOLLOW'] === '2') log(`TRACE ${i} ${JSON.stringify(c.trace)}`);
           if (process.env['STUDIO_DEBUG_FOLLOW']) log(`frame ${i}: ${c.how}, ${c.accepted} proposals accepted, ${c.foreign} foreign, coverage ${c.coverage.toFixed(2)}, motion separation ${c.motionSeparation?.toFixed(1) ?? 'n/a'} px`);
@@ -470,7 +481,8 @@ async function buildMatteCore(o: MatteBuildOptions, holder: { sam?: SamServer; t
       }
       for (let i = ia + 1; i < ib; i++) {
         // where one side did not find the object the other side decides; where neither did, it is not there
-        const wb = hf.has(i) && !hb.has(i) ? 1 : hb.has(i) && !hf.has(i) ? 0 : (i - ia) / (ib - ia);
+        // an absent frame ends where the object is: from it the matte comes from the other side alone, not faded over the gap
+        const wb = keys[ki]!.absent ? 1 : keys[ki + 1]!.absent ? 0 : hf.has(i) && !hb.has(i) ? 1 : hb.has(i) && !hf.has(i) ? 0 : (i - ia) / (ib - ia);
         const f = fw.get(i)!;
         const bb = bw.get(i)!;
         const o2 = new Uint8Array(w * h);
