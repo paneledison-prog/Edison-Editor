@@ -181,6 +181,13 @@ export function validateProject(p: unknown): Issue[] {
         );
       }
     }
+    for (const side of ['transIn', 'transOut'] as const) {
+      const tr = c[side];
+      if (!tr) continue;
+      if (c.comp) add('FX_INVALID', `clip ${c.id}: a ${side === 'transIn' ? 'transition in' : 'transition out'} needs a media clip (a composition animates itself)`, `clips.${c.id}.${side}`);
+      else if (track.type !== 'video' && track.type !== 'graphics') add('FX_INVALID', `clip ${c.id}: a transition needs a video track`, `clips.${c.id}.${side}`);
+      if (tr.dur > c.dur) add('FX_INVALID', `clip ${c.id}: the ${tr.kind} (${tr.dur} ms) is longer than the clip (${c.dur} ms)`, `clips.${c.id}.${side}`);
+    }
     for (const [prop, kfs] of Object.entries(c.keyframes ?? {})) {
       // A keyframe on an effect (`fx.<node>.<name>`) must name an effect that is on this clip.
       const m = /^fx\.(f_[^.]+)\.([A-Za-z][\w]*)$/.exec(prop);

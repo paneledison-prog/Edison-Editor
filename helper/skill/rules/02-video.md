@@ -56,6 +56,10 @@ Search the **local library** by transcript match and tags. Return up to 3 candid
 
 Hard cuts by default. Crossfade 8–12 frames for time jumps. Avoid wipes and gimmicks unless the brand asks. One transition style per piece.
 
+- Make them with `studio tl transition` (`docs/transitions.md`): `--between c_a,c_b --kind dissolve --dur 400`, or `--clip C --in KIND` / `--out KIND` for one clip over what is below (a title, an element, the last shot to black: `--out dip`). Kinds: dissolve, dip, wipe, push, slide.
+- A transition between two clips is centred on the cut and uses each file's media past the cut. Read `warnings` and `mediaToSpareMs`: if it was shortened or moved off centre, trim the clips to leave media around the cut instead of accepting it.
+- Look at the middle of it (`render --still`) and watch it once (`render --range A:B --preview`). The audio is not crossfaded by it; add audio fades where the sound jumps.
+
 ## Known limits (state them when relevant)
 
 - Stabilization (vidstab) needs a two-pass analysis and crops edges.

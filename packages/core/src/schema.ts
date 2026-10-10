@@ -395,6 +395,25 @@ export const Fx = z.discriminatedUnion('type', [
 ]);
 export type Fx = z.infer<typeof Fx>;
 
+/**
+ * How a clip comes in (`transIn`) or goes out (`transOut`). A clip's `transIn` where it follows another clip on the same track
+ * (no gap) is a transition between the two, centred on the cut: the clip before plays on past its out point and this one starts
+ * before its in point, from their own media. Without a clip right before it (or for `transOut`), it acts on this clip alone, over
+ * what is below it. `dir` is the way the movement goes (wipe edge, push, slide); `color` is the colour a dip goes through;
+ * `feather` softens a wipe's edge (px of the output).
+ */
+export const Transition = z
+  .object({
+    kind: z.enum(['dissolve', 'dip', 'wipe', 'push', 'slide']),
+    dur: z.number().int().min(40).max(10000),
+    ease: Ease.optional(),
+    dir: z.enum(['left', 'right', 'up', 'down']).optional(),
+    color: Color.optional(),
+    feather: z.number().min(0).max(400).optional(),
+  })
+  .strict();
+export type Transition = z.infer<typeof Transition>;
+
 export const Clip = z
   .object({
     id: ClipId,
@@ -410,6 +429,8 @@ export const Clip = z
     fx: z.array(Fx).optional(),
     link: z.string().optional(),
     label: z.string().optional(),
+    transIn: Transition.optional(),
+    transOut: Transition.optional(),
   })
   .strict()
   .refine((c) => (c.asset === undefined) !== (c.comp === undefined), {

@@ -302,7 +302,8 @@ describe('colour plugin: in a render', () => {
     expect(r.json.ok, JSON.stringify(r.json)).toBe(true);
     const graph = r.json.data.ffmpegArgs[r.json.data.ffmpegArgs.indexOf('-filter_complex') + 1] as string;
     expect(graph).toMatch(/minterpolate=fps=60/);
-    expect(graph.indexOf('minterpolate')).toBeLessThan(graph.indexOf('setpts=(PTS-STARTPTS)/0.5'));
+    expect(graph.indexOf('setpts=PTS/0.5')).toBeGreaterThan(-1);
+    expect(graph.indexOf('minterpolate')).toBeLessThan(graph.indexOf('setpts=PTS/0.5'));
     const rr = await studio(['render', '--preview', '--range', '0:1000', '--out', 'slow', ...p]);
     expect(rr.json.ok, JSON.stringify(rr.json)).toBe(true);
     expect(rr.json.warnings.join(' ')).toMatch(/slowmo.*heavy/);

@@ -21,6 +21,7 @@ import {
   PropName,
   Transform,
   type Project,
+  Transition,
 } from './schema.js';
 import { validateProject, type Issue } from './validate.js';
 
@@ -491,7 +492,7 @@ export const OPS = {
       return inverse.reverse();
     },
   }),
-  /** Shallow patch of transform, fx, props, link, label. null removes the field. */
+  /** Shallow patch of transform, fx, props, link, label, transitions. null removes the field. */
   'clip.set': def({
     args: z.object({
       id: ClipId,
@@ -502,6 +503,8 @@ export const OPS = {
           props: z.record(z.unknown()).nullable(),
           link: z.string().nullable(),
           label: z.string().nullable(),
+          transIn: Transition.nullable(),
+          transOut: Transition.nullable(),
         })
         .partial()
         .strict(),

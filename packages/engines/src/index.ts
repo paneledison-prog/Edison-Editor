@@ -15,6 +15,7 @@ export * from './motion.js';
 export * from './transcribe.js';
 export * from './captions.js';
 export * from './zoom.js';
+export * from './transitions.js';
 export * from './preview.js';
 export * from './plugins.js';
 export * from './design.js';

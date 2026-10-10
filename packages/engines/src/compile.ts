@@ -6,6 +6,7 @@ import { EngineError } from './run.js';
 import { blurRegionFilter, expr, hasFrameMotion, hasLayer, hasMotion, layerIsStill, layerMaps, pointsOf, zoomFilter } from './zoom.js';
 import { effectAlpha, effectLines, pluginEffectDecl, type FxContext } from './plugins.js';
 import { checkClipKeyframes, nodeLines } from './fxanim.js';
+import { planTransitions, transitionLines, transitionOffset, type RenderClip } from './transitions.js';
 import type { MatteData } from './matte.js';
 import type { PlateData } from './plate.js';
 import { plateId } from './plate.js';
@@ -80,13 +81,13 @@ export function routeBackend(p: Project): { backend: 'ffmpeg' | 'hybrid'; reason
  * The clip's start on the clock that time-driven effects use (seconds): its start on the timeline, less what a render window cut
  * off its head, so a still or a preview range shows the effect where the full render has it.
  */
-const fxT0 = (c: WindowedClip): number => (c.start - (c.headCutMs ?? 0)) / 1000;
+const fxT0 = (c: WindowedClip): number => ((c as RenderClip).clockStartMs ?? c.start - (c.headCutMs ?? 0)) / 1000;
 
 /** A clip cut by a render window: `headCutMs` of its start were cut away (time-driven effects keep the clip's own clock). */
-export type WindowedClip = Clip & { headCutMs?: number };
+export type WindowedClip = RenderClip & { headCutMs?: number };
 
 /** Restrict the timeline to [a, b) ms by cutting clips at the window edges and shifting them to start at 0. */
-export function windowClips(clips: Clip[], a: number, b: number): WindowedClip[] {
+export function windowClips(clips: RenderClip[], a: number, b: number): WindowedClip[] {
   const out: WindowedClip[] = [];
   for (const c of clips) {
     const s = Math.max(c.start, a);
@@ -97,6 +98,11 @@ export function windowClips(clips: Clip[], a: number, b: number): WindowedClip[]
       start: s - a,
       dur: e - s,
       ...(s > c.start ? { headCutMs: s - c.start } : {}),
+      // a clip lengthened for a transition: what of the lengthening is left, its own clock, the transitions' windows in its time
+      ...(c.headExtMs ? { headExtMs: Math.max(0, c.headExtMs - (s - c.start)) } : {}),
+      ...(c.tailExtMs ? { tailExtMs: Math.max(0, c.tailExtMs - (c.start + c.dur - e)) } : {}),
+      ...(c.clockStartMs !== undefined ? { clockStartMs: c.clockStartMs - a } : {}),
+      ...(c.trans ? { trans: c.trans.map((t) => ({ ...t, l0: t.l0 - (s - c.start), l1: t.l1 - (s - c.start) })) } : {}),
       srcIn: c.asset
         ? (c.srcIn ?? 0) + Math.round((s - c.start) * speedOf(c))
         : (c.srcIn ?? 0) + (s - c.start),
@@ -190,7 +196,9 @@ export function compile(inp: CompileInput): Plan {
       'INVALID_INPUT',
       `render window ${wa}–${wb} ms is empty (timeline is ${total} ms)`,
     );
-  const clips = windowClips(p.clips, wa, Math.min(wb, total));
+  // transitions lengthen clips past their cuts: laid out on the whole timeline, then cut to the window like any clip
+  const trans = planTransitions(p);
+  const clips = windowClips(trans.clips, wa, Math.min(wb, total));
   if (!clips.length)
     throw new EngineError(
       'INVALID_INPUT',
@@ -201,6 +209,7 @@ export function compile(inp: CompileInput): Plan {
   const { width, height } = canvasFor(p, preset, !!inp.preview, inp.width);
   const fps = preset.fps ?? p.meta.fps;
   const notes: string[] = [];
+  for (const t of trans.plans) for (const w of t.warnings) if (t.window[1] > wa && t.window[0] < wb) notes.push(`${t.clip}: ${w}`);
   if (preset.w && (preset.w !== p.meta.width || preset.h !== p.meta.height)) {
     notes.push(
       `project canvas ${p.meta.width}x${p.meta.height} is fitted into ${width}x${height} (letterboxed on the project background, not stretched or cropped)`,
@@ -209,9 +218,11 @@ export function compile(inp: CompileInput): Plan {
 
   const trackIdx = new Map(p.tracks.map((t, i) => [t.id, i]));
   const trackOf = (c: Clip) => p.tracks.find((t) => t.id === c.track)!;
-  // Layer order: later tracks are on top; within a track, by start time.
+  // Layer order: later tracks are on top; within a track, by start time (where it started before a render window cut it: clips cut
+  // to start together at the window's start keep the order they have on the timeline, a transition's incoming clip on top).
+  const startOf = (c: WindowedClip) => c.start - (c.headCutMs ?? 0);
   const ordered = [...clips].sort(
-    (x, y) => trackIdx.get(x.track)! - trackIdx.get(y.track)! || x.start - y.start,
+    (x, y) => trackIdx.get(x.track)! - trackIdx.get(y.track)! || startOf(x) - startOf(y),
   );
 
   const inputs: string[] = [];
@@ -289,7 +300,10 @@ export function compile(inp: CompileInput): Plan {
     if (wantsVideo) {
       const d = displaySize(a.probe);
       const at = sec(c.start);
-      const head0 = a.kind === 'image' ? `fps=${fps}` : `setpts=(PTS-STARTPTS)/${speed},fps=${fps}`;
+      // The input is sought to the clip's in point, so a frame's time is its distance from it; that is kept (not restarted at the
+      // first frame, which can lie up to a frame after the in point) and the frame grid starts at the in point: the picture at
+      // each moment is the source's at the same moment, wherever the in point falls between two source frames.
+      const head0 = a.kind === 'image' ? `fps=${fps}` : `setpts=PTS/${speed},fps=${fps}:start_time=0`;
       const cm = 'flags=lanczos:out_color_matrix=bt709:out_range=tv';
       const lineStart = vLines.length;
       // Stabilize works on the source frames before anything else: the clip's frame grid is set first, then each frame is
@@ -390,7 +404,7 @@ export function compile(inp: CompileInput): Plan {
         inputs.push('-ss', sec(Math.max(0, in0 - fromMs)), '-t', sec(c.dur * speed), '-i', join(projectDir, md.file));
         const lead = in0 < fromMs ? `,tpad=start_duration=${((fromMs - in0) / 1000 / speed).toFixed(3)}:start_mode=clone` : '';
         let src = viaSource(`${mk}:v`, base, 'gray');
-        const mhead = `setpts=(PTS-STARTPTS)/${speed},fps=${fps}${lead}`;
+        const mhead = `setpts=PTS/${speed},fps=${fps}:start_time=0${lead}`;
         if (stab && steady) {
           mLines.push(`[${src}]${mhead}[${base}h]`);
           mLines.push(...stabilizeLines(`${base}h`, `${base}st`, `${base}t`, steady, { w: d.w!, h: d.h! }));
@@ -745,6 +759,16 @@ export function compile(inp: CompileInput): Plan {
           vLines.push(...layerWarpLines(cur, base, `${base}ly`, maps, { w: width, h: height }, c.start / 1000));
         }
       }
+      // transitions change the finished, placed picture: its opacity, a wipe's mask, a dip's colour (push and slide move it on
+      // screen when it is laid over the tracks below)
+      {
+        const base = `v${nV}`;
+        const tl = transitionLines(c, `${base}trin`, base, `${base}tr`, { width, height, fps, at });
+        if (tl.length) {
+          const last = vLines.pop()!;
+          vLines.push(last.replace(new RegExp(`\\[${base}\\]$`), `[${base}trin]`), ...tl);
+        }
+      }
       vLines.push(...mLines);
       if (d.w && d.h && t.type === 'video') {
         const kFit = Math.min(width / d.w, height / d.h);
@@ -765,19 +789,25 @@ export function compile(inp: CompileInput): Plan {
       }
       nV++;
     }
+    // a clip lengthened for a transition keeps its own sound: cut back to where it was
+    const hx = c.headExtMs ?? 0;
+    const tx = c.tailExtMs ?? 0;
+    if (wantsAudio && c.dur - hx - tx <= 0) wantsAudio = false;
     if (wantsAudio) {
       const chain = clipAudioChain(a.probe.audio!.ch, c.fx, c.keyframes);
       const duck = c.fx?.find((f) => f.type === 'duck') as
         Extract<Fx, { type: 'duck' }> | undefined;
       // 10 ms edge fades at every clip edge so spliced joins cannot click.
-      const fade = Math.min(0.01, c.dur / 2000);
-      const ms = Math.round(c.start);
+      const aDur = c.dur - hx - tx;
+      const fade = Math.min(0.01, aDur / 2000);
+      const ms = Math.round(c.start + hx);
       const idx = aItems.length;
+      const cut = hx || tx ? `atrim=start=${sec(hx)}:duration=${sec(aDur)},asetpts=PTS-STARTPTS,` : '';
       aLines.push(
-        `[${k}:a]${chain.join(',')},asetpts=PTS-STARTPTS,afade=t=in:d=${fade},afade=t=out:st=${sec(c.dur - fade * 1000)}:d=${fade},adelay=${ms}:all=1[a${idx}]`,
+        `[${k}:a]${chain.join(',')},asetpts=PTS-STARTPTS,${cut}afade=t=in:d=${fade},afade=t=out:st=${sec(aDur - fade * 1000)}:d=${fade},adelay=${ms}:all=1[a${idx}]`,
       );
       aItems.push({ label: `a${idx}`, track: c.track, duck, clipId: c.id });
-      joinEdges.push({ track: c.track, start: c.start, end: c.start + c.dur });
+      joinEdges.push({ track: c.track, start: c.start + hx, end: c.start + hx + aDur });
     }
   }
 
@@ -796,7 +826,14 @@ export function compile(inp: CompileInput): Plan {
   placed.forEach((c, i) => {
     const t = trackOf(c);
     const isGfx = t.type === 'graphics';
-    const pos = c.comp ? ':x=0:y=0' : isGfx ? ':x=(W-w)/2:y=(H-h)/2' : '';
+    const off = c.comp ? undefined : transitionOffset(c, { width, height });
+    const pos = c.comp
+      ? ':x=0:y=0'
+      : off
+        ? `:x='${isGfx ? '(W-w)/2+' : ''}${off.x}':y='${isGfx ? '(H-h)/2+' : ''}${off.y}':eval=frame`
+        : isGfx
+          ? ':x=(W-w)/2:y=(H-h)/2'
+          : '';
     lines.push(
       `[base${i}][v${i}]overlay=eof_action=pass:repeatlast=0${pos}:enable='between(t,${sec(c.start)},${sec(c.start + c.dur)})'[base${i + 1}]`,
     );

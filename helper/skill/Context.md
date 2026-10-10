@@ -93,7 +93,8 @@ my-project/
         { "type": "cutout", "matte": { "id": "mt_p7q2", "feather": 1.5 }, "node": "f_c5t9" },
         { "type": "plugin", "id": "drop-shadow", "after": true, "node": "f_d3s6" }
       ],
-      "link": "ly_3f9a2c", "label": "element s3 (navy, 14%)"
+      "link": "ly_3f9a2c", "label": "element s3 (navy, 14%)",
+      "transIn": { "kind": "dissolve", "dur": 400, "ease": "linear" }
     },
     { "id": "c_0003", "track": "t_g1fx", "comp": "lower-third", "start": 2000, "dur": 3500,
       "props": { "title": "Ada Lovelace", "subtitle": "Founder", "accent": "token:accent" } }
@@ -125,6 +126,10 @@ transparency, each by its kind: blur and warps move its edge, glow and shadows f
 effects there by default when they need it) → pins → layer placement (`dx dy size rot ax ay`) → composited over the tracks below
 (later tracks on top). Every effect is an entry on the clip, never baked into the source: `fx bypass` / `fx remove` /
 `project undo` take it back.
+
+**Transitions** (`transIn`, `transOut` on a clip; `studio tl transition`, docs/transitions.md): `{ kind: dissolve|dip|wipe|push|slide,
+dur, ease, dir, color, feather }`. A clip's `transIn` right after another clip on its track is a transition between the two,
+centred on the cut, each playing on from its own file; elsewhere it acts on the clip alone, over what is below.
 
 **Layers of a shot** (`studio bg layers`, docs/layers.md): each kept thing is a copy of the shot on its own track with a `cutout` by
 its own matte (an element); the shot stays below with an `erase` of the kept things (the background, rebuilt from other frames);
